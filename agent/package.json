@@ -1,0 +1,26 @@
+{
+  "name": "agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram command router for local agents",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "start": "npm run build && node dist/bot.js",
+    "test": "npm run build && node --test test/*.test.js",
+    "test:gemini": "node scripts/test-gemini.js"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.19.25",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@google/genai": "^2.6.0",
+    "better-sqlite3": "^12.10.0",
+    "openai": "^6.39.0"
+  }
+}

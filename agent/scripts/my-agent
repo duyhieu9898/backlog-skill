@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="my-agent"
+SERVICE_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
+BIN_DIR="${HOME}/.local/bin"
+BIN_LINK="${BIN_DIR}/my-agent"
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+AGENT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
+NPM_BIN="${NPM_BIN:-$(command -v npm)}"
+NODE_BIN="${NODE_BIN:-$(command -v node)}"
+NODE_DIR="$(dirname "${NODE_BIN}")"
+
+usage() {
+  cat <<EOF
+Usage: my-agent <command>
+
+Commands:
+  install       Install CLI symlink and systemd user service
+  uninstall     Stop and remove systemd user service
+  start         Start background agent service
+  stop          Stop background agent service
+  restart       Restart background agent service
+  status        Show service status
+  logs          Follow service logs
+  enable-login  Keep user services running after logout
+EOF
+}
+
+write_service() {
+  mkdir -p "$(dirname "${SERVICE_FILE}")"
+  cat > "${SERVICE_FILE}" <<EOF
+[Unit]
+Description=My Agent Telegram orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${AGENT_DIR}
+ExecStart=${NPM_BIN} run start
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PATH=${NODE_DIR}:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+install_cli() {
+  mkdir -p "${BIN_DIR}"
+  ln -sfn "${SCRIPT_PATH}" "${BIN_LINK}"
+}
+
+install_service() {
+  write_service
+  systemctl --user daemon-reload
+  systemctl --user enable "${SERVICE_NAME}.service"
+}
+
+ensure_installed() {
+  if [[ ! -f "${SERVICE_FILE}" ]]; then
+    install_cli
+    install_service
+  fi
+}
+
+case "${1:-}" in
+  install)
+    install_cli
+    install_service
+    echo "Installed ${SERVICE_FILE}"
+    echo "Installed ${BIN_LINK}"
+    ;;
+  uninstall)
+    systemctl --user stop "${SERVICE_NAME}.service" 2>/dev/null || true
+    systemctl --user disable "${SERVICE_NAME}.service" 2>/dev/null || true
+    rm -f "${SERVICE_FILE}"
+    systemctl --user daemon-reload
+    if [[ -L "${BIN_LINK}" && "$(readlink -f "${BIN_LINK}")" == "${SCRIPT_PATH}" ]]; then
+      rm -f "${BIN_LINK}"
+    fi
+    echo "Uninstalled ${SERVICE_NAME}"
+    ;;
+  start)
+    ensure_installed
+    systemctl --user start "${SERVICE_NAME}.service"
+    systemctl --user --no-pager --lines=0 status "${SERVICE_NAME}.service"
+    ;;
+  stop)
+    systemctl --user stop "${SERVICE_NAME}.service"
+    ;;
+  restart)
+    ensure_installed
+    systemctl --user restart "${SERVICE_NAME}.service"
+    systemctl --user --no-pager --lines=0 status "${SERVICE_NAME}.service"
+    ;;
+  status)
+    systemctl --user --no-pager status "${SERVICE_NAME}.service"
+    ;;
+  logs)
+    journalctl --user -u "${SERVICE_NAME}.service" -f
+    ;;
+  enable-login)
+    loginctl enable-linger "${USER}"
+    echo "Enabled linger for ${USER}"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

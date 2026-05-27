@@ -1,0 +1,47 @@
+{
+  "base_url": "https://bapjp.backlog.com",
+  "default_project_key": "OOP",
+  "users": {
+    "me": {
+      "id": 778617,
+      "name": "Hieu Nguyen Duy",
+      "role": "DN.DEV"
+    }
+  },
+  "projects": [
+    "OOP",
+    "AQM"
+  ],
+  "defaults": {
+    "assignee": "me",
+    "priority_id": 3
+  },
+  "bug_defaults": {
+    "issue_type": "Bug",
+    "category": null,
+    "estimated_hours": 1,
+    "due_in_days": 2,
+    "corrective_action": "fixed {description_lower}",
+    "custom_fields": {
+      "qc_activity": "Unit Test",
+      "bug_origin": "COD_Other",
+      "cause_category": "Not Applicable",
+      "impacted": "no",
+      "detected_role": "Developer",
+      "env": "DEV",
+      "reopen_bug": "No"
+    }
+  },
+  "project_overrides": {
+    "OOP": {
+      "bug_defaults": {
+        "category": "112_DHP"
+      }
+    },
+    "AQM": {
+      "bug_defaults": {
+        "category": null
+      }
+    }
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "allow": [
+    {
+      "name": "bemo.checkout",
+      "label": "Bemo checkout",
+      "skillSlug": "bemo",
+      "aliases": ["/bemo_checkout", "bemo checkout"],
+      "cwd": "../skills/bemo",
+      "command": "npm run -s checkout",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "bemo.sync",
+      "label": "Bemo sync data",
+      "skillSlug": "bemo",
+      "aliases": ["/bemo_sync"],
+      "cwd": "../skills/bemo",
+      "command": "npm run -s data:sync",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "bemo.verify",
+      "label": "Bemo verify time off",
+      "skillSlug": "bemo",
+      "aliases": ["/bemo_verify"],
+      "cwd": "../skills/bemo",
+      "command": "npm run -s off:verify",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "bemo.run",
+      "label": "Bemo full run",
+      "skillSlug": "bemo",
+      "aliases": ["/bemo_run"],
+      "cwd": "../skills/bemo",
+      "command": "npm run -s run",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "backlog.projects",
+      "label": "Backlog list configured projects",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_projects", "backlog projects"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/backlog_config.py list-projects",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "backlog.current",
+      "label": "Backlog current default project",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_current", "backlog current"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/backlog_config.py current",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "backlog.list",
+      "label": "Backlog list issues",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_list", "backlog list"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/backlog_api.py list",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "backlog.list_me",
+      "label": "Backlog list my issues",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_me", "backlog me"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/backlog_api.py list --me",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "backlog.inspect.oop",
+      "label": "Backlog refresh OOP catalog",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_inspect_oop"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/inspect_project.py OOP",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "backlog.inspect.aqm",
+      "label": "Backlog refresh AQM catalog",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_inspect_aqm"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/inspect_project.py AQM",
+      "requiresConfirmation": false
+    },
+    {
+      "name": "backlog.default.oop",
+      "label": "Backlog set default project OOP",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_default_oop"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/backlog_config.py set-default OOP",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "backlog.default.aqm",
+      "label": "Backlog set default project AQM",
+      "skillSlug": "backlog",
+      "aliases": ["/backlog_default_aqm"],
+      "cwd": "../skills/backlog",
+      "command": "python3 scripts/backlog_config.py set-default AQM",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "backlog.run",
+      "label": "Backlog trusted command",
+      "skillSlug": "backlog",
+      "cwd": "../skills/backlog",
+      "command": "*",
+      "requiresConfirmation": true
+    }
+  ]
+}
