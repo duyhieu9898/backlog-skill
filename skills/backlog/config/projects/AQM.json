@@ -34,6 +34,24 @@
         "name": "Q&A"
       }
     ],
+    "status_options": [
+      {
+        "id": 1,
+        "name": "Open"
+      },
+      {
+        "id": 2,
+        "name": "In Progress"
+      },
+      {
+        "id": 3,
+        "name": "Resolved"
+      },
+      {
+        "id": 4,
+        "name": "Closed"
+      }
+    ],
     "custom_fields": {
       "qc_activity": {
         "label": "QC Activity",

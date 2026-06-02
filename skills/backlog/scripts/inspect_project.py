@@ -4,12 +4,17 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
-import requests
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backlog_settings import CONFIG_PATH, api_base_url, load_config, load_env_file, require_api_key
-
-load_env_file()
+from backlog_tool.client import BacklogClient
+from backlog_tool.settings import (
+    PROJECTS_CONFIG_DIR,
+    load_config,
+    load_env_file,
+    log_event,
+)
 
 
 def slugify(value):
@@ -18,12 +23,7 @@ def slugify(value):
 
 
 def get_json(config, path):
-    response = requests.get(
-        f"{api_base_url(config)}{path}",
-        params={"apiKey": require_api_key()},
-    )
-    response.raise_for_status()
-    return response.json()
+    return BacklogClient(config).request_json("GET", path)
 
 
 def option_summary(items):
@@ -59,6 +59,7 @@ def build_project_config(project_key):
     project = get_json(config, f"/projects/{project_key}")
     issue_types = get_json(config, f"/projects/{project_key}/issueTypes")
     categories = get_json(config, f"/projects/{project_key}/categories")
+    statuses = get_json(config, f"/projects/{project_key}/statuses")
     custom_fields = get_json(config, f"/projects/{project_key}/customFields")
 
     custom_field_config = {}
@@ -75,40 +76,46 @@ def build_project_config(project_key):
         "bug": {
             "category_options": option_summary(categories),
             "issue_type_options": option_summary(issue_types),
+            "status_options": option_summary(statuses),
             "custom_fields": custom_field_config,
         },
     }
 
 
 def output_path_for(project_key):
-    config_dir = os.path.dirname(CONFIG_PATH)
-    return os.path.join(config_dir, f"{project_key}.json")
+    os.makedirs(PROJECTS_CONFIG_DIR, exist_ok=True)
+    return os.path.join(PROJECTS_CONFIG_DIR, f"{project_key}.json")
 
 
 def main():
+    load_env_file()
     parser = argparse.ArgumentParser(
-        description="Inspect a Backlog project and write config/<PROJECT_KEY>.json reference data.",
+        description="Inspect a Backlog project and write config/projects/<PROJECT_KEY>.json reference data.",
     )
     parser.add_argument("project_key", help="Backlog project key, e.g. AQM")
     parser.add_argument(
         "--stdout",
         action="store_true",
-        help="Print JSON to stdout instead of writing config/<PROJECT_KEY>.json",
+        help="Print JSON to stdout instead of writing config/projects/<PROJECT_KEY>.json",
     )
     args = parser.parse_args()
+    log_event("info", "command_start", command="inspect_project", project=args.project_key, stdout=args.stdout)
 
     try:
         project_config = build_project_config(args.project_key)
         content = json.dumps(project_config, indent=2, ensure_ascii=False) + "\n"
         if args.stdout:
             print(content, end="")
+            log_event("info", "command_end", command="inspect_project", project=args.project_key, stdout=True)
             return
 
         output_path = output_path_for(project_config["key"])
         with open(output_path, "w", encoding="utf-8") as output_file:
             output_file.write(content)
         print(f"Wrote {output_path}")
+        log_event("info", "command_end", command="inspect_project", project=project_config["key"], output=output_path)
     except Exception as error:
+        log_event("error", "command_error", command="inspect_project", project=args.project_key, error=error)
         print(f"Error: {error}", file=sys.stderr)
         sys.exit(1)
 

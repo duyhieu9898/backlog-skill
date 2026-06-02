@@ -1,0 +1,28 @@
+{
+  "issue_type": "Bug",
+  "status": "Closed",
+  "estimated_hours": 1,
+  "actual_hours": 1,
+  "due_in_days": 2,
+  "corrective_action": "fixed {description_lower}",
+  "description_template": "**Environment**:\n\n **Pre-Condition**:\n-\n\n **Steps to reproduce**:\n1.\n2.\n\n**Actual**:\n\n**Expected**:\n\n **Evidence**:\n",
+  "custom_fields": {
+    "qc_activity": "Unit Test",
+    "bug_origin": "COD_Other",
+    "cause_category": "Not Applicable",
+    "impacted": "no",
+    "detected_role": "Developer"
+  },
+  "project_overrides": {
+    "OOP": {
+      "category": "112_DHP",
+      "custom_fields": {
+        "env": "DEV",
+        "reopen_bug": "No"
+      }
+    },
+    "AQM": {
+      "category": null
+    }
+  }
+}

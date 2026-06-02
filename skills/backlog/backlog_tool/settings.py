@@ -3,10 +3,17 @@ import json
 import os
 import tempfile
 from copy import deepcopy
+from datetime import datetime, timezone
 
 SKILL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_PATH = os.path.join(SKILL_DIR, "config", "backlog.json")
+PROJECTS_CONFIG_DIR = os.path.join(SKILL_DIR, "config", "projects")
+WORKFLOWS_CONFIG_DIR = os.path.join(SKILL_DIR, "config", "workflows")
 ENV_PATH = os.path.join(SKILL_DIR, ".env")
+LOG_DIR = os.path.join(SKILL_DIR, "logs")
+LOG_PATH = os.path.join(LOG_DIR, "backlog.log")
+REQUEST_TIMEOUT_SECONDS = 20
+MAX_LOG_VALUE_LENGTH = 500
 
 
 def load_env_file():
@@ -64,15 +71,29 @@ def view_base_url(config):
 
 
 def catalog_path(project_key):
-    return os.path.join(SKILL_DIR, "config", f"{project_key}.json")
+    return os.path.join(PROJECTS_CONFIG_DIR, f"{project_key}.json")
 
 
 def load_project_catalog(project_key):
     path = catalog_path(project_key)
     if not os.path.exists(path):
-        raise ValueError(f"Missing project catalog {path}. Run: python3 scripts/inspect_project.py {project_key}")
+        raise ValueError(
+            f"Missing project catalog {path}. Run: python3 scripts/inspect_project.py {project_key}"
+        )
     with open(path, "r", encoding="utf-8") as catalog_file:
         return json.load(catalog_file)
+
+
+def workflow_config_path(name):
+    return os.path.join(WORKFLOWS_CONFIG_DIR, f"{name}.json")
+
+
+def load_workflow_config(name):
+    path = workflow_config_path(name)
+    if not os.path.exists(path):
+        raise ValueError(f"Missing workflow config {path}")
+    with open(path, "r", encoding="utf-8") as workflow_file:
+        return json.load(workflow_file)
 
 
 def project_keys(config):
@@ -106,3 +127,23 @@ def require_api_key():
     if not api_key:
         raise Exception("Missing BACKLOG_API_KEY. Set it in the environment or create .env from .env.example.")
     return api_key
+
+
+def log_event(level, event, **fields):
+    os.makedirs(LOG_DIR, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    parts = [timestamp, level.upper(), f"event={event}"]
+    for key, value in fields.items():
+        if value is None:
+            continue
+        text = str(value).replace("\n", "\\n")
+        if len(text) > MAX_LOG_VALUE_LENGTH:
+            text = text[:MAX_LOG_VALUE_LENGTH] + "...<truncated>"
+        parts.append(f"{key}={json.dumps(text, ensure_ascii=False)}")
+    with open(LOG_PATH, "a", encoding="utf-8") as log_file:
+        log_file.write(" ".join(parts) + "\n")
+
+
+def response_error_body(response):
+    text = response.text or ""
+    return text[:MAX_LOG_VALUE_LENGTH]

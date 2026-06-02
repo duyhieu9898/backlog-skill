@@ -2,8 +2,11 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from backlog_settings import load_config, load_project_catalog, project_keys, save_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from backlog_tool.settings import log_event, load_config, load_project_catalog, project_keys, save_config
 
 
 def print_projects(config):
@@ -27,6 +30,7 @@ def set_default(project_key):
         raise ValueError(f"Unknown project '{project_key}'. Available projects: {keys}")
     config["default_project_key"] = project_key
     save_config(config)
+    log_event("info", "config_update", key="default_project_key", value=project_key)
     print(f"Default Backlog project set to {project_key}")
 
 
@@ -44,6 +48,7 @@ def main():
 
     args = parser.parse_args()
     config = load_config()
+    log_event("info", "command_start", command=f"config:{args.command}")
 
     if args.command == "list-projects":
         print_projects(config)
@@ -53,11 +58,13 @@ def main():
         set_default(args.project_key)
     elif args.command == "show":
         print(json.dumps(config, indent=2, ensure_ascii=False))
+    log_event("info", "command_end", command=f"config:{args.command}")
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as error:
+        log_event("error", "command_error", command="config", error=error)
         print(f"Error: {error}", file=sys.stderr)
         sys.exit(1)
