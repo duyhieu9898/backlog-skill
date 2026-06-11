@@ -74,9 +74,8 @@ def my_story_task_overview(config, project_key=None, query=None, today=None):
 
     client = BacklogClient(config)
     issues = client.get_issues(client.get_project_id(project), query=query, assignee_id=assignee_id)
-    today = today or date.today()
     return [
-        summarize_story_task(issue, today)
+        issue
         for issue in issues
         if is_story_or_task_for_user(issue, assignee_id, issue_types, excluded_statuses)
     ]

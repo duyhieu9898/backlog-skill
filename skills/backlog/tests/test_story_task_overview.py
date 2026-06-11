@@ -89,22 +89,22 @@ class StoryTaskOverviewTest(unittest.TestCase):
         self.assertEqual(
             [
                 {
+                    "issueType": {"name": "Story"},
+                    "status": {"name": "Open"},
+                    "assignee": {"id": 778617},
                     "issueKey": "AQM-1",
                     "summary": "Story A",
                     "description": "Story desc",
-                    "status": "Open",
                     "dueDate": "2026-06-04",
-                    "daysUntilDue": 2,
-                    "dueAlertLevel": None,
                 },
                 {
+                    "issueType": {"name": "Task"},
+                    "status": {"name": "In Progress"},
+                    "assignee": {"id": 778617},
                     "issueKey": "AQM-2",
                     "summary": "Task A",
                     "description": "Task desc",
-                    "status": "In Progress",
                     "dueDate": None,
-                    "daysUntilDue": None,
-                    "dueAlertLevel": None,
                 },
             ],
             result,

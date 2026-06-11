@@ -15,5 +15,8 @@
   "defaults": {
     "assignee": "me",
     "priority_id": 3
+  },
+  "source_paths": {
+    "AQM": "/home/hieund/Documents/OSAKA/POC"
   }
 }

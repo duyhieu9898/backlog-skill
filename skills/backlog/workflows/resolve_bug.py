@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 from datetime import date, timedelta
 
 from .bug_template import bug_context
@@ -38,6 +39,22 @@ def my_open_bugs(config, project_key=None, query=None):
     issues = client.get_issues(client.get_project_id(project), query=query, assignee_id=assignee_id)
     return [
         bug_context(issue)
+        for issue in issues
+        if is_open_bug_for_user(issue, assignee_id, issue_type, excluded_statuses)
+    ]
+
+
+def my_open_bugs_raw(config, project_key=None, query=None):
+    """Like my_open_bugs but returns raw API issues (for compact_issue presenter)."""
+    workflow = load_workflow_config("resolve_bug")
+    project = resolve_project(config, project_key)
+    assignee_id = resolve_user_id(config, require_value(workflow, "assignee", "resolve_bug"))
+    issue_type = require_value(workflow, "issue_type", "resolve_bug")
+    excluded_statuses = set(require_list(workflow, "excluded_statuses", "resolve_bug"))
+    client = BacklogClient(config)
+    issues = client.get_issues(client.get_project_id(project), query=query, assignee_id=assignee_id)
+    return [
+        issue
         for issue in issues
         if is_open_bug_for_user(issue, assignee_id, issue_type, excluded_statuses)
     ]
@@ -112,8 +129,22 @@ def add_custom_value(payload, project, field_key, selected_value, optional=False
     payload.update(resolve_custom_field_defaults(project, {field_key: selected_value}))
 
 
+SUMMARY_PREFIX_PATTERN = re.compile(r"^(?:\s*\[[^\]]*\])+\s*[-:]?\s*")
+
+
+def clean_summary_for_fix(summary):
+    """Strip leading [bug][key][module] prefixes from a bug summary so the
+    fallback Corrective Action reads like a fix description, not a title."""
+    if not summary:
+        return ""
+    return SUMMARY_PREFIX_PATTERN.sub("", str(summary)).strip()
+
+
 def corrective_action_text(issue, issue_key, fix_description=None):
-    source = fix_description or issue.get("summary") or issue_key
+    if fix_description:
+        source = fix_description
+    else:
+        source = clean_summary_for_fix(issue.get("summary")) or issue.get("summary") or issue_key
     return f"fixed {str(source).lower()}"
 
 
@@ -176,12 +207,74 @@ def build_resolve_bug_payload(
     add_custom_value(payload, project, "impacted", impacted)
     add_custom_value(payload, project, "corrective_action", corrective_action_text(issue, issue_key, fix_description))
     add_custom_default_if_missing(payload, issue, project, "resolution", resolution, optional=True)
-    return {
+    warnings = []
+    if not fix_description:
+        warnings.append(
+            "corrective_action fell back to the issue summary; pass --fix-description for an accurate fix note."
+        )
+
+    built = {
         "issue": issue_key,
         "project": project["key"],
         "payload": payload,
         "context": bug_context(issue),
     }
+    built["changes"] = summarize_changes(issue, project, payload)
+    built["warnings"] = warnings
+    return built
+
+
+CORE_FIELD_LABELS = {
+    "statusId": "Status",
+    "assigneeId": "Assignee",
+    "startDate": "Start Date",
+    "dueDate": "Due Date",
+    "estimatedHours": "Estimated Hours",
+    "actualHours": "Actual Hours",
+    "comment": "Comment",
+}
+
+
+def custom_field_label_map(project):
+    labels = {}
+    for field_config in project.get("bug", {}).get("custom_fields", {}).values():
+        labels[field_config["field"]] = field_config.get("label") or field_config["field"]
+    return labels
+
+
+def custom_field_current_value(issue, field_id):
+    for field in issue.get("customFields", []) or []:
+        if field.get("id") == field_id:
+            value = field.get("value")
+            if isinstance(value, dict):
+                return value.get("name")
+            if isinstance(value, list):
+                return ", ".join(str((item or {}).get("name", item)) for item in value)
+            return value
+    return None
+
+
+def summarize_changes(issue, project, payload):
+    """Human-readable list of fields this resolve will write. Keeps the agent
+    from re-reading the full issue context just to verify the diff."""
+    labels = custom_field_label_map(project)
+    changes = []
+    for key, value in payload.items():
+        if key in CORE_FIELD_LABELS:
+            changes.append({"field": CORE_FIELD_LABELS[key], "key": key, "value": value})
+        elif key.startswith("customField_"):
+            field_id = custom_field_id(key)
+            changes.append(
+                {
+                    "field": labels.get(key, key),
+                    "key": key,
+                    "from": custom_field_current_value(issue, field_id),
+                    "value": value,
+                }
+            )
+        else:
+            changes.append({"field": key, "key": key, "value": value})
+    return changes
 
 
 def resolve_bug(config, issue_key, dry_run=True, **kwargs):
