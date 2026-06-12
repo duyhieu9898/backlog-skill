@@ -30,6 +30,13 @@ async function initializeOffset() {
 async function poll() {
     let offset = (0, state_1.readOffset)();
     console.log(`Agent started. Allowed chat id: ${telegramConfig.allowedChatId}`);
+    try {
+        await telegram.deleteWebhook();
+        console.log("Deleted active webhook (if any) to enable polling.");
+    }
+    catch (error) {
+        console.error("Failed to delete webhook:", error);
+    }
     if (offset === null) {
         offset = await initializeOffset();
     }

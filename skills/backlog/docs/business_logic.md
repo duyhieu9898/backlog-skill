@@ -65,57 +65,14 @@ Khi tạo mới, dùng template chuẩn như trên. Parser vẫn cần linh ho�
 
 ## Resolve Bug Do Tester Tạo
 
-Dùng rule này khi resolve bug có `Detected Role = Tester` và hiện đang assign cho tôi.
+Rule resolve bug đã được mã hóa trong CLI. Chạy lệnh để lấy logic hiện hành thay vì đọc lại ở đây:
 
-Nếu không đọc được `Detected Role`, vẫn có thể resolve theo yêu cầu rõ ràng của user, nhưng phải nêu rõ điểm này trong phần tóm tắt dry-run.
+```bash
+python3 scripts/backlog.py bug rules
+python3 scripts/backlog.py bug fields <field>
+```
 
-Các field thường đã có giá trị và không được đổi chỉ vì workflow resolve:
-
-- `Detected Role`
-- `Summary`
-- `Description`
-- `QC Activity`
-
-Hành động resolve:
-
-- Đổi status thành `Resolved`.
-- Assign issue về `createdUser`.
-- Set các field còn thiếu theo rule bên dưới.
-- `Impacted` luôn update đè.
-- `Corrective Action` luôn update đè.
-
-Khi bug được chuyển sang trạng thái kết thúc như `Closed` hoặc `Resolved`, assignee chuẩn là người tạo issue (`createdUser`).
-
-Các field chỉ set khi hiện đang trống:
-
-- `Start Date = hôm nay`
-- `Due Date = Start Date + 2 ngày`
-- `Bug Origin = COD_Other` hoặc giá trị phù hợp hơn theo ngữ cảnh
-- `Cause Category = Not Applicable` hoặc giá trị phù hợp hơn theo ngữ cảnh
-- `Estimated Hours = 1`
-- `Actual Hours = 1`
-- `Resolution = fixed`
-
-Nếu user truyền `estimated hours` thì dùng giá trị user truyền; nếu không truyền và `estimatedHours` đang trống thì set `1`.
-
-Nếu user truyền `actual hours` thì dùng giá trị user truyền; nếu không truyền và `actualHours` đang trống thì set `1`.
-
-Các field luôn update đè:
-
-- `Impacted = no`
-- `Corrective Action = fixed {description_lower}`
-
-Hai field này là ngoại lệ: update đè kể cả đã có value.
-
-`description_lower` nên lấy từ mô tả fix do user cung cấp nếu có, ví dụ tham số `--fix-description`. Nếu không có, dùng issue summary. Summary luôn được xem là có giá trị.
-
-Khi chọn giá trị theo ngữ cảnh cho `Bug Origin` và `Cause Category`, đọc `docs/bug_field_guidance.md`.
-
-Thứ tự ưu tiên khi chọn field theo ngữ cảnh:
-
-1. Dùng giá trị user chỉ định.
-2. Nếu agent đủ chắc dựa trên bug context và `docs/bug_field_guidance.md`, chọn giá trị phù hợp hơn default.
-3. Nếu không đủ chắc, dùng default và nói rõ điểm chưa chắc trong phần tóm tắt dry-run.
+Tóm tắt: resolve áp dụng cho issue type `Bug` đang assign cho tôi; đổi status `Resolved`, assign về `createdUser`, set date/hours còn thiếu, luôn ghi đè `impacted` và `corrective_action`, các field khác chỉ set khi trống. `resolve` mặc định dry-run và trả `changes` + `warnings`; chỉ `--apply` sau khi diff đúng. Nếu không đọc được `Detected Role`, vẫn resolve theo yêu cầu rõ ràng của user nhưng phải nêu rõ trong tóm tắt dry-run. Chi tiết default, field guidance, và quy tắc chọn theo ngữ cảnh nằm trong output `rules`/`fields`.
 
 ## Tổng Quan Story/Task
 

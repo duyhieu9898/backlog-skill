@@ -6,9 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import inspect_project
+from backlog_tool import inspect as inspect_project
 
 
 class InspectProjectTest(unittest.TestCase):
@@ -17,45 +16,22 @@ class InspectProjectTest(unittest.TestCase):
         self.assertEqual("custom_field", inspect_project.slugify("!!!"))
 
     def test_build_project_config_collects_reference_metadata(self):
-        def fake_get_json(config, path):
-            responses = {
-                "/projects/OOP": {
-                    "projectKey": "OOP",
-                    "name": "Project Name",
-                    "id": 82531,
-                },
-                "/projects/OOP/issueTypes": [
-                    {"id": 1, "name": "Bug"},
-                ],
-                "/projects/OOP/categories": [
-                    {"id": 2, "name": "112_DHP"},
-                ],
-                "/projects/OOP/statuses": [
-                    {"id": 3, "name": "Closed"},
-                ],
-                "/projects/OOP/customFields": [
-                    {
-                        "id": 10,
-                        "name": "QC Activity",
-                        "items": [
-                            {"id": 7, "name": "Unit Test"},
-                        ],
-                    },
-                    {
-                        "id": 11,
-                        "name": "QC Activity",
-                        "items": [],
-                    },
-                ],
-            }
-            return responses[path]
+        responses = {
+            "/projects/OOP": {"projectKey": "OOP", "name": "Project Name", "id": 82531},
+            "/projects/OOP/issueTypes": [{"id": 1, "name": "Bug"}],
+            "/projects/OOP/categories": [{"id": 2, "name": "112_DHP"}],
+            "/projects/OOP/statuses": [{"id": 3, "name": "Closed"}],
+            "/projects/OOP/customFields": [
+                {"id": 10, "name": "QC Activity", "items": [{"id": 7, "name": "Unit Test"}]},
+                {"id": 11, "name": "QC Activity", "items": []},
+            ],
+        }
 
-        with mock.patch.object(inspect_project, "load_config", return_value={}), mock.patch.object(
-            inspect_project,
-            "get_json",
-            side_effect=fake_get_json,
-        ):
-            result = inspect_project.build_project_config("OOP")
+        fake_client = mock.Mock()
+        fake_client.request_json.side_effect = lambda method, path: responses[path]
+
+        with mock.patch.object(inspect_project, "BacklogClient", return_value=fake_client):
+            result = inspect_project.build_project_config({}, "OOP")
 
         self.assertEqual("OOP", result["key"])
         self.assertEqual("Project Name", result["name"])

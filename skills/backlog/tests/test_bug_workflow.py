@@ -226,6 +226,31 @@ class BugWorkflowTest(unittest.TestCase):
 
         self.assertEqual("fixed validated save button", result["payload"]["customField_5"])
 
+    def test_corrective_action_strips_summary_prefix_when_no_fix_description(self):
+        self.client.get_issue.return_value = {
+            **BUG_ISSUE,
+            "summary": "[BUG][AQM-74][Chatbox] - Layout broken",
+        }
+
+        result = bug_workflow.resolve_bug(CONFIG, "AQM-123", dry_run=True, today=date(2026, 6, 2))
+
+        self.assertEqual("fixed layout broken", result["payload"]["customField_5"])
+
+    def test_resolve_dry_run_includes_changes_and_warnings(self):
+        result = bug_workflow.resolve_bug(CONFIG, "AQM-123", dry_run=True, today=date(2026, 6, 2))
+
+        change_keys = {change["key"] for change in result["changes"]}
+        self.assertIn("statusId", change_keys)
+        self.assertIn("customField_5", change_keys)  # corrective_action
+        self.assertTrue(any("fix-description" in w for w in result["warnings"]))
+
+    def test_resolve_no_warning_when_fix_description_given(self):
+        result = bug_workflow.resolve_bug(
+            CONFIG, "AQM-123", dry_run=True, today=date(2026, 6, 2), fix_description="Fixed it"
+        )
+
+        self.assertEqual([], result["warnings"])
+
     def test_resolve_bug_only_sets_missing_defaults(self):
         self.client.get_issue.return_value = {
             **BUG_ISSUE,

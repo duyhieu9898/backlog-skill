@@ -57,7 +57,7 @@ class BacklogClient:
     def get_issue(self, issue_id):
         return self.request_json("GET", f"/issues/{issue_id}")
 
-    def get_issues(self, project_id, query=None, assignee_id=None):
+    def get_issues(self, project_id, query=None, assignee_id=None, status_ids=None, issue_type_ids=None):
         params = {
             "projectId[]": [project_id],
             "count": 100,
@@ -66,6 +66,10 @@ class BacklogClient:
             params["keyword"] = query
         if assignee_id:
             params["assigneeId[]"] = [assignee_id]
+        if status_ids:
+            params["statusId[]"] = status_ids
+        if issue_type_ids:
+            params["issueTypeId[]"] = issue_type_ids
         return self.request_json("GET", "/issues", params=params)
 
     def create_issue(self, payload):

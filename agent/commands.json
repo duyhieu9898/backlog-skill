@@ -4,7 +4,7 @@
       "name": "bemo.checkout",
       "label": "Bemo checkout",
       "skillSlug": "bemo",
-      "aliases": ["/bemo_checkout", "bemo checkout"],
+      "aliases": ["/bemo_checkout"],
       "cwd": "../skills/bemo",
       "command": "npm run -s checkout",
       "requiresConfirmation": false
@@ -40,36 +40,36 @@
       "name": "backlog.projects",
       "label": "Backlog list configured projects",
       "skillSlug": "backlog",
-      "aliases": ["/backlog_projects", "backlog projects"],
+      "aliases": ["/backlog_projects"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog_config.py list-projects",
+      "command": "python3 scripts/backlog.py config list-projects",
       "requiresConfirmation": false
     },
     {
       "name": "backlog.current",
       "label": "Backlog current default project",
       "skillSlug": "backlog",
-      "aliases": ["/backlog_current", "backlog current"],
+      "aliases": ["/backlog_current"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog_config.py current",
+      "command": "python3 scripts/backlog.py config current",
       "requiresConfirmation": false
     },
     {
       "name": "backlog.list",
       "label": "Backlog list issues",
       "skillSlug": "backlog",
-      "aliases": ["/backlog_list", "backlog list"],
+      "aliases": ["/backlog_list"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog_api.py list",
+      "command": "python3 scripts/backlog.py issue list",
       "requiresConfirmation": false
     },
     {
       "name": "backlog.list_me",
       "label": "Backlog list my issues",
       "skillSlug": "backlog",
-      "aliases": ["/backlog_me", "backlog me"],
+      "aliases": ["/backlog_me"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog_api.py list --me",
+      "command": "python3 scripts/backlog.py issue list --me",
       "requiresConfirmation": false
     },
     {
@@ -78,7 +78,7 @@
       "skillSlug": "backlog",
       "aliases": ["/backlog_inspect_oop"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/inspect_project.py OOP",
+      "command": "python3 scripts/backlog.py project inspect OOP",
       "requiresConfirmation": false
     },
     {
@@ -87,7 +87,7 @@
       "skillSlug": "backlog",
       "aliases": ["/backlog_inspect_aqm"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/inspect_project.py AQM",
+      "command": "python3 scripts/backlog.py project inspect AQM",
       "requiresConfirmation": false
     },
     {
@@ -96,7 +96,7 @@
       "skillSlug": "backlog",
       "aliases": ["/backlog_default_oop"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog_config.py set-default OOP",
+      "command": "python3 scripts/backlog.py config set-default OOP",
       "requiresConfirmation": true
     },
     {
@@ -105,7 +105,7 @@
       "skillSlug": "backlog",
       "aliases": ["/backlog_default_aqm"],
       "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog_config.py set-default AQM",
+      "command": "python3 scripts/backlog.py config set-default AQM",
       "requiresConfirmation": true
     },
     {
@@ -114,6 +114,13 @@
       "skillSlug": "backlog",
       "cwd": "../skills/backlog",
       "command": "*",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "shutdown",
+      "label": "Tắt máy tính",
+      "aliases": ["/shutdown"],
+      "command": "systemctl poweroff",
       "requiresConfirmation": true
     }
   ]

@@ -27,8 +27,10 @@ test("loadCommands maps command names and aliases from allowlist", () => {
 
   assert.equal(commands["bemo.checkout"].command, "npm run -s checkout");
   assert.equal(commands["/bemo_checkout"].name, "bemo.checkout");
-  assert.equal(commands["bemo checkout"].name, "bemo.checkout");
   assert.equal(commands["/bemo_run"].requiresConfirmation, true);
+  assert.equal(commands["shutdown"].command, "systemctl poweroff");
+  assert.equal(commands["/shutdown"].name, "shutdown");
+  assert.equal(commands["/shutdown"].requiresConfirmation, true);
 });
 
 test("configured command cwd resolves to an existing skill directory", () => {

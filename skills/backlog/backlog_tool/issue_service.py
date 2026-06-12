@@ -43,10 +43,45 @@ def get_issue(config, issue_id):
     return BacklogClient(config).get_issue(issue_id)
 
 
-def get_issues(config, project_key=None, query=None, assignee_id=None):
+def get_issues(config, project_key=None, query=None, assignee_id=None, open_only=False, issue_types=None):
+    """List issues with optional filters.
+
+    open_only: exclude Closed status via API filter.
+    issue_types: list of type names (e.g. ["Bug", "Story"]) to filter.
+    """
     project = resolve_project(config, project_key)
     client = BacklogClient(config)
-    return client.get_issues(client.get_project_id(project), query=query, assignee_id=assignee_id)
+    project_id = client.get_project_id(project)
+
+    status_ids = None
+    if open_only:
+        status_ids = _non_closed_status_ids(project)
+
+    issue_type_ids = None
+    if issue_types:
+        issue_type_ids = _resolve_issue_type_ids(project, issue_types)
+
+    return client.get_issues(
+        project_id, query=query, assignee_id=assignee_id,
+        status_ids=status_ids, issue_type_ids=issue_type_ids,
+    )
+
+
+def _non_closed_status_ids(project):
+    """Get all status IDs except Closed."""
+    statuses = project.get("bug", {}).get("status_options", [])
+    return [s["id"] for s in statuses if s.get("name") != "Closed"]
+
+
+def _resolve_issue_type_ids(project, type_names):
+    """Resolve issue type names to IDs from project catalog."""
+    options = project.get("bug", {}).get("issue_type_options", [])
+    name_set = set(type_names)
+    ids = [opt["id"] for opt in options if opt.get("name") in name_set]
+    if not ids:
+        available = ", ".join(opt["name"] for opt in options)
+        raise ValueError(f"Unknown issue type(s): {type_names}. Available: {available}")
+    return ids
 
 
 def build_create_payload(config, args):

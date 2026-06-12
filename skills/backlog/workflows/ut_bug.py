@@ -19,8 +19,8 @@ class PostCreateUpdateError(RuntimeError):
     def __init__(self, issue_key, payload, error):
         super().__init__(
             f"Created UT bug {issue_key}, but failed to update it to Closed. "
-            f"Run manually: python3 scripts/backlog_api.py update {issue_key} "
-            f"--status Closed --assignee <creator-or-me>. Error: {error}"
+            f"Run manually: python3 scripts/backlog.py issue update {issue_key} "
+            f"--status Closed --assignee <creator-or-me> --apply. Error: {error}"
         )
         self.issue_key = issue_key
         self.payload = payload

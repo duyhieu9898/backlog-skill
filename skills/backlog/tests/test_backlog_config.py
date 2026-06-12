@@ -1,6 +1,5 @@
-import io
+import argparse
 import unittest
-from contextlib import redirect_stdout
 from unittest import mock
 
 import sys
@@ -8,34 +7,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import backlog_config
+from backlog_tool import cli
 
 
 class BacklogConfigTest(unittest.TestCase):
-    def test_print_projects_marks_default_and_missing_catalog(self):
-        config = {
-            "default_project_key": "AQM",
-            "projects": ["OOP", "AQM"],
-        }
+    def test_config_projects_marks_default_and_missing_catalog(self):
+        config = {"default_project_key": "AQM", "projects": ["OOP", "AQM"]}
 
         def fake_load_project_catalog(project_key):
             if project_key == "OOP":
                 return {"id": 82531, "name": "Osaka"}
             raise ValueError("missing")
 
-        output = io.StringIO()
-        with mock.patch.object(
-            backlog_config,
-            "load_project_catalog",
-            side_effect=fake_load_project_catalog,
-        ), redirect_stdout(output):
-            backlog_config.print_projects(config)
+        with mock.patch.object(cli, "load_project_catalog", side_effect=fake_load_project_catalog):
+            rows = cli.config_projects(config)
 
-        text = output.getvalue()
-        self.assertIn("  OOP id=82531 name=Osaka", text)
-        self.assertIn("* AQM id=- name=(missing catalog)", text)
+        by_key = {row["key"]: row for row in rows}
+        self.assertEqual({"key": "OOP", "id": 82531, "name": "Osaka", "default": False}, by_key["OOP"])
+        self.assertEqual({"key": "AQM", "id": None, "name": "(missing catalog)", "default": True}, by_key["AQM"])
 
     def test_set_default_updates_only_known_project(self):
         config = {
@@ -43,27 +33,21 @@ class BacklogConfigTest(unittest.TestCase):
             "default_project_key": "AQM",
             "projects": ["AQM", "OOP"],
         }
+        args = argparse.Namespace(action="set-default", project_key="OOP")
 
-        with mock.patch.object(backlog_config, "load_config", return_value=config), mock.patch.object(
-            backlog_config,
-            "save_config",
-        ) as save_config, mock.patch.object(backlog_config, "log_event"), redirect_stdout(io.StringIO()):
-            backlog_config.set_default("OOP")
+        with mock.patch.object(cli, "save_config") as save_config, mock.patch.object(cli, "log_event"):
+            result = cli.run_config(config, args)
 
         self.assertEqual("OOP", config["default_project_key"])
+        self.assertEqual({"defaultProjectKey": "OOP", "updated": True}, result)
         save_config.assert_called_once_with(config)
 
     def test_set_default_rejects_unknown_project(self):
-        config = {
-            "default_project_key": "AQM",
-            "projects": ["AQM"],
-        }
+        config = {"default_project_key": "AQM", "projects": ["AQM"]}
+        args = argparse.Namespace(action="set-default", project_key="OOP")
 
-        with mock.patch.object(backlog_config, "load_config", return_value=config), self.assertRaisesRegex(
-            ValueError,
-            "Unknown project",
-        ):
-            backlog_config.set_default("OOP")
+        with self.assertRaisesRegex(ValueError, "Unknown project"):
+            cli.run_config(config, args)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,10 @@ type TelegramResponse<T> = {
 export class TelegramClient {
   constructor(private readonly config: TelegramConfig) {}
 
+  async deleteWebhook(): Promise<void> {
+    await this.request("deleteWebhook", {});
+  }
+
   async sendMessage(chatId: string, text: string): Promise<void> {
     for (const chunk of splitTelegramText(text)) {
       await this.request("sendMessage", {

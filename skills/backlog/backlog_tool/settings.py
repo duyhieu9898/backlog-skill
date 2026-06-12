@@ -12,6 +12,7 @@ WORKFLOWS_CONFIG_DIR = os.path.join(SKILL_DIR, "config", "workflows")
 ENV_PATH = os.path.join(SKILL_DIR, ".env")
 LOG_DIR = os.path.join(SKILL_DIR, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "backlog.log")
+METRICS_PATH = os.path.join(LOG_DIR, "metrics.log")
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_LOG_VALUE_LENGTH = 500
 
@@ -78,7 +79,7 @@ def load_project_catalog(project_key):
     path = catalog_path(project_key)
     if not os.path.exists(path):
         raise ValueError(
-            f"Missing project catalog {path}. Run: python3 scripts/inspect_project.py {project_key}"
+            f"Missing project catalog {path}. Run: python3 scripts/backlog.py project inspect {project_key}"
         )
     with open(path, "r", encoding="utf-8") as catalog_file:
         return json.load(catalog_file)
@@ -147,3 +148,65 @@ def log_event(level, event, **fields):
 def response_error_body(response):
     text = response.text or ""
     return text[:MAX_LOG_VALUE_LENGTH]
+
+
+def log_metric(command, output_bytes, duration_ms, status, dry_run=None, project=None):
+    """Append one JSON line per CLI invocation to logs/metrics.log.
+
+    output_bytes is a proxy for token cost; comparing compact vs --json-full
+    runs over time shows the real saving during live testing."""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    record = {
+        "ts": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "command": command,
+        "status": status,
+        "outputBytes": output_bytes,
+        "durationMs": duration_ms,
+        "dryRun": dry_run,
+        "project": project,
+    }
+    with open(METRICS_PATH, "a", encoding="utf-8") as metrics_file:
+        metrics_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def read_metrics():
+    if not os.path.exists(METRICS_PATH):
+        return []
+    records = []
+    with open(METRICS_PATH, "r", encoding="utf-8") as metrics_file:
+        for line in metrics_file:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
+def summarize_metrics():
+    records = read_metrics()
+    by_command = {}
+    for record in records:
+        command = record.get("command", "unknown")
+        bucket = by_command.setdefault(
+            command, {"command": command, "runs": 0, "totalOutputBytes": 0, "errors": 0, "_durations": []}
+        )
+        bucket["runs"] += 1
+        bucket["totalOutputBytes"] += record.get("outputBytes") or 0
+        if record.get("status") == "error":
+            bucket["errors"] += 1
+        duration = record.get("durationMs")
+        if duration is not None:
+            bucket["_durations"].append(duration)
+
+    summary = []
+    for bucket in by_command.values():
+        runs = bucket["runs"]
+        durations = sorted(bucket.pop("_durations"))
+        bucket["avgOutputBytes"] = round(bucket["totalOutputBytes"] / runs) if runs else 0
+        bucket["p95DurationMs"] = durations[max(0, int(len(durations) * 0.95) - 1)] if durations else None
+        summary.append(bucket)
+    summary.sort(key=lambda item: item["totalOutputBytes"], reverse=True)
+    return {"totalRuns": len(records), "commands": summary}

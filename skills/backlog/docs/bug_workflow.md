@@ -1,92 +1,39 @@
 # Bug Workflow
 
-Use this document when the user asks to get bug context, analyze a bug for fixing, list bugs assigned to them, or resolve a bug.
+Quy trình resolve bug được mã hóa trong CLI. Không cần đọc rule dài ở đây — chạy lệnh để lấy đúng logic hiện hành.
 
-## Commands
-
-```bash
-python3 scripts/bug_workflow.py my-open --project AQM
-python3 scripts/bug_workflow.py context AQM-123
-python3 scripts/bug_workflow.py resolve AQM-123 --actual-hours 1.5 --fix-description "Save issue" --comment "Fixed save issue"
-python3 scripts/bug_workflow.py resolve AQM-123 --actual-hours 1.5 --apply
-```
-
-`resolve` is dry-run by default. Only use `--apply` after the dry-run payload is correct.
-
-## Bug Context
-
-`context` parses issue description into:
-
-```markdown
-**Environment**:
-
-**Pre-Condition**:
--
-
-**Steps to reproduce**:
-1.
-2.
-
-**Actual**:
-
-**Expected**:
-
- **Evidence**:
-```
-
-The parser also accepts imperfect headings such as `**Actual:` or `**Actual:**`, because tester/QC edits can remove one side of the markdown bold marker.
-
-The output includes:
-
-- `description`: deterministic parsed sections.
-- `descriptionMeta.hasTemplateMarkers`: whether known section markers were found.
-- `descriptionMeta.presentSections`: sections with values.
-- `descriptionMeta.missingSections`: sections without values.
-- `rawDescription`: original Backlog description.
-
-If `hasTemplateMarkers=false` or important sections are missing, use `rawDescription` plus the parsed result for AI fallback analysis. Do not invent facts that are not in the issue.
-
-## Resolve Bug Rule
-
-The personal resolve workflow:
-
-- Applies only to issue type `Bug`.
-- Sets status to `Resolved` by default.
-- Assigns the issue back to `createdUser`.
-- Sets missing `startDate` to today.
-- Sets missing `dueDate` to `startDate + 2 days`.
-- Sets missing `estimatedHours` to the user value, or `1` when user does not provide one.
-- Sets missing `actualHours` to the user value, or `1` when user does not provide one.
-- Uses dry-run by default.
-
-Custom field behavior:
-
-- `impacted` is always overwritten.
-- `corrective_action` is always overwritten.
-- Other custom fields are only set when the issue currently has no value.
-
-Default custom field values:
-
-- `qc_activity=Integration Test`
-- `cause_category=Not Applicable`
-- `bug_origin=FUN_Incomplete Function`
-- `impacted=no`
-- `corrective_action=fixed <fix description lowercased>`, falling back to issue summary when `--fix-description` is not provided.
-- `resolution=fixed` when the project has a `resolution` custom field.
-
-Override custom field values with:
+## Lấy rule và field guidance
 
 ```bash
---qc-activity "Unit Test"
---cause-category "CAR_Carelessness"
---bug-origin "COD_Coding Logic"
---fix-description "Validate required field"
+python3 scripts/backlog.py bug rules              # rule resolve bug, sinh từ config/workflows/resolve_bug.json
+python3 scripts/backlog.py bug fields             # các field cần chọn khi resolve
+python3 scripts/backlog.py bug fields bug_origin  # option + ý nghĩa của 1 field
 ```
+
+`rules` trả về: điều kiện áp dụng, các action (status, assignee về creator, dates, hours), field luôn ghi đè (`impacted`, `corrective_action`), field chỉ set khi trống, default values, các flag override, và lưu ý an toàn.
+
+## Lệnh chính
+
+```bash
+python3 scripts/backlog.py bug my-open --project AQM
+python3 scripts/backlog.py bug context AQM-123
+python3 scripts/backlog.py bug resolve AQM-123 --actual-hours 1.5 --fix-description "Save issue"
+python3 scripts/backlog.py bug resolve AQM-123 --apply
+```
+
+- Output mặc định compact; thêm `--json-full` khi cần raw JSON.
+- `resolve` mặc định dry-run, trả `changes` (diff field cũ → mới) và `warnings`. Đọc `changes` để verify thay vì dump cả issue. Chỉ thêm `--apply` sau khi diff đúng.
+- `context` parse description theo template bug; nếu `descriptionMeta.hasTemplateMarkers=false` hoặc thiếu section quan trọng, dùng thêm `rawDescription` cho AI fallback. Không bịa thông tin không có trong issue.
+
+## Corrective Action
+
+- Có `--fix-description`: `Corrective Action = fixed <text lowercased>`.
+- Không có: fallback summary đã bỏ prefix `[bug][key][module]`, và script thêm cảnh báo vào `warnings`. Ưu tiên luôn truyền `--fix-description`.
 
 ## Agent Flow
 
-1. Run `context <ISSUE_KEY>` to inspect the bug.
-2. Read `docs/bug_field_guidance.md` before choosing `qc_activity`, `bug_origin`, or `cause_category`.
-3. Build a resolve dry-run command with actual hours/comment and selected field values.
-4. Review `statusId`, `assigneeId`, dates, hours, and `customField_*` values.
-5. Use `--apply` only after the payload is correct or user explicitly approves.
+1. `context <ISSUE_KEY>` để xem bug.
+2. `fields <field>` trước khi chọn `qc_activity`, `bug_origin`, `cause_category`.
+3. `resolve` dry-run với hours/comment/field values.
+4. Đọc `changes` và `warnings`.
+5. `--apply` sau khi diff đúng hoặc user xác nhận.

@@ -6,6 +6,9 @@ class TelegramClient {
     constructor(config) {
         this.config = config;
     }
+    async deleteWebhook() {
+        await this.request("deleteWebhook", {});
+    }
     async sendMessage(chatId, text) {
         for (const chunk of splitTelegramText(text)) {
             await this.request("sendMessage", {
