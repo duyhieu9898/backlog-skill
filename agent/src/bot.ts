@@ -29,7 +29,7 @@ async function initializeOffset(): Promise<number> {
 
 async function poll(): Promise<void> {
   let offset = readOffset();
-  console.log(`Agent started. Allowed chat id: ${telegramConfig.allowedChatId}`);
+  console.log("Agent started with an allowlisted Telegram chat.");
 
   try {
     await telegram.deleteWebhook();
