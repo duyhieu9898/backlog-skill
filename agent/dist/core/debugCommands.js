@@ -1,11 +1,47 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.formatLastRun = formatLastRun;
+exports.formatLastCommandError = formatLastCommandError;
+exports.formatToolError = formatToolError;
 exports.isDebugCommand = isDebugCommand;
 exports.handleDebugCommand = handleDebugCommand;
 const commands_1 = require("../commands");
 const paths_1 = require("../config/paths");
 const repositories_1 = require("../storage/repositories");
 const startedAt = Date.now();
+function formatLastRun(run) {
+    if (!run)
+        return "No command runs yet.";
+    return [
+        `${run.status.toUpperCase()} ${run.label}`,
+        `traceId: ${run.trace_id}`,
+        `finished: ${run.finished_at || "-"}`,
+        `exit: ${run.exit_code ?? "-"}`,
+        "",
+        run.output_tail || run.error_message || "(no output)",
+    ].join("\n");
+}
+function formatLastCommandError(run) {
+    if (!run)
+        return "No failed command or tool runs yet.";
+    return [
+        `FAILED ${run.label}`,
+        `traceId: ${run.trace_id}`,
+        `finished: ${run.finished_at || "-"}`,
+        `error: ${run.error_message || "-"}`,
+        "",
+        run.output_tail || "(no output)",
+    ].join("\n");
+}
+function formatToolError(tool) {
+    return [
+        `FAILED TOOL ${tool.event}`,
+        `traceId: ${tool.trace_id}`,
+        `at: ${tool.created_at}`,
+        "",
+        JSON.stringify(JSON.parse(tool.payload_json), null, 2),
+    ].join("\n");
+}
 function formatDuration(ms) {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
@@ -21,6 +57,7 @@ function isDebugCommand(text) {
     return (normalized === "/status" ||
         normalized === "/last" ||
         normalized === "/last-error" ||
+        normalized === "/debug" ||
         normalized.startsWith("/debug ") ||
         normalized === "/commands" ||
         normalized === "/skills" ||
@@ -64,34 +101,23 @@ function handleDebugCommand(text, registry) {
             `current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
             `pending confirmations: ${(0, repositories_1.countPendingConfirmations)()}`,
             `loaded commands: ${catalog.allow.length}`,
+            `loaded skills: ${registry.listSkills().length}`,
             `sqlite: ${paths_1.sqliteFile}`,
         ].join("\n");
     }
     if (normalized === "/last") {
-        const run = (0, repositories_1.getLastCommandRun)();
-        if (!run)
-            return "No command runs yet.";
-        return [
-            `${run.status.toUpperCase()} ${run.label}`,
-            `traceId: ${run.trace_id}`,
-            `finished: ${run.finished_at || "-"}`,
-            `exit: ${run.exit_code ?? "-"}`,
-            "",
-            run.output_tail || run.error_message || "(no output)",
-        ].join("\n");
+        return formatLastRun((0, repositories_1.getLastCommandRun)());
     }
     if (normalized === "/last-error") {
         const run = (0, repositories_1.getLastFailedCommandRun)();
-        if (!run)
-            return "No failed command runs yet.";
-        return [
-            `FAILED ${run.label}`,
-            `traceId: ${run.trace_id}`,
-            `finished: ${run.finished_at || "-"}`,
-            `error: ${run.error_message || "-"}`,
-            "",
-            run.output_tail || "(no output)",
-        ].join("\n");
+        const tool = (0, repositories_1.getLastFailedToolEvent)();
+        if (tool && (!run?.finished_at || tool.created_at > run.finished_at)) {
+            return formatToolError(tool);
+        }
+        return formatLastCommandError(run);
+    }
+    if (normalized === "/debug") {
+        return "Usage: /debug <traceId>";
     }
     if (normalized.startsWith("/debug ")) {
         const traceId = text.trim().split(/\s+/, 2)[1];

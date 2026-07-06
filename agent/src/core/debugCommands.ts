@@ -5,11 +5,48 @@ import {
   getJsonState,
   getLastCommandRun,
   getLastFailedCommandRun,
+  getLastFailedToolEvent,
   listTraceEvents,
+  type CommandRunRow,
+  type TraceEventRow,
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
 
 const startedAt = Date.now();
+
+export function formatLastRun(run: CommandRunRow | null): string {
+  if (!run) return "No command runs yet.";
+  return [
+    `${run.status.toUpperCase()} ${run.label}`,
+    `traceId: ${run.trace_id}`,
+    `finished: ${run.finished_at || "-"}`,
+    `exit: ${run.exit_code ?? "-"}`,
+    "",
+    run.output_tail || run.error_message || "(no output)",
+  ].join("\n");
+}
+
+export function formatLastCommandError(run: CommandRunRow | null): string {
+  if (!run) return "No failed command or tool runs yet.";
+  return [
+    `FAILED ${run.label}`,
+    `traceId: ${run.trace_id}`,
+    `finished: ${run.finished_at || "-"}`,
+    `error: ${run.error_message || "-"}`,
+    "",
+    run.output_tail || "(no output)",
+  ].join("\n");
+}
+
+export function formatToolError(tool: TraceEventRow): string {
+  return [
+    `FAILED TOOL ${tool.event}`,
+    `traceId: ${tool.trace_id}`,
+    `at: ${tool.created_at}`,
+    "",
+    JSON.stringify(JSON.parse(tool.payload_json), null, 2),
+  ].join("\n");
+}
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -26,6 +63,7 @@ export function isDebugCommand(text: string): boolean {
     normalized === "/status" ||
     normalized === "/last" ||
     normalized === "/last-error" ||
+    normalized === "/debug" ||
     normalized.startsWith("/debug ") ||
     normalized === "/commands" ||
     normalized === "/skills" ||
@@ -74,34 +112,26 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
       `current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
       `pending confirmations: ${countPendingConfirmations()}`,
       `loaded commands: ${catalog.allow.length}`,
+      `loaded skills: ${registry.listSkills().length}`,
       `sqlite: ${sqliteFile}`,
     ].join("\n");
   }
 
   if (normalized === "/last") {
-    const run = getLastCommandRun();
-    if (!run) return "No command runs yet.";
-    return [
-      `${run.status.toUpperCase()} ${run.label}`,
-      `traceId: ${run.trace_id}`,
-      `finished: ${run.finished_at || "-"}`,
-      `exit: ${run.exit_code ?? "-"}`,
-      "",
-      run.output_tail || run.error_message || "(no output)",
-    ].join("\n");
+    return formatLastRun(getLastCommandRun());
   }
 
   if (normalized === "/last-error") {
     const run = getLastFailedCommandRun();
-    if (!run) return "No failed command runs yet.";
-    return [
-      `FAILED ${run.label}`,
-      `traceId: ${run.trace_id}`,
-      `finished: ${run.finished_at || "-"}`,
-      `error: ${run.error_message || "-"}`,
-      "",
-      run.output_tail || "(no output)",
-    ].join("\n");
+    const tool = getLastFailedToolEvent();
+    if (tool && (!run?.finished_at || tool.created_at > run.finished_at)) {
+      return formatToolError(tool);
+    }
+    return formatLastCommandError(run);
+  }
+
+  if (normalized === "/debug") {
+    return "Usage: /debug <traceId>";
   }
 
   if (normalized.startsWith("/debug ")) {

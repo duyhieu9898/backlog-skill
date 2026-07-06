@@ -59,9 +59,15 @@ None expected.
   - Debug commands read runtime state, command runs, trace events, command
     catalog, and skill registry metadata.
 - Validation:
-  - `npm test` in `agent/` passed on 2026-06-26 with persistence and command
-    catalog coverage.
+  - `npm test` in `agent/` passed 31/31 on 2026-07-06.
+  - Direct tests cover parsing and formatting for `/status`, `/last`,
+    `/last-error`, `/debug`, `/commands`, `/skills`, and `/help`.
+  - Integration proof inserts and reads a structured `file.failed` trace event.
+- Completed behavior:
+  - `/status` includes loaded command and skill counts.
+  - `/last-error` chooses the newest failed command or file-tool event.
+  - `/debug` without a trace ID returns explicit usage guidance.
+  - `agent/README.md` documents every debug command.
 - Gaps:
   - Telegram manual smoke proof is not recorded.
-  - `/status` does not yet include loaded skill count or registry errors.
-  - README does not fully document the debug commands.
+  - Skill registry error collection and surfacing remains owned by US-007.

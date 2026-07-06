@@ -74,6 +74,20 @@ export function listTraceEvents(traceId: string, limit = 50): TraceEventRow[] {
     .all(traceId, limit) as TraceEventRow[];
 }
 
+export function getLastFailedToolEvent(): TraceEventRow | null {
+  return (
+    (getDb()
+      .prepare(
+        `SELECT trace_id, event, payload_json, created_at
+         FROM trace_events
+         WHERE event = 'file.failed'
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get() as TraceEventRow | undefined) || null
+  );
+}
+
 export function insertChatMessage(input: {
   chatId: string;
   userId: string;

@@ -5,6 +5,7 @@ exports.setJsonState = setJsonState;
 exports.getJsonState = getJsonState;
 exports.insertTraceEvent = insertTraceEvent;
 exports.listTraceEvents = listTraceEvents;
+exports.getLastFailedToolEvent = getLastFailedToolEvent;
 exports.insertChatMessage = insertChatMessage;
 exports.listRecentChat = listRecentChat;
 exports.insertCommandRun = insertCommandRun;
@@ -47,6 +48,15 @@ function listTraceEvents(traceId, limit = 50) {
        ORDER BY created_at ASC, id ASC
        LIMIT ?`)
         .all(traceId, limit);
+}
+function getLastFailedToolEvent() {
+    return ((0, db_1.getDb)()
+        .prepare(`SELECT trace_id, event, payload_json, created_at
+         FROM trace_events
+         WHERE event = 'file.failed'
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`)
+        .get() || null);
 }
 function insertChatMessage(input) {
     (0, db_1.getDb)()

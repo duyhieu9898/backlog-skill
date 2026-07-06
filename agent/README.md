@@ -13,6 +13,17 @@ npm start
 `TELEGRAM_POLL_TIMEOUT` is optional and defaults to 25 seconds. Secrets and
 chat identifiers must never have source-code fallbacks.
 
+## Debug Commands
+
+- `/status` — uptime, current command, pending confirmations, loaded commands,
+  loaded skills, and SQLite path.
+- `/last` — latest command result and output tail.
+- `/last-error` — latest command or tool failure with trace ID.
+- `/debug <traceId>` — trace events for one execution.
+- `/commands` — allowlisted commands grouped by skill.
+- `/skills` — loaded skill names and descriptions.
+- `/help` — command summary.
+
 ## Background CLI
 
 Install the `my-agent` CLI and systemd user service:
