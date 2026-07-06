@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -21,7 +21,7 @@ export type AgentCommand = {
   skillSlug?: string;
   aliases?: string[];
   cwd?: string;
-  command: string;
+  argv: [string, ...string[]];
   requiresConfirmation?: boolean;
   externalSideEffect?: boolean;
   timeoutMs?: number;
@@ -33,7 +33,7 @@ export type CommandCatalog = {
   allow: AgentCommand[];
 };
 
-type CommandsConfig = {
+export type CommandsConfig = {
   commands?: CommandMap;
   allow?: AgentCommand[];
 };
@@ -42,15 +42,66 @@ export type CommandResult = {
   exitCode: number;
   signal?: NodeJS.Signals;
   output: string;
+  timedOut: boolean;
+};
+
+export type CommandPreview = {
+  commandName: string;
+  label: string;
+  executable: string;
+  args: string[];
+  cwd: string;
+  timeoutMs: number;
+  requiresConfirmation: boolean;
+  externalSideEffect: boolean;
 };
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+const SAFE_ENV_KEYS = [
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "PATH",
+  "TERM",
+  "TMPDIR",
+  "TZ",
+  "USER",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+] as const;
 let runningTraceId: string | null = null;
 
 function normalizeCommand(action: AgentCommand): AgentCommand {
+  if (!action.name?.trim()) throw new Error("Allowlisted command is missing a name.");
+  if (!action.label?.trim()) throw new Error(`Allowlisted command ${action.name} is missing a label.`);
+  if (!Array.isArray(action.argv) || !action.argv.length) {
+    throw new Error(`Allowlisted command ${action.name} must define a non-empty argv array.`);
+  }
+  for (const value of action.argv) {
+    if (typeof value !== "string" || !value || value.includes("\0")) {
+      throw new Error(`Allowlisted command ${action.name} has an invalid argv value.`);
+    }
+  }
+  const cwd = resolveCwd(action.cwd);
+  if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+    throw new Error(`Allowlisted command ${action.name} has a stale cwd: ${cwd}`);
+  }
+  if (action.skillSlug) {
+    const skillRoot = path.resolve(agentDir, "..", "skills", action.skillSlug);
+    if (!fs.existsSync(path.join(skillRoot, "SKILL.md"))) {
+      throw new Error(`Allowlisted command ${action.name} references missing skill: ${action.skillSlug}`);
+    }
+    if (cwd !== fs.realpathSync(skillRoot)) {
+      throw new Error(`Allowlisted command ${action.name} cwd does not match skill ${action.skillSlug}.`);
+    }
+  }
   return {
     ...action,
+    cwd,
     requiresConfirmation: action.requiresConfirmation ?? true,
+    externalSideEffect: action.externalSideEffect ?? false,
   };
 }
 
@@ -60,12 +111,18 @@ export function loadCommands(): CommandMap {
 
 export function loadCommandCatalog(): CommandCatalog {
   const config = JSON.parse(fs.readFileSync(commandsFile, "utf8")) as CommandsConfig;
+  return buildCommandCatalog(config);
+}
+
+export function buildCommandCatalog(config: CommandsConfig): CommandCatalog {
   if (config.allow) {
     const allow = config.allow.map(normalizeCommand);
     const byAlias = allow.reduce<CommandMap>((commands, action) => {
       const names = [action.name, ...(action.aliases || [])].filter(Boolean) as string[];
       for (const name of names) {
-        commands[name.toLowerCase()] = action;
+        const key = name.toLowerCase();
+        if (commands[key]) throw new Error(`Duplicate command name or alias: ${name}`);
+        commands[key] = action;
       }
       return commands;
     }, {});
@@ -73,13 +130,7 @@ export function loadCommandCatalog(): CommandCatalog {
     return { byAlias, allow };
   }
 
-  const legacy = config.commands || {};
-  return {
-    byAlias: legacy,
-    allow: Object.entries(legacy).map(([name, action]) =>
-      normalizeCommand({ ...action, name: action.name || name }),
-    ),
-  };
+  throw new Error("commands.json must define an allow array using argv-based commands.");
 }
 
 export function resolveCwd(cwd?: string): string {
@@ -89,7 +140,6 @@ export function resolveCwd(cwd?: string): string {
 
 export function evaluateCommandPermission(
   action: AgentCommand,
-  rawCommand?: string,
   confirmationGranted = false,
 ): PolicyDecision {
   const config = loadAgentConfig().permissions;
@@ -98,7 +148,8 @@ export function evaluateCommandPermission(
     {
       kind: "command.run",
       commandId: action.name || action.label,
-      command: rawCommand || action.command,
+      executable: action.argv[0],
+      args: action.argv.slice(1),
       cwd: resolveCwd(action.cwd),
       requiresConfirmation: action.requiresConfirmation ?? true,
       externalSideEffect: action.externalSideEffect ?? false,
@@ -115,50 +166,84 @@ export function getRunningTraceId(): string | null {
   return runningTraceId;
 }
 
-export function validateWildcardRawCommand(rawCommand: string): { ok: true } | { ok: false; reason: string } {
-  const denyPatterns = [
-    /\bsudo\b/,
-    /\bsu\b/,
-    /\brm\s+-[^\n;|&]*r[^\n;|&]*f\s+\//,
-    /\bmkfs(?:\.\w+)?\b/,
-    /\bdd\s+/,
-    /:\s*\(\)\s*\{/,
-    />\s*\/(?:etc|usr|bin|boot)\b/,
-    /\b(?:tee|cp|mv|install)\b[^\n;|&]*\/(?:etc|usr|bin|boot)\b/,
-    /\b(?:curl|wget)\b[^\n;|&]*\|\s*(?:sh|bash|zsh|fish)\b/,
-  ];
-
-  for (const pattern of denyPatterns) {
-    if (pattern.test(rawCommand)) {
-      return { ok: false, reason: `Rejected by denylist pattern: ${pattern.source}` };
-    }
+export function buildCommandEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_ENV_KEYS) {
+    if (source[key] !== undefined) env[key] = source[key];
   }
-
-  return { ok: true };
+  env.PATH ||= "/usr/local/bin:/usr/bin:/bin";
+  return env;
 }
 
-function runCommand(
+export function previewCommand(
   action: AgentCommand,
-  defaultTimeoutMs: number,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    exec(
-      action.command,
-      {
-        cwd: resolveCwd(action.cwd),
-        env: { ...process.env },
-        shell: "/bin/bash",
-        timeout: Number(action.timeoutMs || defaultTimeoutMs),
-        maxBuffer: 1024 * 1024 * 10,
-      },
-      (error, stdout, stderr) => {
-        resolve({
-          exitCode: typeof error?.code === "number" ? error.code : 0,
-          signal: error?.signal || undefined,
-          output: `${stdout || ""}${stderr || ""}`,
-        });
-      },
-    );
+  defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
+): CommandPreview {
+  return {
+    commandName: action.name || action.label,
+    label: action.label,
+    executable: action.argv[0],
+    args: action.argv.slice(1),
+    cwd: resolveCwd(action.cwd),
+    timeoutMs: Number(action.timeoutMs || defaultTimeoutMs),
+    requiresConfirmation: action.requiresConfirmation ?? true,
+    externalSideEffect: action.externalSideEffect ?? false,
+  };
+}
+
+function runCommand(action: AgentCommand, defaultTimeoutMs: number): Promise<CommandResult> {
+  return new Promise((resolve, reject) => {
+    const preview = previewCommand(action, defaultTimeoutMs);
+    const child = spawn(preview.executable, preview.args, {
+      cwd: preview.cwd,
+      env: buildCommandEnvironment(),
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const chunks: Buffer[] = [];
+    let outputBytes = 0;
+    let outputLimited = false;
+    let timedOut = false;
+    let settled = false;
+
+    const capture = (chunk: Buffer): void => {
+      if (outputLimited) return;
+      const remaining = MAX_OUTPUT_BYTES - outputBytes;
+      if (chunk.length > remaining) {
+        if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+        chunks.push(Buffer.from("\n[output truncated: command exceeded 10 MiB]"));
+        outputLimited = true;
+        child.kill("SIGTERM");
+        return;
+      }
+      chunks.push(chunk);
+      outputBytes += chunk.length;
+    };
+    child.stdout.on("data", capture);
+    child.stderr.on("data", capture);
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, preview.timeoutMs);
+
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        exitCode: timedOut ? 124 : code ?? (signal ? 1 : 0),
+        signal: signal || undefined,
+        output: Buffer.concat(chunks).toString("utf8"),
+        timedOut,
+      });
+    });
   });
 }
 
@@ -166,7 +251,6 @@ export async function runTrackedCommand(input: {
   traceId: string;
   chatId: string;
   action: AgentCommand;
-  rawCommand?: string;
   defaultTimeoutMs?: number;
   confirmationGranted?: boolean;
 }): Promise<CommandResult> {
@@ -174,23 +258,8 @@ export async function runTrackedCommand(input: {
     throw new Error(`Command already running for trace ${runningTraceId}`);
   }
 
-  const command = input.rawCommand || input.action.command;
-  if (input.action.command === "*" && !input.rawCommand) {
-    throw new Error("Wildcard command requires rawCommand.");
-  }
-  if (input.action.command === "*" && input.rawCommand) {
-    const validation = validateWildcardRawCommand(input.rawCommand);
-    if (!validation.ok) {
-      throw new Error(`${validation.reason}. Run that command manually outside the bot.`);
-    }
-  }
-
-  const action = { ...input.action, command };
-  const policyDecision = evaluateCommandPermission(
-    action,
-    input.rawCommand,
-    input.confirmationGranted,
-  );
+  const action = normalizeCommand(input.action);
+  const policyDecision = evaluateCommandPermission(action, input.confirmationGranted);
   if (policyDecision.outcome !== "allow") {
     throw new Error(`Permission ${policyDecision.outcome}: ${policyDecision.reasonCode} - ${policyDecision.reason}`);
   }
@@ -199,6 +268,8 @@ export async function runTrackedCommand(input: {
   }
   action.cwd = policyDecision.action.cwd;
   const cwd = action.cwd;
+  const preview = previewCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS);
+  const command = JSON.stringify([preview.executable, ...preview.args]);
   const startedAt = nowIso();
   runningTraceId = input.traceId;
   setJsonState("runtime_state", "currentRun", {
@@ -254,6 +325,7 @@ export async function runTrackedCommand(input: {
     log.info(input.traceId, ok ? "command.completed" : "command.failed", {
       exitCode: result.exitCode,
       signal: result.signal,
+      timedOut: result.timedOut,
       outputTail,
     });
     return result;

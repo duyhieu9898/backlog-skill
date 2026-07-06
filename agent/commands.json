@@ -6,8 +6,9 @@
       "skillSlug": "bemo",
       "aliases": ["/bemo_checkout"],
       "cwd": "../skills/bemo",
-      "command": "npm run -s checkout",
-      "requiresConfirmation": false
+      "argv": ["npm", "run", "-s", "checkout"],
+      "requiresConfirmation": true,
+      "externalSideEffect": true
     },
     {
       "name": "bemo.sync",
@@ -15,7 +16,7 @@
       "skillSlug": "bemo",
       "aliases": ["/bemo_sync"],
       "cwd": "../skills/bemo",
-      "command": "npm run -s data:sync",
+      "argv": ["npm", "run", "-s", "data:sync"],
       "requiresConfirmation": false
     },
     {
@@ -24,7 +25,7 @@
       "skillSlug": "bemo",
       "aliases": ["/bemo_verify"],
       "cwd": "../skills/bemo",
-      "command": "npm run -s off:verify",
+      "argv": ["npm", "run", "-s", "off:verify"],
       "requiresConfirmation": false
     },
     {
@@ -33,95 +34,17 @@
       "skillSlug": "bemo",
       "aliases": ["/bemo_run"],
       "cwd": "../skills/bemo",
-      "command": "npm run -s run",
-      "requiresConfirmation": true
-    },
-    {
-      "name": "backlog.projects",
-      "label": "Backlog list configured projects",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_projects"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py config list-projects",
-      "requiresConfirmation": false
-    },
-    {
-      "name": "backlog.current",
-      "label": "Backlog current default project",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_current"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py config current",
-      "requiresConfirmation": false
-    },
-    {
-      "name": "backlog.list",
-      "label": "Backlog list issues",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_list"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py issue list",
-      "requiresConfirmation": false
-    },
-    {
-      "name": "backlog.list_me",
-      "label": "Backlog list my issues",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_me"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py issue list --me",
-      "requiresConfirmation": false
-    },
-    {
-      "name": "backlog.inspect.oop",
-      "label": "Backlog refresh OOP catalog",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_inspect_oop"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py project inspect OOP",
-      "requiresConfirmation": false
-    },
-    {
-      "name": "backlog.inspect.aqm",
-      "label": "Backlog refresh AQM catalog",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_inspect_aqm"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py project inspect AQM",
-      "requiresConfirmation": false
-    },
-    {
-      "name": "backlog.default.oop",
-      "label": "Backlog set default project OOP",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_default_oop"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py config set-default OOP",
-      "requiresConfirmation": true
-    },
-    {
-      "name": "backlog.default.aqm",
-      "label": "Backlog set default project AQM",
-      "skillSlug": "backlog",
-      "aliases": ["/backlog_default_aqm"],
-      "cwd": "../skills/backlog",
-      "command": "python3 scripts/backlog.py config set-default AQM",
-      "requiresConfirmation": true
-    },
-    {
-      "name": "backlog.run",
-      "label": "Backlog trusted command",
-      "skillSlug": "backlog",
-      "cwd": "../skills/backlog",
-      "command": "*",
-      "requiresConfirmation": true
+      "argv": ["npm", "run", "-s", "run"],
+      "requiresConfirmation": true,
+      "externalSideEffect": true
     },
     {
       "name": "shutdown",
       "label": "Tắt máy tính",
       "aliases": ["/shutdown"],
-      "command": "systemctl poweroff",
-      "requiresConfirmation": true
+      "argv": ["systemctl", "poweroff"],
+      "requiresConfirmation": true,
+      "externalSideEffect": true
     }
   ]
 }

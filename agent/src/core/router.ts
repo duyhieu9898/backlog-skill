@@ -2,6 +2,7 @@ import { loadAgentConfig } from "../config/app";
 import {
   loadCommandCatalog,
   evaluateCommandPermission,
+  previewCommand,
   runTrackedCommand,
   type AgentCommand,
 } from "../commands";
@@ -101,9 +102,8 @@ export class Router {
       if (!selected) return `AI chọn command không nằm trong allowlist: ${aiResponse.commandName}`;
       log.info(message.traceId, "ai.tool.selected", {
         commandName: aiResponse.commandName,
-        hasRawCommand: Boolean(aiResponse.rawCommand),
       });
-      return this.prepareOrRun(message, selected, aiResponse.rawCommand);
+      return this.prepareOrRun(message, selected);
     }
 
     return aiResponse.text || "Mình chưa hiểu yêu cầu. Gõ /commands để xem lệnh hỗ trợ.";
@@ -112,25 +112,32 @@ export class Router {
   private async prepareOrRun(
     message: StandardMessage,
     action: AgentCommand,
-    rawCommand?: string,
   ): Promise<string> {
-    const decision = evaluateCommandPermission(action, rawCommand);
+    const decision = evaluateCommandPermission(action);
     if (decision.outcome === "deny") {
       return `Từ chối [${decision.reasonCode}]: ${decision.reason}`;
     }
     if (decision.outcome === "confirm") {
+      const preview = previewCommand(action, this.commandTimeoutMs);
       const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
       upsertPendingConfirmation({
         chatId: message.chatId,
         traceId: message.traceId,
         commandName: action.name || action.label,
-        payload: { action, rawCommand },
+        payload: { action, preview },
         expiresAt,
       });
-      return `${action.label} cần xác nhận trước khi chạy.\nGõ: confirm ${action.name || action.label}`;
+      return [
+        `${action.label} cần xác nhận trước khi chạy.`,
+        `Executable: ${preview.executable}`,
+        `Args: ${JSON.stringify(preview.args)}`,
+        `Cwd: ${preview.cwd}`,
+        `Timeout: ${preview.timeoutMs} ms`,
+        `Gõ: confirm ${action.name || action.label}`,
+      ].join("\n");
     }
 
-    return this.run(message, action, rawCommand, false);
+    return this.run(message, action, false);
   }
 
   private async consumeConfirmation(message: StandardMessage): Promise<string | null> {
@@ -150,9 +157,8 @@ export class Router {
     deletePendingConfirmation(message.chatId);
     const payload = JSON.parse(pending.payload_json) as {
       action: AgentCommand;
-      rawCommand?: string;
     };
-    return this.run(message, payload.action, payload.rawCommand, true);
+    return this.run(message, payload.action, true);
   }
 
   private async cancelPending(chatId: string): Promise<void> {
@@ -162,14 +168,12 @@ export class Router {
   private async run(
     message: StandardMessage,
     action: AgentCommand,
-    rawCommand?: string,
     confirmationGranted = false,
   ): Promise<string> {
     const result = await runTrackedCommand({
       traceId: message.traceId,
       chatId: message.chatId,
       action,
-      rawCommand,
       defaultTimeoutMs: this.commandTimeoutMs,
       confirmationGranted,
     });

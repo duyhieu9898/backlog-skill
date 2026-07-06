@@ -41,18 +41,32 @@ Edit `commands.json`:
 
 ```json
 {
-  "/my-command": {
-    "label": "My command",
-    "cwd": "../some-agent",
-    "command": "python3 scripts/run.py"
-  }
+  "allow": [
+    {
+      "name": "my-skill.run",
+      "label": "Run my skill",
+      "skillSlug": "my-skill",
+      "aliases": ["/my-command"],
+      "cwd": "../skills/my-skill",
+      "argv": ["python3", "scripts/run.py"],
+      "requiresConfirmation": true
+    }
+  ]
 }
 ```
 
 `cwd` is relative to this `agent` folder unless it is absolute. Every command
 is checked by the central permission policy before execution; an absolute path
 outside `permissions.workspaceRoot` is refused even when the command is in the
-allowlist.
+allowlist. Commands use a fixed `argv` array and run without a shell. The child
+process receives only a small allowlist of non-secret environment variables.
+Catalog loading fails if a command has duplicate aliases, a missing skill, or a
+stale working directory. Wildcard and raw-shell commands are not supported.
+
+Commands requiring confirmation show executable, arguments, working directory,
+and timeout before the user approves them. Mark external mutations with
+`externalSideEffect: true`; this forces confirmation even if a catalog entry is
+misconfigured with `requiresConfirmation: false`.
 
 ## Permission Policy
 

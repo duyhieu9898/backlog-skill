@@ -57,7 +57,6 @@ export class AiRouter {
       log.info(traceId, "ai.response.received", {
         latencyMs: Date.now() - started,
         selectedCommand: response.commandName,
-        hasRawCommand: Boolean(response.rawCommand),
         usage: response.usage,
       });
       return response;

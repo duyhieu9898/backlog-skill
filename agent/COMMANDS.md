@@ -1,6 +1,6 @@
 # Command Naming
 
-This document records the command naming convention to use when `agent/commands.json` is refactored.
+This document records the command naming convention used by `agent/commands.json`.
 
 ## Format
 
@@ -43,7 +43,8 @@ Use lowercase words and underscores only when the action needs multiple words.
 
 ## Allowlist Notes
 
-- Fixed commands should use exact command strings.
-- Trusted self-authored skills may use `command: "*"` with a fixed `cwd`.
-- Wildcard commands still need denylist validation.
-- Commands that write external data or delete data should set `requiresConfirmation: true`.
+- Fixed commands use an exact `argv` array and run without a shell.
+- Wildcard and model-provided raw-shell commands are unsupported.
+- Skill commands must use a cwd matching their `skillSlug`; stale entries fail catalog loading.
+- Commands that write external data or delete data set both
+  `requiresConfirmation: true` and `externalSideEffect: true`.

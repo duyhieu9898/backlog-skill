@@ -251,41 +251,19 @@ Example:
       "skillSlug": "bemo",
       "aliases": ["/bemo-checkout", "bemo checkout"],
       "cwd": "../skills/bemo",
-      "command": "npm run checkout",
-      "requiresConfirmation": false
+      "argv": ["npm", "run", "checkout"],
+      "requiresConfirmation": true,
+      "externalSideEffect": true
     }
   ]
 }
 ```
 
-- Optional wildcard command support:
-
-```json
-{
-  "allow": [
-    {
-      "name": "bemo.*",
-      "label": "Bemo wildcard",
-      "skillSlug": "bemo",
-      "cwd": "../skills/bemo",
-      "command": "*"
-    }
-  ]
-}
-```
-
-- Wildcard means the command is allowed only inside that skill context and `cwd`.
-- Wildcard `command: "*"` means full command execution power inside that skill `cwd`, except denylisted patterns.
-- Initial denylist should include at least: `sudo`, `su`, `rm -rf /`, `mkfs`, `dd`, `:(){`, writes to system paths such as `/etc`, `/usr`, `/bin`, `/boot`, and curl/wget piped directly to shell.
-- Denylist matches are rejected immediately. Tell the user to run that command manually outside the bot.
-- Do not block path traversal for now. Wildcard commands may reference paths outside the skill directory if they pass denylist validation.
-- Use wildcard only for trusted self-authored skills.
+- Commands use fixed argv arrays and execute without a shell.
+- Wildcard and model-provided raw shell are disabled.
+- Catalog loading rejects duplicate aliases, missing skills, and stale cwd paths.
+- The executor passes only a minimal non-secret environment allowlist.
 - AI normally emits only `commandName`.
-- If a trusted wildcard allowlist matches, AI may propose `rawCommand`; raw command must pass:
-  - wildcard skill/cwd match
-  - fixed `cwd` lock
-  - denylist validation
-  - confirmation policy when required
 - Add `requiresConfirmation` for commands that write to external services or destroy data. Direct fixed commands may run without confirmation only when config says so.
 - Confirmation flow:
   - Store pending confirmation in SQLite with `chatId`, `traceId`, `commandName`, payload, and expiry.
@@ -461,8 +439,7 @@ type AiProviderConfig = {
   4. Execute only commands allowed by `agent/commands.json`.
   5. If `requiresConfirmation` is true, ask the user to confirm before execution.
 
-- Do not let the model emit raw shell unless a trusted wildcard command is selected.
-- Trusted wildcard commands may include `rawCommand`, but only after allowlist + denylist + confirmation validation.
+- Do not let the model emit raw shell. It may select only a reviewed `commandName`.
 - Loop prevention:
   - Max 1 command execution per incoming user message.
   - No autonomous fix-and-rerun loop after command failure.
@@ -535,7 +512,7 @@ ai.failed
 ## 5. Safety Rules
 
 - Command aliases must be explicit and reviewed.
-- AI cannot run arbitrary shell unless a trusted wildcard allowlist explicitly permits it and denylist validation passes.
+- AI cannot run arbitrary shell; it may select only fixed argv entries in the allowlist.
 - Skill commands that affect external services should say so in `SKILL.md`.
 - Secrets stay in `.env`, never in `SKILL.md`.
 - Destructive commands need either a fixed safe command or `requiresConfirmation`.
@@ -569,7 +546,7 @@ Minimum automated coverage:
 - Trace events persist to SQLite.
 - Pending confirmation expires after 2 minutes.
 - Sending a new command cancels old pending confirmation.
-- Denylist rejects dangerous wildcard `rawCommand`.
+- Shell metacharacters remain literal argv values and cannot trigger shell evaluation.
 - Context Hydrator respects context budgets and truncation markers.
 - Skill Registry rejects skills missing `description`.
 
@@ -593,7 +570,7 @@ AI smoke checks after provider integration:
 - Skill explanation loads the relevant `SKILL.md`.
 - Debug/history question includes relevant command run and trace events.
 - AI can choose an allowed command by `commandName`.
-- AI cannot run raw shell unless trusted wildcard is selected and validation passes.
+- AI cannot run raw shell.
 - Prompt cacheable prefix hash is logged.
 
 ## 7. Immediate Next Steps
@@ -605,6 +582,6 @@ AI smoke checks after provider integration:
 5. Refactor `agent/src/bot.ts` into adapter/router modules.
 6. Add `SkillRegistry` and make `/help` include commands grouped by skill.
 7. Add rule-based `ContextHydrator`.
-8. Implement wildcard denylist validator before adding any wildcard command.
+8. Keep wildcard and raw-shell command execution disabled.
 9. Add config loading from `agent/config.json` and system prompt loading from `agent/prompts/system.md`.
 10. Only then add AI provider integration.

@@ -7,7 +7,6 @@ export type AiRequest = {
 export type AiResponse = {
   text?: string;
   commandName?: string;
-  rawCommand?: string;
   clarification?: string;
   usage?: unknown;
 };

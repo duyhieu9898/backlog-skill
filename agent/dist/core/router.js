@@ -78,29 +78,36 @@ class Router {
                 return `AI chọn command không nằm trong allowlist: ${aiResponse.commandName}`;
             logger_1.log.info(message.traceId, "ai.tool.selected", {
                 commandName: aiResponse.commandName,
-                hasRawCommand: Boolean(aiResponse.rawCommand),
             });
-            return this.prepareOrRun(message, selected, aiResponse.rawCommand);
+            return this.prepareOrRun(message, selected);
         }
         return aiResponse.text || "Mình chưa hiểu yêu cầu. Gõ /commands để xem lệnh hỗ trợ.";
     }
-    async prepareOrRun(message, action, rawCommand) {
-        const decision = (0, commands_1.evaluateCommandPermission)(action, rawCommand);
+    async prepareOrRun(message, action) {
+        const decision = (0, commands_1.evaluateCommandPermission)(action);
         if (decision.outcome === "deny") {
             return `Từ chối [${decision.reasonCode}]: ${decision.reason}`;
         }
         if (decision.outcome === "confirm") {
+            const preview = (0, commands_1.previewCommand)(action, this.commandTimeoutMs);
             const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
             (0, repositories_1.upsertPendingConfirmation)({
                 chatId: message.chatId,
                 traceId: message.traceId,
                 commandName: action.name || action.label,
-                payload: { action, rawCommand },
+                payload: { action, preview },
                 expiresAt,
             });
-            return `${action.label} cần xác nhận trước khi chạy.\nGõ: confirm ${action.name || action.label}`;
+            return [
+                `${action.label} cần xác nhận trước khi chạy.`,
+                `Executable: ${preview.executable}`,
+                `Args: ${JSON.stringify(preview.args)}`,
+                `Cwd: ${preview.cwd}`,
+                `Timeout: ${preview.timeoutMs} ms`,
+                `Gõ: confirm ${action.name || action.label}`,
+            ].join("\n");
         }
-        return this.run(message, action, rawCommand, false);
+        return this.run(message, action, false);
     }
     async consumeConfirmation(message) {
         const match = message.text.trim().toLowerCase().match(/^confirm\s+(.+)$/);
@@ -118,18 +125,17 @@ class Router {
         }
         (0, repositories_1.deletePendingConfirmation)(message.chatId);
         const payload = JSON.parse(pending.payload_json);
-        return this.run(message, payload.action, payload.rawCommand, true);
+        return this.run(message, payload.action, true);
     }
     async cancelPending(chatId) {
         if ((0, repositories_1.getPendingConfirmation)(chatId))
             (0, repositories_1.deletePendingConfirmation)(chatId);
     }
-    async run(message, action, rawCommand, confirmationGranted = false) {
+    async run(message, action, confirmationGranted = false) {
         const result = await (0, commands_1.runTrackedCommand)({
             traceId: message.traceId,
             chatId: message.chatId,
             action,
-            rawCommand,
             defaultTimeoutMs: this.commandTimeoutMs,
             confirmationGranted,
         });

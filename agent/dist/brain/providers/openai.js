@@ -20,7 +20,7 @@ class OpenAiProvider {
                 {
                     role: "user",
                     content: [
-                        "Return strict JSON with optional keys: text, commandName, rawCommand, clarification.",
+                        "Return strict JSON with optional keys: text, commandName, clarification.",
                         "Context:",
                         input.context,
                         "User:",

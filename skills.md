@@ -86,22 +86,9 @@ Ví dụ `agent/commands.json`:
       "skillSlug": "bemo",
       "aliases": ["/bemo-checkout", "bemo checkout"],
       "cwd": "../skills/bemo",
-      "command": "npm run checkout"
-    }
-  ]
-}
-```
-
-Nếu muốn cho agent chạy mọi command trong một skill tự viết, có thể dùng wildcard có chủ đích:
-
-```json
-{
-  "allow": [
-    {
-      "name": "bemo.*",
-      "skillSlug": "bemo",
-      "cwd": "../skills/bemo",
-      "command": "*"
+      "argv": ["npm", "run", "checkout"],
+      "requiresConfirmation": true,
+      "externalSideEffect": true
     }
   ]
 }
@@ -109,11 +96,9 @@ Nếu muốn cho agent chạy mọi command trong một skill tự viết, có t
 
 Khuyến nghị:
 
-- Mặc định dùng command cụ thể.
-- `command: "*"` nghĩa là toàn quyền chạy command trong skill đó, trừ denylist.
-- Chỉ dùng `*` cho skill bạn tin tưởng hoàn toàn.
-- Với `*`, agent vẫn phải giới hạn `cwd` trong thư mục skill tương ứng.
-- Denylist tối thiểu nên chặn `sudo`, `su`, `rm -rf /`, `mkfs`, `dd`, fork bomb, ghi vào system paths như `/etc`, `/usr`, `/bin`, `/boot`, và pattern tải script rồi pipe trực tiếp vào shell.
+- Chỉ dùng command cụ thể với `argv` cố định; wildcard và raw shell bị vô hiệu hóa.
+- `cwd` phải trỏ đúng thư mục của `skillSlug`; catalog lỗi thời sẽ bị từ chối khi load.
+- Command chạy không qua shell và chỉ nhận tập environment tối thiểu.
 - Command ghi dữ liệu thật nên có cơ chế confirmation trong `agent/commands.json`.
 
 ## Cách Agent Load Skill
@@ -208,4 +193,4 @@ Cách này giữ prompt ngắn, giảm chi phí token và tránh model bị nhi�
 - Command thật được kiểm soát bởi allowlist config của agent.
 - Không đưa secret vào `SKILL.md`; dùng `.env` hoặc biến môi trường.
 - Nếu skill có script gửi request ra ngoài, ghi rõ service nào được gọi.
-- Với command wildcard `*`, chỉ dùng cho skill tự viết và đã tin tưởng.
+- Không dùng wildcard hoặc raw shell; chỉ khai báo argv cố định đã review.
