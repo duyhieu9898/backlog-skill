@@ -1,0 +1,3 @@
+[submodule "skills/bemo"]
+	path = skills/bemo
+	url = git@github.com:duyhieu9898/bemo-skill.git
