@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -189,6 +190,20 @@ export function previewCommand(
     requiresConfirmation: action.requiresConfirmation ?? true,
     externalSideEffect: action.externalSideEffect ?? false,
   };
+}
+
+export function commandPreviewDigest(preview: CommandPreview): string {
+  const canonical = JSON.stringify({
+    commandName: preview.commandName,
+    label: preview.label,
+    executable: preview.executable,
+    args: preview.args,
+    cwd: preview.cwd,
+    timeoutMs: preview.timeoutMs,
+    requiresConfirmation: preview.requiresConfirmation,
+    externalSideEffect: preview.externalSideEffect,
+  });
+  return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
 function runCommand(action: AgentCommand, defaultTimeoutMs: number): Promise<CommandResult> {

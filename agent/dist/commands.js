@@ -12,8 +12,10 @@ exports.isCommandRunning = isCommandRunning;
 exports.getRunningTraceId = getRunningTraceId;
 exports.buildCommandEnvironment = buildCommandEnvironment;
 exports.previewCommand = previewCommand;
+exports.commandPreviewDigest = commandPreviewDigest;
 exports.runTrackedCommand = runTrackedCommand;
 const node_child_process_1 = require("node:child_process");
+const node_crypto_1 = __importDefault(require("node:crypto"));
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const paths_1 = require("./config/paths");
@@ -139,6 +141,19 @@ function previewCommand(action, defaultTimeoutMs = DEFAULT_TIMEOUT_MS) {
         requiresConfirmation: action.requiresConfirmation ?? true,
         externalSideEffect: action.externalSideEffect ?? false,
     };
+}
+function commandPreviewDigest(preview) {
+    const canonical = JSON.stringify({
+        commandName: preview.commandName,
+        label: preview.label,
+        executable: preview.executable,
+        args: preview.args,
+        cwd: preview.cwd,
+        timeoutMs: preview.timeoutMs,
+        requiresConfirmation: preview.requiresConfirmation,
+        externalSideEffect: preview.externalSideEffect,
+    });
+    return node_crypto_1.default.createHash("sha256").update(canonical).digest("hex");
 }
 function runCommand(action, defaultTimeoutMs) {
     return new Promise((resolve, reject) => {

@@ -49,7 +49,7 @@ Tradeoffs:
   executable.
 - Commands needing additional environment values must add an explicit reviewed
   mechanism rather than inheriting the entire agent environment.
-- Exact-action confirmation binding remains owned by US-005.
+- Exact-action confirmation binding is implemented by ADR-0011 under US-005.
 
 ## Verification
 

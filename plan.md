@@ -92,8 +92,9 @@ type AllowedCommand = {
   skillSlug: string;
   aliases?: string[];
   cwd: string;
-  command: string;
+  argv: [string, ...string[]];
   requiresConfirmation?: boolean;
+  externalSideEffect?: boolean;
   timeoutMs?: number;
 };
 ```
@@ -104,11 +105,11 @@ Default command policy:
 
 - `requiresConfirmation` defaults to `true` when omitted.
 - Fixed low-risk commands may explicitly set `requiresConfirmation: false`.
-- Wildcard commands should usually rely on the default confirmation.
+- Wildcard and raw-shell commands are unsupported.
 - Default command timeout is 10 minutes unless `timeoutMs` overrides it.
 - Command concurrency is global single-flight: only one command runs at a time.
 
-Do not force existing skills into TypeScript `execute()` yet. Existing scripts should keep running as shell commands. Add native TypeScript skill modules later only if there is real value.
+Do not force existing skills into TypeScript `execute()` yet. Existing scripts should keep running as fixed argv processes. Add native TypeScript skill modules later only if there is real value.
 
 ## 4. Implementation Phases
 
@@ -266,10 +267,11 @@ Example:
 - AI normally emits only `commandName`.
 - Add `requiresConfirmation` for commands that write to external services or destroy data. Direct fixed commands may run without confirmation only when config says so.
 - Confirmation flow:
-  - Store pending confirmation in SQLite with `chatId`, `traceId`, `commandName`, payload, and expiry.
+  - Store pending confirmation in SQLite with `chatId`, `traceId`, `commandName`, exact preview, action digest, payload, and expiry.
   - Confirmation expires after 2 minutes.
-  - User confirms with `confirm <commandName>`.
-  - Example: `confirm bemo.run`.
+  - User confirms with `confirm <commandName> <approvalToken>`.
+  - Example: `confirm bemo.run a1b2c3d4e5f6`.
+  - Recompute the digest before execution and reject changed actions/previews.
   - If the user sends another command while a confirmation is pending, cancel the old pending confirmation.
   - Expired confirmations are rejected and must be requested again.
 - Add concurrency guard so only one command runs at a time per chat or globally.
@@ -561,7 +563,7 @@ Manual smoke checks through Telegram:
 - `/debug <traceId>` returns raw event JSON.
 - Unauthorized chat receives `không có quyền`.
 - A command with `requiresConfirmation: false` can run directly.
-- A command with `requiresConfirmation: true` asks for `confirm <commandName>`.
+- A command with `requiresConfirmation: true` asks for `confirm <commandName> <approvalToken>`.
 - Presenter returns a concise success message; if AI Presenter fails, raw `output_tail` is returned.
 
 AI smoke checks after provider integration:

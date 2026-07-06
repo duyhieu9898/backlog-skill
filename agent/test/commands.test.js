@@ -8,6 +8,7 @@ const os = require("node:os");
 const {
   buildCommandCatalog,
   buildCommandEnvironment,
+  commandPreviewDigest,
   loadCommands,
   previewCommand,
   resolveCwd,
@@ -60,9 +61,97 @@ test("Router shows an argv command preview before confirmation", async () => {
   assert.match(reply, /Executable: npm/);
   assert.match(reply, /Args: \["run","-s","checkout"\]/);
   assert.match(reply, /Cwd: .*skills\/bemo/);
-  assert.match(reply, /confirm bemo\.checkout/);
+  assert.match(reply, /Approval: [a-f0-9]{12}/);
+  assert.match(reply, /confirm bemo\.checkout [a-f0-9]{12}/);
   assert.ok(getPendingConfirmation(chatId));
   deletePendingConfirmation(chatId);
+});
+
+test("Router executes only a confirmation bound to the exact preview digest", async () => {
+  const chatId = `test-digest-confirm-${Date.now()}`;
+  const action = {
+    name: "test.digest",
+    label: "Digest-bound command",
+    argv: [process.execPath, "-e", 'process.stdout.write("confirmed-ok")'],
+    requiresConfirmation: true,
+  };
+  const preview = previewCommand(action);
+  const digest = commandPreviewDigest(preview);
+  upsertPendingConfirmation({
+    chatId,
+    traceId: `test-digest-pending-${Date.now()}`,
+    commandName: action.name,
+    payload: { action, preview, digest },
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  });
+
+  const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
+  const reply = await router.route({
+    traceId: `test-digest-confirm-trace-${Date.now()}`,
+    provider: "telegram",
+    chatId,
+    userId: "test-user",
+    text: `confirm ${action.name} ${digest.slice(0, 12)}`,
+    timestamp: new Date(),
+  });
+
+  assert.match(reply, /confirmed-ok/);
+  assert.equal(getPendingConfirmation(chatId), null);
+});
+
+test("Router rejects mismatched tokens and changed pending actions", async () => {
+  const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
+  const action = {
+    name: "test.digest-mismatch",
+    label: "Digest mismatch",
+    argv: [process.execPath, "-e", 'process.stdout.write("must-not-run")'],
+    requiresConfirmation: true,
+  };
+  const preview = previewCommand(action);
+  const digest = commandPreviewDigest(preview);
+  const mismatchChat = `test-digest-mismatch-${Date.now()}`;
+  upsertPendingConfirmation({
+    chatId: mismatchChat,
+    traceId: "test-digest-mismatch-pending",
+    commandName: action.name,
+    payload: { action, preview, digest },
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  });
+
+  const mismatchReply = await router.route({
+    traceId: `test-digest-mismatch-trace-${Date.now()}`,
+    provider: "telegram",
+    chatId: mismatchChat,
+    userId: "test-user",
+    text: `confirm ${action.name} 000000000000`,
+    timestamp: new Date(),
+  });
+  assert.match(mismatchReply, /không khớp/);
+  assert.ok(getPendingConfirmation(mismatchChat));
+  deletePendingConfirmation(mismatchChat);
+
+  const changedChat = `test-digest-changed-${Date.now()}`;
+  upsertPendingConfirmation({
+    chatId: changedChat,
+    traceId: "test-digest-changed-pending",
+    commandName: action.name,
+    payload: {
+      action: { ...action, argv: [process.execPath, "-e", 'process.stdout.write("changed")'] },
+      preview,
+      digest,
+    },
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  });
+  const changedReply = await router.route({
+    traceId: `test-digest-changed-trace-${Date.now()}`,
+    provider: "telegram",
+    chatId: changedChat,
+    userId: "test-user",
+    text: `confirm ${action.name} ${digest.slice(0, 12)}`,
+    timestamp: new Date(),
+  });
+  assert.match(changedReply, /action đã thay đổi/);
+  assert.equal(getPendingConfirmation(changedChat), null);
 });
 
 test("SQLite schema initializes and traced command runs persist", async () => {

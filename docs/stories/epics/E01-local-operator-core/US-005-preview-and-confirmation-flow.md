@@ -25,7 +25,8 @@ for explicit user confirmation.
   action type, payload, expiry, and status.
 - Confirmation expires after a configured interval.
 - A new command cancels the old pending confirmation for the chat.
-- User can confirm with `confirm <commandName>` or a similarly explicit token.
+- User confirms with `confirm <commandName> <approvalToken>`, where the token
+  is derived from the exact preview.
 - Expired or mismatched confirmations are rejected.
 - Preview includes what will change, what will be skipped, and what command/tool
   will run.
@@ -59,16 +60,20 @@ High-risk because it protects external effects and destructive local changes.
     `requiresConfirmation` flag is true.
   - `agent/src/storage/repositories.ts` persists pending confirmations by chat
     ID and supports replacement/cancellation.
-  - `confirm <commandName>` consumes the pending confirmation and rejects
-    expired or mismatched confirmations.
+  - `confirm <commandName> <approvalToken>` consumes a pending confirmation
+    only after its exact action and preview digest are recomputed and matched.
 - Validation:
-  - `npm test` in `agent/` passed 18/18 on 2026-07-03 with tests for command
-    confirmation expiry/replacement and file mutation previews/refusal.
+  - `npm test` in `agent/` passed 25/25 on 2026-07-06 with tests for command
+    confirmation expiry/replacement, exact digest success, mismatched token
+    refusal, changed-action refusal, and file mutation previews/refusal.
 - File-tool foundation:
   - US-003 returns structured mkdir/write/patch previews and requires a trusted
     `confirmationGranted` context before mutation.
   - US-002 now centralizes risk decisions in `PermissionPolicy`.
+- Exact-action binding:
+  - Command confirmations are bound to a SHA-256 digest covering command name,
+    label, executable, args, cwd, timeout, and risk flags. Telegram uses the
+    first 12 hex characters as the explicit approval token.
 - Gaps:
   - File previews are internal and are not yet persisted or shown by Router.
-  - Confirmation is not yet bound to an opaque exact-action digest.
   - Bemo skipped dates and structured external action previews remain pending.

@@ -1,6 +1,7 @@
 import { loadAgentConfig } from "../config/app";
 import {
   loadCommandCatalog,
+  commandPreviewDigest,
   evaluateCommandPermission,
   previewCommand,
   runTrackedCommand,
@@ -119,12 +120,13 @@ export class Router {
     }
     if (decision.outcome === "confirm") {
       const preview = previewCommand(action, this.commandTimeoutMs);
+      const digest = commandPreviewDigest(preview);
       const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
       upsertPendingConfirmation({
         chatId: message.chatId,
         traceId: message.traceId,
         commandName: action.name || action.label,
-        payload: { action, preview },
+        payload: { action, preview, digest },
         expiresAt,
       });
       return [
@@ -133,7 +135,8 @@ export class Router {
         `Args: ${JSON.stringify(preview.args)}`,
         `Cwd: ${preview.cwd}`,
         `Timeout: ${preview.timeoutMs} ms`,
-        `Gõ: confirm ${action.name || action.label}`,
+        `Approval: ${digest.slice(0, 12)}`,
+        `Gõ: confirm ${action.name || action.label} ${digest.slice(0, 12)}`,
       ].join("\n");
     }
 
@@ -141,8 +144,10 @@ export class Router {
   }
 
   private async consumeConfirmation(message: StandardMessage): Promise<string | null> {
-    const match = message.text.trim().toLowerCase().match(/^confirm\s+(.+)$/);
-    if (!match) return null;
+    const confirmationText = message.text.trim().toLowerCase();
+    if (!confirmationText.startsWith("confirm")) return null;
+    const match = confirmationText.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
+    if (!match) return "Confirmation cần command name và approval token từ preview.";
 
     const pending = getPendingConfirmation(message.chatId);
     if (!pending) return "Không có confirmation nào đang chờ.";
@@ -150,14 +155,34 @@ export class Router {
       deletePendingConfirmation(message.chatId);
       return "Confirmation đã hết hạn. Gửi lại command để tạo confirmation mới.";
     }
-    if (pending.command_name.toLowerCase() !== match[1]) {
-      return `Confirmation không khớp. Command đang chờ: ${pending.command_name}`;
+    let payload: {
+      action: AgentCommand;
+      preview: ReturnType<typeof previewCommand>;
+      digest: string;
+    };
+    let recomputedDigest: string;
+    try {
+      payload = JSON.parse(pending.payload_json) as typeof payload;
+      if (!payload.action || !payload.preview || typeof payload.digest !== "string") {
+        throw new Error("Pending confirmation payload is incomplete.");
+      }
+      recomputedDigest = commandPreviewDigest(previewCommand(payload.action, this.commandTimeoutMs));
+      if (payload.digest !== recomputedDigest || commandPreviewDigest(payload.preview) !== recomputedDigest) {
+        throw new Error("Pending confirmation digest mismatch.");
+      }
+    } catch (error) {
+      deletePendingConfirmation(message.chatId);
+      log.warn(message.traceId, "confirmation.integrity_failed", {
+        commandName: pending.command_name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return "Confirmation không còn hợp lệ vì action đã thay đổi. Gửi lại command để tạo preview mới.";
+    }
+    if (pending.command_name.toLowerCase() !== match[1] || payload.digest.slice(0, 12) !== match[2]) {
+      return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
     }
 
     deletePendingConfirmation(message.chatId);
-    const payload = JSON.parse(pending.payload_json) as {
-      action: AgentCommand;
-    };
     return this.run(message, payload.action, true);
   }
 

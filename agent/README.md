@@ -66,7 +66,9 @@ stale working directory. Wildcard and raw-shell commands are not supported.
 Commands requiring confirmation show executable, arguments, working directory,
 and timeout before the user approves them. Mark external mutations with
 `externalSideEffect: true`; this forces confirmation even if a catalog entry is
-misconfigured with `requiresConfirmation: false`.
+misconfigured with `requiresConfirmation: false`. Approval uses
+`confirm <commandName> <token>`; the token is derived from the exact preview and
+is rejected if the stored action or preview changes.
 
 ## Permission Policy
 
