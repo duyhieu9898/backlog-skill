@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadAgentConfig = loadAgentConfig;
 exports.loadSystemPrompt = loadSystemPrompt;
 const node_fs_1 = __importDefault(require("node:fs"));
+const node_path_1 = __importDefault(require("node:path"));
 const paths_1 = require("./paths");
 const defaultConfig = {
     ai: {
@@ -24,12 +25,18 @@ const defaultConfig = {
     runtime: {
         commandTimeoutMs: 10 * 60 * 1000,
     },
+    permissions: {
+        workspaceRoot: paths_1.repoDir,
+        allowedReadRoots: [paths_1.repoDir],
+        allowedWriteRoots: [paths_1.agentDir, paths_1.skillsDir],
+        deniedPaths: ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
+    },
 };
 function loadAgentConfig() {
     if (!node_fs_1.default.existsSync(paths_1.configFile))
         return defaultConfig;
     const config = JSON.parse(node_fs_1.default.readFileSync(paths_1.configFile, "utf8"));
-    return {
+    const merged = {
         ...defaultConfig,
         ...config,
         ai: {
@@ -43,6 +50,20 @@ function loadAgentConfig() {
         runtime: {
             ...defaultConfig.runtime,
             ...config.runtime,
+        },
+        permissions: {
+            ...defaultConfig.permissions,
+            ...config.permissions,
+        },
+    };
+    const resolveFromAgent = (candidate) => node_path_1.default.isAbsolute(candidate) ? candidate : node_path_1.default.resolve(paths_1.agentDir, candidate);
+    return {
+        ...merged,
+        permissions: {
+            workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
+            allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
+            allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
+            deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
         },
     };
 }

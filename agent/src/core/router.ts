@@ -1,6 +1,7 @@
 import { loadAgentConfig } from "../config/app";
 import {
   loadCommandCatalog,
+  evaluateCommandPermission,
   runTrackedCommand,
   type AgentCommand,
 } from "../commands";
@@ -113,7 +114,11 @@ export class Router {
     action: AgentCommand,
     rawCommand?: string,
   ): Promise<string> {
-    if (action.requiresConfirmation) {
+    const decision = evaluateCommandPermission(action, rawCommand);
+    if (decision.outcome === "deny") {
+      return `Từ chối [${decision.reasonCode}]: ${decision.reason}`;
+    }
+    if (decision.outcome === "confirm") {
       const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
       upsertPendingConfirmation({
         chatId: message.chatId,
@@ -125,7 +130,7 @@ export class Router {
       return `${action.label} cần xác nhận trước khi chạy.\nGõ: confirm ${action.name || action.label}`;
     }
 
-    return this.run(message, action, rawCommand);
+    return this.run(message, action, rawCommand, false);
   }
 
   private async consumeConfirmation(message: StandardMessage): Promise<string | null> {
@@ -147,20 +152,26 @@ export class Router {
       action: AgentCommand;
       rawCommand?: string;
     };
-    return this.run(message, payload.action, payload.rawCommand);
+    return this.run(message, payload.action, payload.rawCommand, true);
   }
 
   private async cancelPending(chatId: string): Promise<void> {
     if (getPendingConfirmation(chatId)) deletePendingConfirmation(chatId);
   }
 
-  private async run(message: StandardMessage, action: AgentCommand, rawCommand?: string): Promise<string> {
+  private async run(
+    message: StandardMessage,
+    action: AgentCommand,
+    rawCommand?: string,
+    confirmationGranted = false,
+  ): Promise<string> {
     const result = await runTrackedCommand({
       traceId: message.traceId,
       chatId: message.chatId,
       action,
       rawCommand,
       defaultTimeoutMs: this.commandTimeoutMs,
+      confirmationGranted,
     });
     const ok = result.exitCode === 0 && !result.signal;
     return presentCommandResult({

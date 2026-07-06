@@ -85,7 +85,11 @@ class Router {
         return aiResponse.text || "Mình chưa hiểu yêu cầu. Gõ /commands để xem lệnh hỗ trợ.";
     }
     async prepareOrRun(message, action, rawCommand) {
-        if (action.requiresConfirmation) {
+        const decision = (0, commands_1.evaluateCommandPermission)(action, rawCommand);
+        if (decision.outcome === "deny") {
+            return `Từ chối [${decision.reasonCode}]: ${decision.reason}`;
+        }
+        if (decision.outcome === "confirm") {
             const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
             (0, repositories_1.upsertPendingConfirmation)({
                 chatId: message.chatId,
@@ -96,7 +100,7 @@ class Router {
             });
             return `${action.label} cần xác nhận trước khi chạy.\nGõ: confirm ${action.name || action.label}`;
         }
-        return this.run(message, action, rawCommand);
+        return this.run(message, action, rawCommand, false);
     }
     async consumeConfirmation(message) {
         const match = message.text.trim().toLowerCase().match(/^confirm\s+(.+)$/);
@@ -114,19 +118,20 @@ class Router {
         }
         (0, repositories_1.deletePendingConfirmation)(message.chatId);
         const payload = JSON.parse(pending.payload_json);
-        return this.run(message, payload.action, payload.rawCommand);
+        return this.run(message, payload.action, payload.rawCommand, true);
     }
     async cancelPending(chatId) {
         if ((0, repositories_1.getPendingConfirmation)(chatId))
             (0, repositories_1.deletePendingConfirmation)(chatId);
     }
-    async run(message, action, rawCommand) {
+    async run(message, action, rawCommand, confirmationGranted = false) {
         const result = await (0, commands_1.runTrackedCommand)({
             traceId: message.traceId,
             chatId: message.chatId,
             action,
             rawCommand,
             defaultTimeoutMs: this.commandTimeoutMs,
+            confirmationGranted,
         });
         const ok = result.exitCode === 0 && !result.signal;
         return (0, presenter_1.presentCommandResult)({

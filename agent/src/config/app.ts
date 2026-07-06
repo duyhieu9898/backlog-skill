@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import path from "node:path";
 
-import { configFile, systemPromptFile } from "./paths";
+import { agentDir, configFile, repoDir, skillsDir, systemPromptFile } from "./paths";
 
 export type AiProviderConfig = {
   default: "openai" | "gemini";
@@ -21,6 +22,12 @@ export type AgentConfig = {
   runtime?: {
     commandTimeoutMs?: number;
   };
+  permissions: {
+    workspaceRoot: string;
+    allowedReadRoots: string[];
+    allowedWriteRoots: string[];
+    deniedPaths: string[];
+  };
 };
 
 const defaultConfig: AgentConfig = {
@@ -40,12 +47,18 @@ const defaultConfig: AgentConfig = {
   runtime: {
     commandTimeoutMs: 10 * 60 * 1000,
   },
+  permissions: {
+    workspaceRoot: repoDir,
+    allowedReadRoots: [repoDir],
+    allowedWriteRoots: [agentDir, skillsDir],
+    deniedPaths: ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
+  },
 };
 
 export function loadAgentConfig(): AgentConfig {
   if (!fs.existsSync(configFile)) return defaultConfig;
   const config = JSON.parse(fs.readFileSync(configFile, "utf8")) as Partial<AgentConfig>;
-  return {
+  const merged = {
     ...defaultConfig,
     ...config,
     ai: {
@@ -59,6 +72,21 @@ export function loadAgentConfig(): AgentConfig {
     runtime: {
       ...defaultConfig.runtime,
       ...config.runtime,
+    },
+    permissions: {
+      ...defaultConfig.permissions,
+      ...config.permissions,
+    },
+  };
+  const resolveFromAgent = (candidate: string): string =>
+    path.isAbsolute(candidate) ? candidate : path.resolve(agentDir, candidate);
+  return {
+    ...merged,
+    permissions: {
+      workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
+      allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
+      allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
+      deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
     },
   };
 }

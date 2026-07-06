@@ -11,6 +11,9 @@ import {
   setJsonState,
 } from "./storage/repositories";
 import { tailLines } from "./utils";
+import { loadAgentConfig } from "./config/app";
+import { PermissionPolicy } from "./security/permissionPolicy";
+import type { PolicyDecision } from "./tools/contracts";
 
 export type AgentCommand = {
   name?: string;
@@ -20,6 +23,7 @@ export type AgentCommand = {
   cwd?: string;
   command: string;
   requiresConfirmation?: boolean;
+  externalSideEffect?: boolean;
   timeoutMs?: number;
 };
 
@@ -83,6 +87,26 @@ export function resolveCwd(cwd?: string): string {
   return path.isAbsolute(cwd) ? cwd : path.resolve(agentDir, cwd);
 }
 
+export function evaluateCommandPermission(
+  action: AgentCommand,
+  rawCommand?: string,
+  confirmationGranted = false,
+): PolicyDecision {
+  const config = loadAgentConfig().permissions;
+  const policy = new PermissionPolicy(config);
+  return policy.evaluate(
+    {
+      kind: "command.run",
+      commandId: action.name || action.label,
+      command: rawCommand || action.command,
+      cwd: resolveCwd(action.cwd),
+      requiresConfirmation: action.requiresConfirmation ?? true,
+      externalSideEffect: action.externalSideEffect ?? false,
+    },
+    { confirmationGranted },
+  );
+}
+
 export function isCommandRunning(): boolean {
   return runningTraceId !== null;
 }
@@ -113,7 +137,7 @@ export function validateWildcardRawCommand(rawCommand: string): { ok: true } | {
   return { ok: true };
 }
 
-export function runCommand(
+function runCommand(
   action: AgentCommand,
   defaultTimeoutMs: number,
 ): Promise<CommandResult> {
@@ -144,6 +168,7 @@ export async function runTrackedCommand(input: {
   action: AgentCommand;
   rawCommand?: string;
   defaultTimeoutMs?: number;
+  confirmationGranted?: boolean;
 }): Promise<CommandResult> {
   if (runningTraceId) {
     throw new Error(`Command already running for trace ${runningTraceId}`);
@@ -161,7 +186,19 @@ export async function runTrackedCommand(input: {
   }
 
   const action = { ...input.action, command };
-  const cwd = resolveCwd(action.cwd);
+  const policyDecision = evaluateCommandPermission(
+    action,
+    input.rawCommand,
+    input.confirmationGranted,
+  );
+  if (policyDecision.outcome !== "allow") {
+    throw new Error(`Permission ${policyDecision.outcome}: ${policyDecision.reasonCode} - ${policyDecision.reason}`);
+  }
+  if (policyDecision.action.kind !== "command.run") {
+    throw new Error("Permission policy returned an invalid action kind for command execution.");
+  }
+  action.cwd = policyDecision.action.cwd;
+  const cwd = action.cwd;
   const startedAt = nowIso();
   runningTraceId = input.traceId;
   setJsonState("runtime_state", "currentRun", {

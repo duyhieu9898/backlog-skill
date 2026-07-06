@@ -16,5 +16,11 @@
     "commandTimeoutMs": 600000,
     "telegramChunkSize": 3500,
     "sqlitePath": "data/agent.sqlite"
+  },
+  "permissions": {
+    "workspaceRoot": "..",
+    "allowedReadRoots": [".."],
+    "allowedWriteRoots": [".", "../skills"],
+    "deniedPaths": ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"]
   }
 }

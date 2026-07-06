@@ -35,8 +35,8 @@ leave enough trace data to debug what happened.
 | Story | Title | Lane | Status | Why It Matters |
 | --- | --- | --- | --- | --- |
 | US-001 | Runtime State And Trace Store | normal | in_progress | Debugging depends on persistent facts, not chat memory. |
-| US-002 | Permission Policy For Local Tools | high-risk | planned | Tool access must be bounded before file/command tools exist. |
-| US-003 | Safe File Tools | high-risk | planned | The agent needs hands for files without touching secrets or system paths. |
+| US-002 | Permission Policy For Local Tools | high-risk | in_progress | Central policy and command enforcement are implemented; file-tool and Telegram proof remain. |
+| US-003 | Safe File Tools | high-risk | in_progress | Internal policy-gated tools pass unit/integration proof; Telegram and platform proof remain. |
 | US-004 | Allowlisted Command Tools | high-risk | in_progress | Skills should run through reviewed commands, not arbitrary shell. |
 | US-005 | Preview And Confirmation Flow | high-risk | in_progress | Real external effects need a deliberate user approval step. |
 | US-006 | Debug And Status Commands | normal | in_progress | The user needs `/status`, `/last`, `/last-error`, and `/debug`. |

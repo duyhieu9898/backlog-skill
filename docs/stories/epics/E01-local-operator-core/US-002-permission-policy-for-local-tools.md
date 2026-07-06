@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+in_progress
 
 ## Lane
 
@@ -47,6 +47,21 @@ writes, deletes, patches, or runs commands.
   - Canonical paths, symlinks, and the nearest existing parent of new files
     must be checked against configured roots.
 
+## Implementation Design
+
+- `agent/src/tools/contracts.ts` defines typed tool actions, structured policy
+  decisions, stable reason codes, and structured tool results.
+- `agent/src/security/permissionPolicy.ts` is the central deterministic policy.
+  It has no Telegram, SQLite, shell, or LLM dependency.
+- `agent/src/config/app.ts` loads workspace, read-root, write-root, and denied
+  path configuration. Relative paths resolve from `agent/`.
+- `agent/src/core/router.ts` uses policy output to refuse, request confirmation,
+  or execute commands.
+- `agent/src/commands.ts` re-evaluates policy immediately before execution so a
+  caller cannot bypass the Router's initial decision.
+- Exact-action confirmation digests, argv execution, minimal environment, and
+  file executor implementation remain owned by US-005, US-004, and US-003.
+
 ## Validation
 
 | Layer | Expected proof |
@@ -64,4 +79,21 @@ High-risk story because this defines local authority boundaries.
 ## Evidence
 
 Architecture research completed in
-`docs/research/LOCAL_AGENT_ARCHITECTURE_REVIEW.md`. No implementation proof yet.
+`docs/research/LOCAL_AGENT_ARCHITECTURE_REVIEW.md`.
+
+Implementation slice completed on 2026-07-03:
+
+- Central policy, typed actions, configuration, Router enforcement, and
+  executor defense-in-depth are implemented.
+- `cd agent && npm test` passed 18/18 tests after US-003 added policy-gated
+  file executors.
+- Tests cover canonical roots, denied `.env`/`.git`, write confirmation,
+  outside-root refusal, symlink escape, and command refusal before execution.
+- Decision recorded in
+  `docs/decisions/0008-central-local-tool-permission-policy.md`.
+
+Remaining proof before completion:
+
+- Telegram E2E must show a clear denied-file refusal once file tools are
+  routable.
+- Platform smoke proof should exercise the installed service cwd.

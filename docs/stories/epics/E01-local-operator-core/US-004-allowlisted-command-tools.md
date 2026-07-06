@@ -63,11 +63,14 @@ High-risk because this grants local execution authority.
   - `agent/src/commands.ts` has a denylist for trusted wildcard raw commands.
   - `agent/src/core/router.ts` routes direct aliases before AI.
 - Validation:
-  - `npm test` in `agent/` passed on 2026-06-26 with 10/10 tests, including
+  - `npm test` in `agent/` passed on 2026-07-03 with 11/11 tests, including
     command alias resolution, cwd resolution, command success/failure, tracked
-    persistence, and wildcard denylist coverage.
+    persistence, wildcard denylist coverage, and central permission refusal.
+- Permission boundary:
+  - US-002 now canonicalizes command cwd and enforces the configured workspace,
+    denied paths, external-side-effect confirmation, and structured reason
+    codes in both Router and executor.
 - Gaps:
   - Command execution still uses shell execution through `exec`.
-  - Cwd and command policy are not centralized with file/tool permissions.
   - `command.preview` is not implemented as a separate tool.
   - Stale allowlist entries can point at removed skill folders.

@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+in_progress
 
 ## Lane
 
@@ -38,6 +38,19 @@ and patch allowed files while refusing denied paths and risky operations.
   - Refuse binary writes until a real use case exists.
   - `delete` is excluded from the first version or requires confirmation.
 
+## Implementation Design
+
+- `agent/src/tools/contracts.ts` defines the six file action schemas and
+  structured `ToolResult` contract.
+- `agent/src/tools/files.ts` owns policy evaluation, preview generation, text
+  validation, bounded reads/lists, atomic writes, exact-match patches, and
+  content-free trace events.
+- Read/list/exists actions execute after an `allow` decision.
+- Mkdir/write/patch return `CONFIRMATION_REQUIRED` plus a structured preview;
+  execution requires `confirmationGranted` from a trusted caller.
+- AI and Telegram routing remain out of scope until US-009; exact confirmation
+  binding remains in US-005.
+
 ## Validation
 
 | Layer | Expected proof |
@@ -54,4 +67,18 @@ High-risk because file write capability can change local state.
 
 ## Evidence
 
-No implementation proof yet.
+Implementation slice completed on 2026-07-03:
+
+- All six internal file tools are implemented and call `PermissionPolicy`
+  before I/O.
+- Reads truncate explicitly; denied directory children are hidden; binary
+  reads/writes and ambiguous patches are refused.
+- Mutations provide previews and do not change state without confirmation.
+- File results and denials are recorded in trace events without file content.
+- `cd agent && npm test` passed 18/18 tests.
+- Decision recorded in `docs/decisions/0009-safe-file-tool-semantics.md`.
+
+Remaining proof before completion:
+
+- Telegram E2E after US-009 exposes validated file actions.
+- Installed systemd service cwd smoke proof.

@@ -62,10 +62,13 @@ High-risk because it protects external effects and destructive local changes.
   - `confirm <commandName>` consumes the pending confirmation and rejects
     expired or mismatched confirmations.
 - Validation:
-  - `npm test` in `agent/` passed on 2026-06-26 with tests for confirmation
-    expiry and replacement.
+  - `npm test` in `agent/` passed 18/18 on 2026-07-03 with tests for command
+    confirmation expiry/replacement and file mutation previews/refusal.
+- File-tool foundation:
+  - US-003 returns structured mkdir/write/patch previews and requires a trusted
+    `confirmationGranted` context before mutation.
+  - US-002 now centralizes risk decisions in `PermissionPolicy`.
 - Gaps:
-  - Current confirmation preview is command-level only.
-  - It does not yet show file diffs, skipped dates, or structured external
-    action previews.
-  - Risk classification is not centralized in a policy module.
+  - File previews are internal and are not yet persisted or shown by Router.
+  - Confirmation is not yet bound to an opaque exact-action digest.
+  - Bemo skipped dates and structured external action previews remain pending.

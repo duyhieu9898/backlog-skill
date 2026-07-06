@@ -8,7 +8,6 @@ const os = require("node:os");
 const {
   loadCommands,
   resolveCwd,
-  runCommand,
   runTrackedCommand,
   validateWildcardRawCommand,
 } = require("../dist/commands");
@@ -21,6 +20,7 @@ const {
   listTraceEvents,
   upsertPendingConfirmation,
 } = require("../dist/storage/repositories");
+const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 
 test("loadCommands maps command names and aliases from allowlist", () => {
   const commands = loadCommands();
@@ -42,32 +42,6 @@ test("configured command cwd resolves to an existing skill directory", () => {
   assert.equal(fs.existsSync(path.join(bemoCwd, "package.json")), true);
 });
 
-test("runCommand returns success output", async () => {
-  const result = await runCommand(
-    {
-      label: "Test success",
-      command: 'printf "agent-ok"',
-    },
-    5000,
-  );
-
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.output, "agent-ok");
-});
-
-test("runCommand returns non-zero exit code and stderr output", async () => {
-  const result = await runCommand(
-    {
-      label: "Test failure",
-      command: 'printf "agent-fail" >&2; exit 7',
-    },
-    5000,
-  );
-
-  assert.equal(result.exitCode, 7);
-  assert.match(result.output, /agent-fail/);
-});
-
 test("SQLite schema initializes and traced command runs persist", async () => {
   const traceId = `test_${Date.now()}`;
   const result = await runTrackedCommand({
@@ -77,6 +51,7 @@ test("SQLite schema initializes and traced command runs persist", async () => {
       name: "test.success",
       label: "Test tracked success",
       command: 'printf "tracked-ok"',
+      requiresConfirmation: false,
     },
     defaultTimeoutMs: 5000,
   });
@@ -90,6 +65,119 @@ test("SQLite schema initializes and traced command runs persist", async () => {
   const events = listTraceEvents(traceId, 20).map((event) => event.event);
   assert.ok(events.includes("command.started"));
   assert.ok(events.includes("command.completed"));
+});
+
+test("tracked command preserves non-zero exit code and stderr output", async () => {
+  const result = await runTrackedCommand({
+    traceId: `test-failure-${Date.now()}`,
+    chatId: "test-chat",
+    action: {
+      name: "test.failure",
+      label: "Test tracked failure",
+      command: 'printf "agent-fail" >&2; exit 7',
+      requiresConfirmation: false,
+    },
+    defaultTimeoutMs: 5000,
+  });
+
+  assert.equal(result.exitCode, 7);
+  assert.match(result.output, /agent-fail/);
+});
+
+test("permission policy applies deny precedence and canonical root checks", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-policy-"));
+  const workspace = path.join(tmp, "workspace");
+  const writable = path.join(workspace, "notes");
+  const outside = path.join(tmp, "outside");
+  fs.mkdirSync(writable, { recursive: true });
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(workspace, "escape"));
+
+  const policy = new PermissionPolicy({
+    workspaceRoot: workspace,
+    allowedReadRoots: [workspace],
+    allowedWriteRoots: [writable],
+    deniedPaths: [],
+  });
+
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "README.md") }).outcome, "allow");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, ".env") }).reasonCode, "DENIED_PATH");
+  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(writable, "new.md") }).outcome, "confirm");
+  assert.equal(
+    policy.evaluate(
+      { kind: "file.write", path: path.join(writable, "new.md") },
+      { confirmationGranted: true },
+    ).outcome,
+    "allow",
+  );
+  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(workspace, "other.md") }).reasonCode, "OUTSIDE_WRITE_ROOTS");
+  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(workspace, "escape", "new.md") }).reasonCode, "OUTSIDE_WORKSPACE");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, ".git", "config") }).reasonCode, "DENIED_PATH");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "node_modules", "pkg") }).reasonCode, "DENIED_PATH");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "credentials.json") }).reasonCode, "DENIED_PATH");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(outside, "note.md") }).reasonCode, "OUTSIDE_READ_ROOTS");
+  assert.equal(
+    policy.evaluate({
+      kind: "command.run",
+      commandId: "external.write",
+      command: "example",
+      cwd: workspace,
+      requiresConfirmation: false,
+      externalSideEffect: true,
+    }).reasonCode,
+    "CONFIRMATION_REQUIRED",
+  );
+});
+
+test("tracked commands cannot bypass policy or confirmation", async () => {
+  await assert.rejects(
+    runTrackedCommand({
+      traceId: `test-policy-cwd-${Date.now()}`,
+      chatId: "test-chat",
+      action: {
+        name: "test.outside",
+        label: "Outside workspace",
+        cwd: os.tmpdir(),
+        command: 'printf "must-not-run"',
+        requiresConfirmation: false,
+      },
+    }),
+    /OUTSIDE_WORKSPACE/,
+  );
+
+  await assert.rejects(
+    runTrackedCommand({
+      traceId: `test-policy-confirm-${Date.now()}`,
+      chatId: "test-chat",
+      action: {
+        name: "test.confirm",
+        label: "Needs confirmation",
+        command: 'printf "must-not-run"',
+        requiresConfirmation: true,
+      },
+    }),
+    /CONFIRMATION_REQUIRED/,
+  );
+});
+
+test("permission policy requires every write root to be readable", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-policy-roots-"));
+  const readable = path.join(tmp, "readable");
+  const writable = path.join(tmp, "writable");
+  fs.mkdirSync(readable);
+  fs.mkdirSync(writable);
+
+  assert.throws(
+    () =>
+      new PermissionPolicy({
+        workspaceRoot: tmp,
+        allowedReadRoots: [readable],
+        allowedWriteRoots: [writable],
+        deniedPaths: [],
+      }),
+    /write root must be contained by an allowed read root/,
+  );
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test("pending confirmation can expire after 2 minutes", () => {
