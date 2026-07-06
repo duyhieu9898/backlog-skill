@@ -9,6 +9,10 @@ npm install
 npm start
 ```
 
+`agent/.env` must define `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+`TELEGRAM_POLL_TIMEOUT` is optional and defaults to 25 seconds. Secrets and
+chat identifiers must never have source-code fallbacks.
+
 ## Background CLI
 
 Install the `my-agent` CLI and systemd user service:

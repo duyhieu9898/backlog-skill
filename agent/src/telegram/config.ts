@@ -4,11 +4,20 @@ export type TelegramConfig = {
   pollTimeoutSeconds: number;
 };
 
-export function loadTelegramConfig(): TelegramConfig {
+function requiredEnv(env: NodeJS.ProcessEnv, key: string): string {
+  const value = env[key]?.trim();
+  if (!value) throw new Error(`Missing required environment variable: ${key}`);
+  return value;
+}
+
+export function loadTelegramConfig(env: NodeJS.ProcessEnv = process.env): TelegramConfig {
+  const pollTimeoutSeconds = Number(env.TELEGRAM_POLL_TIMEOUT || 25);
+  if (!Number.isInteger(pollTimeoutSeconds) || pollTimeoutSeconds < 0 || pollTimeoutSeconds > 50) {
+    throw new Error("TELEGRAM_POLL_TIMEOUT must be an integer between 0 and 50.");
+  }
   return {
-    botToken:
-      process.env.TELEGRAM_BOT_TOKEN || "8556741894:AAFn29duC9iBGJMn7sBndtdkWKFzwQaey3o",
-    allowedChatId: String(process.env.TELEGRAM_CHAT_ID || "811696951"),
-    pollTimeoutSeconds: Number(process.env.TELEGRAM_POLL_TIMEOUT || 25),
+    botToken: requiredEnv(env, "TELEGRAM_BOT_TOKEN"),
+    allowedChatId: requiredEnv(env, "TELEGRAM_CHAT_ID"),
+    pollTimeoutSeconds,
   };
 }
