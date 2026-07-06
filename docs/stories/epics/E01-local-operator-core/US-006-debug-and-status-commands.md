@@ -63,6 +63,8 @@ None expected.
   - Direct tests cover parsing and formatting for `/status`, `/last`,
     `/last-error`, `/debug`, `/commands`, `/skills`, and `/help`.
   - Integration proof inserts and reads a structured `file.failed` trace event.
+  - The user confirmed successful Telegram `/status` and `/skills` smoke
+    responses from the deployed service on 2026-07-06.
 - Completed behavior:
   - `/status` includes loaded command and skill counts.
   - `/last-error` chooses the newest failed command or file-tool event.

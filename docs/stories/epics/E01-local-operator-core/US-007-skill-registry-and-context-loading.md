@@ -2,7 +2,7 @@
 
 ## Status
 
-in_progress
+implemented
 
 ## Lane
 
@@ -69,6 +69,11 @@ None expected.
     and leaves them absent for a general request.
   - Path-independence proof creates the default registry from a child process whose
     cwd is outside `agent/` and still resolves all repository skills.
+  - After deploying commit `8fce060`, the installed systemd user service rebuilt
+    and entered Telegram polling successfully.
+  - The user confirmed successful human-authored `/skills` and `/status` smoke
+    responses on 2026-07-06, covering the three loaded skills, registry status,
+    Telegram routing, and installed-service runtime.
 - Completed behavior:
   - Registry errors no longer prevent startup and are visible in `/status` and
     `/skills`.
@@ -77,7 +82,4 @@ None expected.
   - Selected skill content expands `{baseDir}` references and uses UTF-8-safe
     truncation.
 - Gaps:
-  - A human-authored Telegram `/skills` smoke is still required after deployment
-    to record external E2E proof.
-  - The installed systemd service still needs a post-deploy `/status` or
-    `/skills` smoke to record platform proof.
+  - None for the US-007 contract.

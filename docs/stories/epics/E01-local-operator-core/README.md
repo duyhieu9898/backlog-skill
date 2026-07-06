@@ -40,7 +40,7 @@ leave enough trace data to debug what happened.
 | US-004 | Allowlisted Command Tools | high-risk | in_progress | Skills should run through reviewed commands, not arbitrary shell. |
 | US-005 | Preview And Confirmation Flow | high-risk | in_progress | Real external effects need a deliberate user approval step. |
 | US-006 | Debug And Status Commands | normal | in_progress | The user needs `/status`, `/last`, `/last-error`, and `/debug`. |
-| US-007 | Skill Registry And Context Loading | normal | in_progress | The agent should discover skills and load only relevant skill context. |
+| US-007 | Skill Registry And Context Loading | normal | implemented | The agent discovers valid skills, surfaces registry errors, and loads only selected skill context. |
 | US-008 | Bemo Late-Day Workflow | high-risk | planned | The motivating workflow should become a safe end-to-end vertical slice. |
 | US-009 | AI Tool Router | high-risk | planned | Gemini/OpenAI should select tools, not bypass permissions. |
 | US-010 | Scheduled Local Checks | normal | planned | Scheduling comes after manual execution is observable and reversible. |
@@ -84,8 +84,8 @@ debug commands, skill registry, context hydration, and AI provider routing.
 
 The permission policy, safe file tools, fixed-argv command hardening,
 exact-action confirmations, debug commands, and skill-registry hardening are
-implemented. The next validation step is a deployed `/skills` smoke; after that,
-the Bemo workflow should become the first end-to-end operator slice.
+implemented. The deployed `/skills` and `/status` smoke for US-007 passed; the
+Bemo workflow should now become the first end-to-end operator slice.
 
 The external architecture comparison and local risk review are recorded in
 `docs/research/LOCAL_AGENT_ARCHITECTURE_REVIEW.md`. Its main conclusion is to
