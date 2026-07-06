@@ -70,4 +70,6 @@ None expected.
   - `agent/README.md` documents every debug command.
 - Gaps:
   - Telegram manual smoke proof is not recorded.
-  - Skill registry error collection and surfacing remains owned by US-007.
+- Follow-up resolved by US-007:
+  - `/status` now reports the skill-registry error count and details without
+    preventing valid skills from loading.

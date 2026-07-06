@@ -59,10 +59,25 @@ None expected.
     allowed commands, selected skill content, recent runs, and trace events.
   - `/skills` uses the registry to display discovered skills.
 - Validation:
-  - `npm test` in `agent/` passed on 2026-06-26 with tests for context budget
-    truncation and rejection of skills missing `description`.
+  - `npm test` in `agent/` passed 38/38 on 2026-07-06.
+  - Unit coverage verifies frontmatter validation, slug derivation, deterministic
+    matching, ambiguous-match refusal, `{baseDir}` expansion, and byte-budget
+    truncation.
+  - Integration coverage scans the current Bemo, Gmail, and Linux Janitor
+    skills while retaining valid skills when another package is invalid.
+  - Context hydration proof loads full Bemo instructions for a selected request
+    and leaves them absent for a general request.
+  - Path-independence proof creates the default registry from a child process whose
+    cwd is outside `agent/` and still resolves all repository skills.
+- Completed behavior:
+  - Registry errors no longer prevent startup and are visible in `/status` and
+    `/skills`.
+  - Matching prioritizes exact slug/name phrases, scores meaningful metadata
+    tokens, and refuses tied results instead of choosing by directory order.
+  - Selected skill content expands `{baseDir}` references and uses UTF-8-safe
+    truncation.
 - Gaps:
-  - Registry error surfacing in `/status` or `/last-error` is not complete.
-  - Skill matching is still simple keyword matching.
-  - Current repo has no active `skills/backlog/SKILL.md`, while
-    `agent/commands.json` still contains backlog commands.
+  - A human-authored Telegram `/skills` smoke is still required after deployment
+    to record external E2E proof.
+  - The installed systemd service still needs a post-deploy `/status` or
+    `/skills` smoke to record platform proof.

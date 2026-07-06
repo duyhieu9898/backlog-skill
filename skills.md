@@ -123,6 +123,10 @@ Quy trình tối thiểu:
 5. Khi user gửi yêu cầu, so khớp yêu cầu với `slug`, `name`, `description`.
 6. Chỉ đọc toàn bộ `SKILL.md` của skill phù hợp, không nạp tất cả skill vào prompt nếu không cần.
 
+Registry tiếp tục nạp các skill hợp lệ nếu một skill khác có frontmatter lỗi.
+Các lỗi bị bỏ qua phải xuất hiện trong `/status` và `/skills`; không được làm
+agent dừng khởi động chỉ vì một package skill hỏng.
+
 ## Cách Chọn Skill
 
 Ưu tiên chọn skill khi:
@@ -134,7 +138,9 @@ Quy trình tối thiểu:
 Nếu nhiều skill cùng khớp:
 
 - Chọn skill khớp cụ thể nhất trước.
-- Có thể nạp nhiều skill nếu request thật sự cần phối hợp nhiều hệ thống.
+- Ưu tiên cụm slug hoặc name được nhắc trực tiếp, sau đó mới chấm điểm token
+  trong description.
+- Nếu các kết quả cao nhất bằng điểm, không tự chọn skill.
 - Nếu không chắc, hỏi lại user thay vì đoán và chạy script rủi ro.
 
 ## Nội Dung Nên Có Trong SKILL.md

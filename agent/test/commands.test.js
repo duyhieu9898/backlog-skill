@@ -441,11 +441,3 @@ test("ContextHydrator respects dynamic context budget marker", () => {
 
   assert.match(hydrator.toPromptSections(context), /\[truncated: dynamic context exceeded 24KB\]/);
 });
-
-test("SkillRegistry rejects skills missing description", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-skill-"));
-  fs.mkdirSync(path.join(tmp, "bad"));
-  fs.writeFileSync(path.join(tmp, "bad", "SKILL.md"), "---\nname: Bad\n---\n# Bad\n");
-
-  assert.throws(() => new SkillRegistry(tmp), /missing description/);
-});

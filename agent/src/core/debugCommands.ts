@@ -98,10 +98,18 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
 
   if (normalized === "/skills") {
     const skills = registry.listSkills();
-    if (!skills.length) return "No skills loaded.";
-    return skills
-      .map((skill) => `${skill.slug} - ${skill.name}\n${skill.description}`)
-      .join("\n\n");
+    const errors = registry.listErrors();
+    const loaded = skills.length
+      ? skills
+          .map((skill) => `${skill.slug} - ${skill.name}\n${skill.description}`)
+          .join("\n\n")
+      : "No skills loaded.";
+    if (!errors.length) return loaded;
+    return [
+      loaded,
+      "Registry errors:",
+      ...errors.map((error) => `- ${error.slug}: ${error.message}`),
+    ].join("\n\n");
   }
 
   if (normalized === "/status") {
@@ -113,6 +121,8 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
       `pending confirmations: ${countPendingConfirmations()}`,
       `loaded commands: ${catalog.allow.length}`,
       `loaded skills: ${registry.listSkills().length}`,
+      `skill registry errors: ${registry.listErrors().length}`,
+      ...registry.listErrors().map((error) => `- ${error.slug}: ${error.message}`),
       `sqlite: ${sqliteFile}`,
     ].join("\n");
   }

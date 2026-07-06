@@ -82,10 +82,10 @@ As of the re-baseline pass, the existing `agent/` code already has partial
 implementations for runtime persistence, command execution, confirmations,
 debug commands, skill registry, context hydration, and AI provider routing.
 
-The permission policy, safe file tools, and fixed-argv command hardening are now
-implemented. The next implementation step should validate debug/skill UX, then
-bind confirmations to exact actions before using the Bemo workflow as the first
-end-to-end operator slice.
+The permission policy, safe file tools, fixed-argv command hardening,
+exact-action confirmations, debug commands, and skill-registry hardening are
+implemented. The next validation step is a deployed `/skills` smoke; after that,
+the Bemo workflow should become the first end-to-end operator slice.
 
 The external architecture comparison and local risk review are recorded in
 `docs/research/LOCAL_AGENT_ARCHITECTURE_REVIEW.md`. Its main conclusion is to

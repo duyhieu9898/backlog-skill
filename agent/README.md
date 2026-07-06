@@ -16,12 +16,13 @@ chat identifiers must never have source-code fallbacks.
 ## Debug Commands
 
 - `/status` — uptime, current command, pending confirmations, loaded commands,
-  loaded skills, and SQLite path.
+  loaded skills, skill-registry errors, and SQLite path.
 - `/last` — latest command result and output tail.
 - `/last-error` — latest command or tool failure with trace ID.
 - `/debug <traceId>` — trace events for one execution.
 - `/commands` — allowlisted commands grouped by skill.
-- `/skills` — loaded skill names and descriptions.
+- `/skills` — loaded skill names and descriptions, plus any invalid skill
+  metadata that was skipped during scanning.
 - `/help` — command summary.
 
 ## Background CLI
