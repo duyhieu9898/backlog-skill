@@ -15,6 +15,7 @@ import { tailLines } from "./utils";
 import { loadAgentConfig } from "./config/app";
 import { PermissionPolicy } from "./security/permissionPolicy";
 import type { PolicyDecision } from "./tools/contracts";
+import { validateJsonSchema, type JsonSchema } from "./tools/schema";
 
 export type AgentCommand = {
   name?: string;
@@ -26,6 +27,9 @@ export type AgentCommand = {
   requiresConfirmation?: boolean;
   externalSideEffect?: boolean;
   timeoutMs?: number;
+  inputMode?: "json-stdin";
+  inputSchema?: JsonSchema;
+  invocationInput?: unknown;
 };
 
 export type CommandMap = Record<string, AgentCommand>;
@@ -55,6 +59,7 @@ export type CommandPreview = {
   timeoutMs: number;
   requiresConfirmation: boolean;
   externalSideEffect: boolean;
+  inputDigest?: string;
 };
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -85,6 +90,19 @@ function normalizeCommand(action: AgentCommand): AgentCommand {
       throw new Error(`Allowlisted command ${action.name} has an invalid argv value.`);
     }
   }
+  if (action.inputMode && action.inputMode !== "json-stdin") {
+    throw new Error(`Allowlisted command ${action.name} has an unsupported input mode.`);
+  }
+  if (action.inputMode && !action.inputSchema) {
+    throw new Error(`Allowlisted command ${action.name} input mode requires an input schema.`);
+  }
+  if (action.invocationInput !== undefined) {
+    if (!action.inputSchema || action.inputMode !== "json-stdin") {
+      throw new Error(`Allowlisted command ${action.name} does not accept structured input.`);
+    }
+    const errors = validateJsonSchema(action.inputSchema, action.invocationInput);
+    if (errors.length) throw new Error(`Invalid input for ${action.name}: ${errors.join(" ")}`);
+  }
   const cwd = resolveCwd(action.cwd);
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
     throw new Error(`Allowlisted command ${action.name} has a stale cwd: ${cwd}`);
@@ -104,6 +122,15 @@ function normalizeCommand(action: AgentCommand): AgentCommand {
     requiresConfirmation: action.requiresConfirmation ?? true,
     externalSideEffect: action.externalSideEffect ?? false,
   };
+}
+
+export function commandInputDigest(input: unknown): string {
+  return crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+export function withCommandInput(action: AgentCommand, input: unknown): AgentCommand {
+  const invocation = { ...action, invocationInput: input };
+  return normalizeCommand(invocation);
 }
 
 export function loadCommands(): CommandMap {
@@ -180,15 +207,18 @@ export function previewCommand(
   action: AgentCommand,
   defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
 ): CommandPreview {
+  const normalized = normalizeCommand(action);
   return {
-    commandName: action.name || action.label,
-    label: action.label,
-    executable: action.argv[0],
-    args: action.argv.slice(1),
-    cwd: resolveCwd(action.cwd),
-    timeoutMs: Number(action.timeoutMs || defaultTimeoutMs),
-    requiresConfirmation: action.requiresConfirmation ?? true,
-    externalSideEffect: action.externalSideEffect ?? false,
+    commandName: normalized.name || normalized.label,
+    label: normalized.label,
+    executable: normalized.argv[0],
+    args: normalized.argv.slice(1),
+    cwd: resolveCwd(normalized.cwd),
+    timeoutMs: Number(normalized.timeoutMs || defaultTimeoutMs),
+    requiresConfirmation: normalized.requiresConfirmation ?? true,
+    externalSideEffect: normalized.externalSideEffect ?? false,
+    inputDigest:
+      normalized.invocationInput === undefined ? undefined : commandInputDigest(normalized.invocationInput),
   };
 }
 
@@ -202,6 +232,7 @@ export function commandPreviewDigest(preview: CommandPreview): string {
     timeoutMs: preview.timeoutMs,
     requiresConfirmation: preview.requiresConfirmation,
     externalSideEffect: preview.externalSideEffect,
+    inputDigest: preview.inputDigest,
   });
   return crypto.createHash("sha256").update(canonical).digest("hex");
 }
@@ -213,13 +244,17 @@ function runCommand(action: AgentCommand, defaultTimeoutMs: number): Promise<Com
       cwd: preview.cwd,
       env: buildCommandEnvironment(),
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [action.invocationInput === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     const chunks: Buffer[] = [];
     let outputBytes = 0;
     let outputLimited = false;
     let timedOut = false;
     let settled = false;
+
+    if (action.invocationInput !== undefined && child.stdin) {
+      child.stdin.end(`${JSON.stringify(action.invocationInput)}\n`);
+    }
 
     const capture = (chunk: Buffer): void => {
       if (outputLimited) return;
@@ -234,8 +269,8 @@ function runCommand(action: AgentCommand, defaultTimeoutMs: number): Promise<Com
       chunks.push(chunk);
       outputBytes += chunk.length;
     };
-    child.stdout.on("data", capture);
-    child.stderr.on("data", capture);
+    child.stdout?.on("data", capture);
+    child.stderr?.on("data", capture);
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -284,7 +319,11 @@ export async function runTrackedCommand(input: {
   action.cwd = policyDecision.action.cwd;
   const cwd = action.cwd;
   const preview = previewCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS);
-  const command = JSON.stringify([preview.executable, ...preview.args]);
+  const command = JSON.stringify([
+    preview.executable,
+    ...preview.args,
+    ...(preview.inputDigest ? [`<json-stdin:${preview.inputDigest}>`] : []),
+  ]);
   const startedAt = nowIso();
   runningTraceId = input.traceId;
   setJsonState("runtime_state", "currentRun", {

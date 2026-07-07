@@ -41,8 +41,8 @@ leave enough trace data to debug what happened.
 | US-005 | Preview And Confirmation Flow | high-risk | in_progress | Real external effects need a deliberate user approval step. |
 | US-006 | Debug And Status Commands | normal | in_progress | The user needs `/status`, `/last`, `/last-error`, and `/debug`. |
 | US-007 | Skill Registry And Context Loading | normal | implemented | The agent discovers valid skills, surfaces registry errors, and loads only selected skill context. |
-| US-008 | Bemo Late-Day Workflow | high-risk | planned | The motivating workflow should become a safe end-to-end vertical slice. |
-| US-009 | AI Tool Router | high-risk | planned | Gemini/OpenAI should select tools, not bypass permissions. |
+| US-008 | Bemo Late-Day Workflow | high-risk | in_progress | Bemo skill owns structured plan/create behavior; natural-language preview smoke remains. |
+| US-009 | AI Tool Router | high-risk | in_progress | Generic policy-gated tool loop is implemented; Telegram/provider smoke remains. |
 | US-010 | Scheduled Local Checks | normal | planned | Scheduling comes after manual execution is observable and reversible. |
 
 ## Recommended Implementation Order
@@ -54,25 +54,25 @@ leave enough trace data to debug what happened.
 5. US-006
 6. US-007
 7. US-005
-8. US-008
-9. US-009
+8. US-009
+9. US-008
 10. US-010
 
 ## Release Slice
 
-The first useful release is complete when US-001 through US-008 are implemented.
-At that point the agent can handle the Bemo scenario without relying on broad
-OpenClaw-style filesystem or command access:
+The first useful release is complete when US-001 through US-009 and the Bemo
+US-008 vertical slice are implemented. At that point the agent can handle the
+Bemo scenario without relying on broad OpenClaw-style filesystem or command
+access:
 
 ```text
 User request
   -> select Bemo skill
-  -> run allowlisted late-list command
-  -> read structured output
-  -> filter skipped date
-  -> preview planned create actions
+  -> choose allowlisted structured Bemo commands
+  -> prepare a digest-bound plan inside the Bemo skill
+  -> preview the confirmed create tool call
   -> confirm
-  -> run allowlisted create command
+  -> run allowlisted create command with JSON stdin
   -> record trace and last result
 ```
 
@@ -83,9 +83,11 @@ implementations for runtime persistence, command execution, confirmations,
 debug commands, skill registry, context hydration, and AI provider routing.
 
 The permission policy, safe file tools, fixed-argv command hardening,
-exact-action confirmations, debug commands, and skill-registry hardening are
-implemented. The deployed `/skills` and `/status` smoke for US-007 passed; the
-Bemo workflow should now become the first end-to-end operator slice.
+exact-action confirmations, debug commands, skill-registry hardening, and the
+generic AI tool loop are implemented. The deployed `/skills` and `/status`
+smoke for US-007 passed; the Bemo workflow now has a tested structured
+plan/create foundation and needs a deployed read-only list plus natural-language
+unconfirmed preview smoke.
 
 The external architecture comparison and local risk review are recorded in
 `docs/research/LOCAL_AGENT_ARCHITECTURE_REVIEW.md`. Its main conclusion is to

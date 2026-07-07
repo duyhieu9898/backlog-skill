@@ -9,7 +9,6 @@ import {
 } from "../commands";
 import { ContextHydrator } from "../context/hydrator";
 import { log } from "../logging/logger";
-import { AiRouter } from "../brain/router";
 import {
   deletePendingConfirmation,
   getPendingConfirmation,
@@ -19,15 +18,18 @@ import {
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
 import type { StandardMessage } from "../types/messages";
+import { AgentToolLoop } from "../tools/loop";
 import { handleDebugCommand, isDebugCommand } from "./debugCommands";
 import { presentCommandResult } from "./presenter";
 
 export class Router {
   private readonly hydrator: ContextHydrator;
-  private readonly ai = new AiRouter();
   private readonly commandTimeoutMs: number;
 
-  constructor(private readonly registry: SkillRegistry) {
+  constructor(
+    private readonly registry: SkillRegistry,
+    private readonly toolLoop = new AgentToolLoop(),
+  ) {
     this.hydrator = new ContextHydrator(registry);
     this.commandTimeoutMs = loadAgentConfig().runtime?.commandTimeoutMs || 10 * 60 * 1000;
   }
@@ -76,6 +78,8 @@ export class Router {
       return handleDebugCommand(text, this.registry);
     }
 
+    const toolConfirmed = await this.toolLoop.consumeConfirmation(message);
+    if (toolConfirmed) return toolConfirmed;
     const confirmed = await this.consumeConfirmation(message);
     if (confirmed) return confirmed;
 
@@ -91,23 +95,7 @@ export class Router {
     }
 
     const context = this.hydrator.hydrate(message);
-    const aiResponse = await this.ai.complete(
-      message.traceId,
-      this.hydrator.toPromptSections(context),
-      message.text,
-    );
-
-    if (aiResponse.clarification) return aiResponse.clarification;
-    if (aiResponse.commandName) {
-      const selected = catalog.allow.find((command) => command.name === aiResponse.commandName);
-      if (!selected) return `AI chọn command không nằm trong allowlist: ${aiResponse.commandName}`;
-      log.info(message.traceId, "ai.tool.selected", {
-        commandName: aiResponse.commandName,
-      });
-      return this.prepareOrRun(message, selected);
-    }
-
-    return aiResponse.text || "Mình chưa hiểu yêu cầu. Gõ /commands để xem lệnh hỗ trợ.";
+    return this.toolLoop.run(message, this.hydrator.toPromptSections(context));
   }
 
   private async prepareOrRun(

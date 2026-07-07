@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-import type { AiProvider, AiRequest, AiResponse } from "../provider";
+import { validateAiResponse, type AiProvider, type AiRequest, type AiResponse } from "../provider";
 
 export class OpenAiProvider implements AiProvider {
   private readonly client: OpenAI;
@@ -20,7 +20,12 @@ export class OpenAiProvider implements AiProvider {
         {
           role: "user",
           content: [
-            "Return strict JSON with optional keys: text, commandName, clarification.",
+            "Return strict JSON with exactly one key: text, clarification, or toolCall.",
+            "toolCall must be {name, arguments} and name must match an available tool.",
+            "Available tools:",
+            JSON.stringify(input.tools),
+            "Previous tool steps:",
+            JSON.stringify(input.steps),
             "Context:",
             input.context,
             "User:",
@@ -32,6 +37,6 @@ export class OpenAiProvider implements AiProvider {
     });
 
     const content = response.choices[0]?.message.content || "{}";
-    return { ...(JSON.parse(content) as AiResponse), usage: response.usage };
+    return { ...validateAiResponse(JSON.parse(content)), usage: response.usage };
   }
 }

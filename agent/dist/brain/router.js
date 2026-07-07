@@ -15,15 +15,18 @@ class AiRouter {
     providerName;
     model;
     cacheableHash;
-    constructor() {
+    constructor(options = {}) {
         const config = (0, app_1.loadAgentConfig)();
-        this.systemPrompt = (0, app_1.loadSystemPrompt)();
-        this.providerName = config.ai.default;
+        this.systemPrompt = options.systemPrompt ?? (0, app_1.loadSystemPrompt)();
+        this.providerName = options.providerName ?? config.ai.default;
         const providerConfig = config.ai.providers[config.ai.default];
-        this.model = providerConfig?.model || "";
+        this.model = options.model ?? providerConfig?.model ?? "";
         const apiKey = providerConfig ? process.env[providerConfig.apiKeyEnv] : undefined;
         this.cacheableHash = node_crypto_1.default.createHash("sha256").update(this.systemPrompt).digest("hex");
-        if (!providerConfig || !apiKey) {
+        if ("provider" in options) {
+            this.provider = options.provider ?? null;
+        }
+        else if (!providerConfig || !apiKey) {
             this.provider = null;
         }
         else if (config.ai.default === "openai") {
@@ -36,7 +39,7 @@ class AiRouter {
     isConfigured() {
         return Boolean(this.provider);
     }
-    async complete(traceId, context, userMessage) {
+    async complete(traceId, context, userMessage, tools = [], steps = []) {
         if (!this.provider) {
             return {
                 text: "AI provider chưa được cấu hình. Dùng /commands để xem các lệnh chạy trực tiếp.",
@@ -53,10 +56,12 @@ class AiRouter {
                 system: this.systemPrompt,
                 context,
                 userMessage,
+                tools,
+                steps,
             });
             logger_1.log.info(traceId, "ai.response.received", {
                 latencyMs: Date.now() - started,
-                selectedCommand: response.commandName,
+                selectedTool: response.toolCall?.name,
                 usage: response.usage,
             });
             return response;

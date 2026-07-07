@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+in_progress
 
 ## Lane
 
@@ -36,11 +36,13 @@ confirmation, and create only the confirmed items.
 
 - Commands:
   - `bemo.late-list`
-  - `bemo.create-timeoff` or equivalent existing script command.
+  - `bemo.prepare-timeoff`
+  - `bemo.create-timeoff`
 - Domain rules:
-  - Prefer structured JSON output from Bemo scripts.
-  - If Bemo scripts currently output text only, add a normalizer before the AI
-    uses the data.
+  - The Bemo skill owns date normalization, skip validation, plan construction,
+    and create execution.
+  - The agent core only runs generic registered tools and confirmation flow; it
+    has no Bemo-specific router branch.
 
 ## Validation
 
@@ -58,4 +60,30 @@ High-risk because it can write to an external Bemo service.
 
 ## Evidence
 
-No implementation proof yet.
+- Implemented foundation:
+  - `agent/src/tools/loop.ts` and `agent/src/tools/executor.ts` expose generic,
+    policy-gated file and allowlisted-command tools to the AI with bounded tool
+    steps and exact confirmation.
+  - `agent/commands.json` allowlists read-only `bemo.late-list`, structured
+    `bemo.prepare-timeoff`, and confirmed `bemo.create-timeoff` fixed-argv
+    commands.
+  - `skills/bemo/src/workflows/late-timeoff.js` lists structured records, validates
+    version/expiry/source digest/selected digest/skips, calls the create engine
+    with only approved records, and returns structured results.
+  - `create-timeoff.js` accepts explicit approved records while preserving the
+    legacy action-file entry point.
+- Validation:
+  - Agent suite passes 42/42, including structured AI outcome validation,
+    JSON-stdin command input, unknown-tool rejection, bounded composition, and
+    pause-before-confirmed-effect behavior.
+  - Bemo suite passes 6/6 with a fake create callback and no browser/provider
+    access.
+  - Read-only local smoke parsed the current ignored `action-needed.json`:
+    count=1, createDates=1, skippedDates=0; no provider write executed.
+  - Installed `my-agent` service restarted, rebuilt TypeScript, launched
+    `node dist/bot.js`, and entered Telegram polling.
+- Remaining proof:
+  - Complete human Telegram `/bemo_late` plus natural-language create preview
+    smoke through the AI tool router.
+    without confirming a real write.
+  - A real provider write requires a separate explicit user decision.

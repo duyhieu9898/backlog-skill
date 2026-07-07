@@ -20,7 +20,7 @@ const { SkillRegistry } = require("../dist/skills/registry");
 const {
   deletePendingConfirmation,
   getPendingConfirmation,
-  getLastCommandRun,
+  listRecentCommandRuns,
   listTraceEvents,
   upsertPendingConfirmation,
 } = require("../dist/storage/repositories");
@@ -31,6 +31,15 @@ test("loadCommands maps command names and aliases from allowlist", () => {
 
   assert.deepEqual(commands["bemo.checkout"].argv, ["npm", "run", "-s", "checkout"]);
   assert.equal(commands["/bemo_checkout"].name, "bemo.checkout");
+  assert.deepEqual(commands["bemo.late-list"].argv, ["node", "src/workflows/late-timeoff.js", "list"]);
+  assert.equal(commands["/bemo_late"].requiresConfirmation, false);
+  assert.deepEqual(commands["bemo.create-timeoff"].argv, [
+    "node",
+    "src/workflows/late-timeoff.js",
+    "create",
+  ]);
+  assert.equal(commands["bemo.create-timeoff"].requiresConfirmation, true);
+  assert.equal(commands["bemo.prepare-timeoff"].inputMode, "json-stdin");
   assert.equal(commands["/bemo_run"].requiresConfirmation, true);
   assert.deepEqual(commands["shutdown"].argv, ["systemctl", "poweroff"]);
   assert.equal(commands["/shutdown"].name, "shutdown");
@@ -169,10 +178,10 @@ test("SQLite schema initializes and traced command runs persist", async () => {
   });
 
   assert.equal(result.exitCode, 0);
-  const last = getLastCommandRun();
-  assert.equal(last.trace_id, traceId);
-  assert.equal(last.status, "success");
-  assert.match(last.output_tail, /tracked-ok/);
+  const run = listRecentCommandRuns("test-chat", 20).find((row) => row.trace_id === traceId);
+  assert.ok(run);
+  assert.equal(run.status, "success");
+  assert.match(run.output_tail, /tracked-ok/);
 
   const events = listTraceEvents(traceId, 20).map((event) => event.event);
   assert.ok(events.includes("command.started"));

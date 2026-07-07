@@ -51,6 +51,19 @@ my-agent enable-login
 
 The service uses `npm run start` in this `agent` directory and restarts automatically on failure.
 
+## Bemo Late-Day Workflow
+
+- `/bemo_sync` refreshes attendance/time-off source data.
+- `/bemo_late` lists the current late-day candidates without writing to Bemo.
+- Natural-language requests such as `tạo timeoff Bemo, bỏ ngày 2026-07-01`
+  let the AI choose the registered structured commands.
+
+The Bemo skill owns late-day filtering through JSON-stdin commands:
+`bemo.prepare-timeoff` builds a digest-bound plan and `bemo.create-timeoff`
+executes only that plan after `confirm bemo.create-timeoff <token>`. The core
+agent has no Bemo-specific router branch. Unknown, malformed, duplicate,
+expired, or tampered plans fail closed.
+
 ## Add Commands
 
 Edit `commands.json`:
@@ -85,6 +98,10 @@ and timeout before the user approves them. Mark external mutations with
 misconfigured with `requiresConfirmation: false`. Approval uses
 `confirm <commandName> <token>`; the token is derived from the exact preview and
 is rejected if the stored action or preview changes.
+
+Commands may optionally declare `inputMode: "json-stdin"` and an `inputSchema`.
+Those commands are exposed to the AI as typed tools; arguments are schema
+validated before execution and sent over stdin instead of argv.
 
 ## Permission Policy
 

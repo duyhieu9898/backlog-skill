@@ -3,6 +3,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.commandInputDigest = commandInputDigest;
+exports.withCommandInput = withCommandInput;
 exports.loadCommands = loadCommands;
 exports.loadCommandCatalog = loadCommandCatalog;
 exports.buildCommandCatalog = buildCommandCatalog;
@@ -24,6 +26,7 @@ const repositories_1 = require("./storage/repositories");
 const utils_1 = require("./utils");
 const app_1 = require("./config/app");
 const permissionPolicy_1 = require("./security/permissionPolicy");
+const schema_1 = require("./tools/schema");
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 const SAFE_ENV_KEYS = [
@@ -53,6 +56,20 @@ function normalizeCommand(action) {
             throw new Error(`Allowlisted command ${action.name} has an invalid argv value.`);
         }
     }
+    if (action.inputMode && action.inputMode !== "json-stdin") {
+        throw new Error(`Allowlisted command ${action.name} has an unsupported input mode.`);
+    }
+    if (action.inputMode && !action.inputSchema) {
+        throw new Error(`Allowlisted command ${action.name} input mode requires an input schema.`);
+    }
+    if (action.invocationInput !== undefined) {
+        if (!action.inputSchema || action.inputMode !== "json-stdin") {
+            throw new Error(`Allowlisted command ${action.name} does not accept structured input.`);
+        }
+        const errors = (0, schema_1.validateJsonSchema)(action.inputSchema, action.invocationInput);
+        if (errors.length)
+            throw new Error(`Invalid input for ${action.name}: ${errors.join(" ")}`);
+    }
     const cwd = resolveCwd(action.cwd);
     if (!node_fs_1.default.existsSync(cwd) || !node_fs_1.default.statSync(cwd).isDirectory()) {
         throw new Error(`Allowlisted command ${action.name} has a stale cwd: ${cwd}`);
@@ -72,6 +89,13 @@ function normalizeCommand(action) {
         requiresConfirmation: action.requiresConfirmation ?? true,
         externalSideEffect: action.externalSideEffect ?? false,
     };
+}
+function commandInputDigest(input) {
+    return node_crypto_1.default.createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+function withCommandInput(action, input) {
+    const invocation = { ...action, invocationInput: input };
+    return normalizeCommand(invocation);
 }
 function loadCommands() {
     return loadCommandCatalog().byAlias;
@@ -131,15 +155,17 @@ function buildCommandEnvironment(source = process.env) {
     return env;
 }
 function previewCommand(action, defaultTimeoutMs = DEFAULT_TIMEOUT_MS) {
+    const normalized = normalizeCommand(action);
     return {
-        commandName: action.name || action.label,
-        label: action.label,
-        executable: action.argv[0],
-        args: action.argv.slice(1),
-        cwd: resolveCwd(action.cwd),
-        timeoutMs: Number(action.timeoutMs || defaultTimeoutMs),
-        requiresConfirmation: action.requiresConfirmation ?? true,
-        externalSideEffect: action.externalSideEffect ?? false,
+        commandName: normalized.name || normalized.label,
+        label: normalized.label,
+        executable: normalized.argv[0],
+        args: normalized.argv.slice(1),
+        cwd: resolveCwd(normalized.cwd),
+        timeoutMs: Number(normalized.timeoutMs || defaultTimeoutMs),
+        requiresConfirmation: normalized.requiresConfirmation ?? true,
+        externalSideEffect: normalized.externalSideEffect ?? false,
+        inputDigest: normalized.invocationInput === undefined ? undefined : commandInputDigest(normalized.invocationInput),
     };
 }
 function commandPreviewDigest(preview) {
@@ -152,6 +178,7 @@ function commandPreviewDigest(preview) {
         timeoutMs: preview.timeoutMs,
         requiresConfirmation: preview.requiresConfirmation,
         externalSideEffect: preview.externalSideEffect,
+        inputDigest: preview.inputDigest,
     });
     return node_crypto_1.default.createHash("sha256").update(canonical).digest("hex");
 }
@@ -162,13 +189,16 @@ function runCommand(action, defaultTimeoutMs) {
             cwd: preview.cwd,
             env: buildCommandEnvironment(),
             shell: false,
-            stdio: ["ignore", "pipe", "pipe"],
+            stdio: [action.invocationInput === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         });
         const chunks = [];
         let outputBytes = 0;
         let outputLimited = false;
         let timedOut = false;
         let settled = false;
+        if (action.invocationInput !== undefined && child.stdin) {
+            child.stdin.end(`${JSON.stringify(action.invocationInput)}\n`);
+        }
         const capture = (chunk) => {
             if (outputLimited)
                 return;
@@ -184,8 +214,8 @@ function runCommand(action, defaultTimeoutMs) {
             chunks.push(chunk);
             outputBytes += chunk.length;
         };
-        child.stdout.on("data", capture);
-        child.stderr.on("data", capture);
+        child.stdout?.on("data", capture);
+        child.stderr?.on("data", capture);
         const timer = setTimeout(() => {
             timedOut = true;
             child.kill("SIGTERM");
@@ -226,7 +256,11 @@ async function runTrackedCommand(input) {
     action.cwd = policyDecision.action.cwd;
     const cwd = action.cwd;
     const preview = previewCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS);
-    const command = JSON.stringify([preview.executable, ...preview.args]);
+    const command = JSON.stringify([
+        preview.executable,
+        ...preview.args,
+        ...(preview.inputDigest ? [`<json-stdin:${preview.inputDigest}>`] : []),
+    ]);
     const startedAt = (0, repositories_1.nowIso)();
     runningTraceId = input.traceId;
     (0, repositories_1.setJsonState)("runtime_state", "currentRun", {

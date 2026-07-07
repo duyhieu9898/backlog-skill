@@ -29,6 +29,80 @@
       "requiresConfirmation": false
     },
     {
+      "name": "bemo.late-list",
+      "label": "Bemo late-day list",
+      "skillSlug": "bemo",
+      "aliases": ["/bemo_late"],
+      "cwd": "../skills/bemo",
+      "argv": ["node", "src/workflows/late-timeoff.js", "list"],
+      "requiresConfirmation": false,
+      "externalSideEffect": false
+    },
+    {
+      "name": "bemo.prepare-timeoff",
+      "label": "Prepare a filtered Bemo time-off plan",
+      "skillSlug": "bemo",
+      "cwd": "../skills/bemo",
+      "argv": ["node", "src/workflows/late-timeoff.js", "prepare"],
+      "inputMode": "json-stdin",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skipDates": {
+            "type": "array",
+            "items": { "type": "string", "format": "date" },
+            "maxItems": 31
+          }
+        },
+        "required": ["skipDates"],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": false,
+      "externalSideEffect": false
+    },
+    {
+      "name": "bemo.create-timeoff",
+      "label": "Bemo create selected time off",
+      "skillSlug": "bemo",
+      "cwd": "../skills/bemo",
+      "argv": ["node", "src/workflows/late-timeoff.js", "create"],
+      "inputMode": "json-stdin",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "minimum": 1, "maximum": 1 },
+          "sourceTimestamp": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "createdAt": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "expiresAt": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "skippedDates": {
+            "type": "array",
+            "items": { "type": "string", "format": "date" },
+            "maxItems": 31
+          },
+          "createDates": {
+            "type": "array",
+            "items": { "type": "string", "format": "date" },
+            "maxItems": 31
+          },
+          "sourceDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+          "selectedDigest": { "type": "string", "minLength": 64, "maxLength": 64 }
+        },
+        "required": [
+          "version",
+          "sourceTimestamp",
+          "createdAt",
+          "expiresAt",
+          "skippedDates",
+          "createDates",
+          "sourceDigest",
+          "selectedDigest"
+        ],
+        "additionalProperties": false
+      },
+      "requiresConfirmation": true,
+      "externalSideEffect": true
+    },
+    {
       "name": "bemo.run",
       "label": "Bemo full run",
       "skillSlug": "bemo",

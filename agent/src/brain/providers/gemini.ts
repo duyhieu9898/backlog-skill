@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 
-import type { AiProvider, AiRequest, AiResponse } from "../provider";
+import { validateAiResponse, type AiProvider, type AiRequest, type AiResponse } from "../provider";
 
 export class GeminiProvider implements AiProvider {
   private readonly client: GoogleGenAI;
@@ -18,7 +18,12 @@ export class GeminiProvider implements AiProvider {
       contents: [
         [
           input.system,
-          "Return strict JSON with optional keys: text, commandName, clarification.",
+          "Return strict JSON with exactly one key: text, clarification, or toolCall.",
+          "toolCall must be {name, arguments} and name must match an available tool.",
+          "Available tools:",
+          JSON.stringify(input.tools),
+          "Previous tool steps:",
+          JSON.stringify(input.steps),
           "Context:",
           input.context,
           "User:",
@@ -27,6 +32,6 @@ export class GeminiProvider implements AiProvider {
       ],
     });
     const text = response.text || "{}";
-    return JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")) as AiResponse;
+    return validateAiResponse(JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")));
   }
 }

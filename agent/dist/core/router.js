@@ -5,17 +5,18 @@ const app_1 = require("../config/app");
 const commands_1 = require("../commands");
 const hydrator_1 = require("../context/hydrator");
 const logger_1 = require("../logging/logger");
-const router_1 = require("../brain/router");
 const repositories_1 = require("../storage/repositories");
+const loop_1 = require("../tools/loop");
 const debugCommands_1 = require("./debugCommands");
 const presenter_1 = require("./presenter");
 class Router {
     registry;
+    toolLoop;
     hydrator;
-    ai = new router_1.AiRouter();
     commandTimeoutMs;
-    constructor(registry) {
+    constructor(registry, toolLoop = new loop_1.AgentToolLoop()) {
         this.registry = registry;
+        this.toolLoop = toolLoop;
         this.hydrator = new hydrator_1.ContextHydrator(registry);
         this.commandTimeoutMs = (0, app_1.loadAgentConfig)().runtime?.commandTimeoutMs || 10 * 60 * 1000;
     }
@@ -56,6 +57,9 @@ class Router {
             logger_1.log.info(message.traceId, normalized.startsWith("/debug ") ? "debug.trace.requested" : "system.status.requested", { command: normalized });
             return (0, debugCommands_1.handleDebugCommand)(text, this.registry);
         }
+        const toolConfirmed = await this.toolLoop.consumeConfirmation(message);
+        if (toolConfirmed)
+            return toolConfirmed;
         const confirmed = await this.consumeConfirmation(message);
         if (confirmed)
             return confirmed;
@@ -69,19 +73,7 @@ class Router {
             return `Lệnh không tồn tại. Danh sách lệnh hỗ trợ:\n\n${(0, debugCommands_1.handleDebugCommand)("/commands", this.registry)}`;
         }
         const context = this.hydrator.hydrate(message);
-        const aiResponse = await this.ai.complete(message.traceId, this.hydrator.toPromptSections(context), message.text);
-        if (aiResponse.clarification)
-            return aiResponse.clarification;
-        if (aiResponse.commandName) {
-            const selected = catalog.allow.find((command) => command.name === aiResponse.commandName);
-            if (!selected)
-                return `AI chọn command không nằm trong allowlist: ${aiResponse.commandName}`;
-            logger_1.log.info(message.traceId, "ai.tool.selected", {
-                commandName: aiResponse.commandName,
-            });
-            return this.prepareOrRun(message, selected);
-        }
-        return aiResponse.text || "Mình chưa hiểu yêu cầu. Gõ /commands để xem lệnh hỗ trợ.";
+        return this.toolLoop.run(message, this.hydrator.toPromptSections(context));
     }
     async prepareOrRun(message, action) {
         const decision = (0, commands_1.evaluateCommandPermission)(action);

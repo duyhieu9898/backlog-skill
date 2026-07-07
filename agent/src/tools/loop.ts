@@ -1,0 +1,158 @@
+import { AiRouter } from "../brain/router";
+import type { AiToolCall, AiToolStep } from "../brain/provider";
+import { log } from "../logging/logger";
+import {
+  deletePendingConfirmation,
+  getPendingConfirmation,
+  nowIso,
+  upsertPendingConfirmation,
+} from "../storage/repositories";
+import type { StandardMessage } from "../types/messages";
+import { ToolExecutor } from "./executor";
+import type { ToolResult } from "./contracts";
+
+const MAX_TOOL_STEPS = 4;
+
+type PendingAiTool = {
+  kind: "ai-tool";
+  call: AiToolCall;
+  digest: string;
+  preview: string;
+};
+
+function formatResult(result: ToolResult): string {
+  const data = result.data === undefined ? "" : `\n${JSON.stringify(result.data, null, 2)}`;
+  return `${result.ok ? "Tool completed" : "Tool failed"} [${result.code}]\n${result.summary}${data}`;
+}
+
+export class AgentToolLoop {
+  constructor(
+    private readonly ai = new AiRouter(),
+    private readonly executor = new ToolExecutor(),
+  ) {}
+
+  async run(message: StandardMessage, context: string): Promise<string> {
+    const steps: AiToolStep[] = [];
+    const tools = this.executor.definitions();
+
+    for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
+      const response = await this.ai.complete(message.traceId, context, message.text, tools, steps);
+      if (response.clarification) {
+        log.info(message.traceId, "ai.clarification.requested", { step: index });
+        return response.clarification;
+      }
+      if (response.text) return response.text;
+      if (!response.toolCall) throw new Error("AI response did not contain a valid outcome.");
+
+      log.info(message.traceId, "ai.tool.selected", {
+        step: index,
+        toolName: response.toolCall.name,
+      });
+      try {
+        const prepared = this.executor.prepare(response.toolCall, message.traceId);
+        if (prepared.requiresConfirmation) {
+          const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+          const pending: PendingAiTool = {
+            kind: "ai-tool",
+            call: prepared.call,
+            digest: prepared.digest,
+            preview: prepared.preview,
+          };
+          upsertPendingConfirmation({
+            chatId: message.chatId,
+            traceId: message.traceId,
+            commandName: prepared.key,
+            payload: pending,
+            expiresAt,
+          });
+          log.info(message.traceId, "ai.tool.confirmation_required", {
+            toolName: prepared.call.name,
+            confirmationKey: prepared.key,
+          });
+          return [
+            `${prepared.key} cần xác nhận trước khi chạy.`,
+            prepared.preview,
+            `Approval: ${prepared.digest.slice(0, 12)}`,
+            `Gõ: confirm ${prepared.key} ${prepared.digest.slice(0, 12)}`,
+          ].join("\n");
+        }
+
+        const result = await this.executor.execute(prepared, {
+          traceId: message.traceId,
+          chatId: message.chatId,
+        });
+        steps.push({ call: response.toolCall, result });
+        log.info(message.traceId, "ai.tool.completed", {
+          step: index,
+          toolName: response.toolCall.name,
+          ok: result.ok,
+          code: result.code,
+        });
+      } catch (error) {
+        const result: ToolResult = {
+          ok: false,
+          code: "INVALID_TOOL_CALL",
+          summary: error instanceof Error ? error.message : String(error),
+        };
+        steps.push({ call: response.toolCall, result });
+        log.warn(message.traceId, "ai.tool.rejected", {
+          step: index,
+          toolName: response.toolCall.name,
+          reason: result.summary,
+        });
+      }
+    }
+
+    return `Đã dừng sau ${MAX_TOOL_STEPS} bước tool để tránh vòng lặp tự động. Hãy thu hẹp yêu cầu hoặc thử lại.`;
+  }
+
+  async consumeConfirmation(message: StandardMessage): Promise<string | null> {
+    const text = message.text.trim().toLowerCase();
+    if (!text.startsWith("confirm")) return null;
+    const pending = getPendingConfirmation(message.chatId);
+    if (!pending) return null;
+
+    let payload: PendingAiTool;
+    try {
+      payload = JSON.parse(pending.payload_json) as PendingAiTool;
+    } catch {
+      return null;
+    }
+    if (payload.kind !== "ai-tool") return null;
+
+    const match = text.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
+    if (!match) return "Confirmation cần tool name và approval token từ preview.";
+    if (pending.expires_at <= nowIso()) {
+      deletePendingConfirmation(message.chatId);
+      return "Confirmation đã hết hạn. Gửi lại yêu cầu để tạo preview mới.";
+    }
+
+    let prepared;
+    try {
+      prepared = this.executor.prepare(payload.call, message.traceId);
+    } catch (error) {
+      deletePendingConfirmation(message.chatId);
+      return `Confirmation không còn hợp lệ: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (
+      prepared.key.toLowerCase() !== match[1] ||
+      prepared.digest !== payload.digest ||
+      prepared.digest.slice(0, 12) !== match[2]
+    ) {
+      return "Confirmation không khớp action đã preview.";
+    }
+
+    deletePendingConfirmation(message.chatId);
+    const result = await this.executor.execute(prepared, {
+      traceId: message.traceId,
+      chatId: message.chatId,
+      confirmationGranted: true,
+    });
+    log.info(message.traceId, "ai.tool.confirmed", {
+      toolName: prepared.call.name,
+      ok: result.ok,
+      code: result.code,
+    });
+    return formatResult(result);
+  }
+}

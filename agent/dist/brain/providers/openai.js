@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenAiProvider = void 0;
 const openai_1 = __importDefault(require("openai"));
+const provider_1 = require("../provider");
 class OpenAiProvider {
     model;
     client;
@@ -20,7 +21,12 @@ class OpenAiProvider {
                 {
                     role: "user",
                     content: [
-                        "Return strict JSON with optional keys: text, commandName, clarification.",
+                        "Return strict JSON with exactly one key: text, clarification, or toolCall.",
+                        "toolCall must be {name, arguments} and name must match an available tool.",
+                        "Available tools:",
+                        JSON.stringify(input.tools),
+                        "Previous tool steps:",
+                        JSON.stringify(input.steps),
                         "Context:",
                         input.context,
                         "User:",
@@ -31,7 +37,7 @@ class OpenAiProvider {
             response_format: { type: "json_object" },
         });
         const content = response.choices[0]?.message.content || "{}";
-        return { ...JSON.parse(content), usage: response.usage };
+        return { ...(0, provider_1.validateAiResponse)(JSON.parse(content)), usage: response.usage };
     }
 }
 exports.OpenAiProvider = OpenAiProvider;
