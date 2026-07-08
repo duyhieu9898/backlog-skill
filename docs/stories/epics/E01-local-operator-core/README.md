@@ -45,6 +45,7 @@ leave enough trace data to debug what happened.
 | US-009 | AI Tool Router | high-risk | in_progress | Generic policy-gated tool loop is implemented; Telegram/provider smoke remains. |
 | US-010 | Scheduled Local Checks | normal | implemented | Read-only scheduled checks are implemented, enabled hourly for `bemo-late`, and proven through manual plus systemd schedule smoke. |
 | US-011 | Schedule Management Upgrade | high-risk | implemented | SQLite persistence, chat management, history, delivery controls, change-only delivery, and preview-only autonomy are implemented and proven through systemd scheduler smoke. |
+| US-012 | Local CLI Adapter | normal | planned | A local CLI transport should exercise the same Router behavior without requiring Telegram interaction for core smoke tests. |
 
 ## Recommended Implementation Order
 
@@ -58,6 +59,7 @@ leave enough trace data to debug what happened.
 8. US-009
 9. US-008
 10. US-010
+11. US-012
 
 ## Release Slice
 
@@ -106,6 +108,8 @@ mandatory boundary in front of typed tool executors.
 - Integration tests cover SQLite persistence, file tool behavior in a temp
   workspace, command execution with fake commands, confirmation expiry, and
   trace recording.
-- Manual Telegram smoke tests cover the user-facing operator loop.
+- Manual Telegram smoke tests cover the user-facing operator loop. Use
+  `docs/stories/epics/E01-local-operator-core/manual-smoke-checklist.md` for
+  the remaining E01 proof pass.
 - External-service effects such as Bemo creation require preview and explicit
   confirmation before the command runs.
