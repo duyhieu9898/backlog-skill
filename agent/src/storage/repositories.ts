@@ -312,12 +312,7 @@ export function upsertScheduledJob(input: {
        ON CONFLICT(name) DO UPDATE SET
          label = excluded.label,
          command_name = excluded.command_name,
-         interval_minutes = excluded.interval_minutes,
-         enabled = excluded.enabled,
-         delivery = excluded.delivery,
-         notify_on_change_only = excluded.notify_on_change_only,
          prepare_effect_json = excluded.prepare_effect_json,
-         next_run_at = COALESCE(scheduled_jobs.next_run_at, excluded.next_run_at),
          updated_at = excluded.updated_at`,
     )
     .run(

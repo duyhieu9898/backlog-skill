@@ -6,7 +6,7 @@ const test = require("node:test");
 const { buildCommandCatalog } = require("../dist/commands");
 const { Router } = require("../dist/core/router");
 const { SkillRegistry } = require("../dist/skills/registry");
-const { getJsonState } = require("../dist/storage/repositories");
+const { getJsonState, getScheduledJob, updateScheduledJobState } = require("../dist/storage/repositories");
 const {
   applyScheduleUpdate,
   findScheduledCheck,
@@ -144,6 +144,48 @@ test("schedule update preview requires exact digest before applying", () => {
 
   assert.equal(first.digest, second.digest);
   assert.equal(applyScheduleUpdate(update), "Updated digest-read interval to 12m.");
+});
+
+test("config seeding preserves runtime schedule controls", () => {
+  const name = `seed-preserve-${Date.now()}`;
+  seedScheduledJobsFromConfig([
+    {
+      name,
+      label: "Initial label",
+      command: "test.read",
+      intervalMinutes: 5,
+      enabled: true,
+      delivery: "telegram",
+      notifyOnChangeOnly: true,
+    },
+  ], catalog(__dirname));
+
+  updateScheduledJobState({
+    name,
+    enabled: false,
+    intervalMinutes: 17,
+    delivery: "silent",
+    nextRunAt: null,
+  });
+  seedScheduledJobsFromConfig([
+    {
+      name,
+      label: "Updated label",
+      command: "test.read",
+      intervalMinutes: 60,
+      enabled: true,
+      delivery: "telegram",
+      notifyOnChangeOnly: false,
+    },
+  ], catalog(__dirname));
+
+  const row = getScheduledJob(name);
+  assert.equal(row.label, "Updated label");
+  assert.equal(row.interval_minutes, 17);
+  assert.equal(row.enabled, 0);
+  assert.equal(row.delivery, "silent");
+  assert.equal(row.notify_on_change_only, 1);
+  assert.equal(row.next_run_at, null);
 });
 
 test("change-only delivery suppresses duplicate successful notification", async (t) => {

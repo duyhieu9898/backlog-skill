@@ -136,11 +136,15 @@ Configure read-only scheduled checks in `config.json`:
 ```
 
 Scheduled checks may reference only allowlisted commands that do not require
-confirmation and do not declare `externalSideEffect`. Configured checks seed a
-durable SQLite job registry with enabled state, interval, delivery mode, next
-run time, and last run metadata. The background service polls due jobs from
-SQLite, so confirmed changes to state, interval, or delivery do not require a
-service restart.
+confirmation and do not declare `externalSideEffect`. Configured checks
+bootstrap a durable SQLite job registry. After a job exists, SQLite is the
+source of truth for runtime controls such as enabled state, interval, delivery
+mode, change-only behavior, next run time, and last run metadata. Restarting
+the service refreshes job metadata such as label, command, and follow-up
+prepare/effect config from `config.json`, but it does not overwrite confirmed
+runtime changes. The background service polls due jobs from SQLite, so
+confirmed changes to state, interval, or delivery do not require a service
+restart.
 
 Delivery can be `telegram` or `silent`. `notifyOnChangeOnly` suppresses
 duplicate successful Telegram notifications when command output has not
