@@ -22,11 +22,15 @@ import { AgentToolLoop } from "../tools/loop";
 import { handleDebugCommand, isDebugCommand } from "./debugCommands";
 import { presentCommandResult } from "./presenter";
 import {
+  applyScheduleUpdate,
   findScheduledCheck,
+  formatScheduleDetails,
+  formatScheduleHistory,
   formatScheduledCheckResult,
   formatScheduleList,
   loadScheduledChecks,
   runScheduledCheck,
+  scheduleUpdatePreview,
 } from "../scheduler";
 
 export class Router {
@@ -80,6 +84,16 @@ export class Router {
       return formatScheduleList(loadScheduledChecks());
     }
 
+    if (normalized.startsWith("/schedule show ")) {
+      const name = normalized.replace("/schedule show ", "").trim();
+      return formatScheduleDetails(name);
+    }
+
+    if (normalized.startsWith("/schedule history ")) {
+      const name = normalized.replace("/schedule history ", "").trim();
+      return formatScheduleHistory(name);
+    }
+
     if (normalized.startsWith("/schedule run ")) {
       const name = normalized.replace("/schedule run ", "").trim();
       const check = findScheduledCheck(name);
@@ -90,6 +104,27 @@ export class Router {
         defaultTimeoutMs: this.commandTimeoutMs,
       });
       return formatScheduledCheckResult(result);
+    }
+
+    const scheduleUpdate = this.parseScheduleUpdate(normalized);
+    if (scheduleUpdate) {
+      const { preview, digest } = scheduleUpdatePreview(scheduleUpdate);
+      const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+      upsertPendingConfirmation({
+        chatId: message.chatId,
+        traceId: message.traceId,
+        commandName: `schedule.${scheduleUpdate.action}.${scheduleUpdate.name}`,
+        payload: { scheduleUpdate, preview, digest },
+        expiresAt,
+      });
+      return [
+        `Schedule update needs confirmation.`,
+        `Action: ${scheduleUpdate.action}`,
+        `Name: ${scheduleUpdate.name}`,
+        scheduleUpdate.value === undefined ? "" : `Value: ${scheduleUpdate.value}`,
+        `Approval: ${digest.slice(0, 12)}`,
+        `Gõ: confirm schedule.${scheduleUpdate.action}.${scheduleUpdate.name} ${digest.slice(0, 12)}`,
+      ].filter(Boolean).join("\n");
     }
 
     if (isDebugCommand(text)) {
@@ -170,10 +205,22 @@ export class Router {
       action: AgentCommand;
       preview: ReturnType<typeof previewCommand>;
       digest: string;
+      scheduleUpdate?: ReturnType<Router["parseScheduleUpdate"]>;
     };
     let recomputedDigest: string;
     try {
       payload = JSON.parse(pending.payload_json) as typeof payload;
+      if (payload.scheduleUpdate) {
+        recomputedDigest = scheduleUpdatePreview(payload.scheduleUpdate).digest;
+        if (payload.digest !== recomputedDigest) {
+          throw new Error("Pending schedule update digest mismatch.");
+        }
+        if (pending.command_name.toLowerCase() !== match[1] || payload.digest.slice(0, 12) !== match[2]) {
+          return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+        }
+        deletePendingConfirmation(message.chatId);
+        return applyScheduleUpdate(payload.scheduleUpdate);
+      }
       if (!payload.action || !payload.preview || typeof payload.digest !== "string") {
         throw new Error("Pending confirmation payload is incomplete.");
       }
@@ -195,6 +242,23 @@ export class Router {
 
     deletePendingConfirmation(message.chatId);
     return this.run(message, payload.action, true);
+  }
+
+  private parseScheduleUpdate(
+    normalized: string,
+  ): { action: "enable" | "disable" | "interval" | "delivery"; name: string; value?: string | number } | null {
+    const parts = normalized.split(/\s+/);
+    if (parts[0] !== "/schedule") return null;
+    if ((parts[1] === "enable" || parts[1] === "disable") && parts[2]) {
+      return { action: parts[1], name: parts[2] };
+    }
+    if (parts[1] === "interval" && parts[2] && parts[3]) {
+      return { action: "interval", name: parts[2], value: Number(parts[3]) };
+    }
+    if (parts[1] === "delivery" && parts[2] && parts[3]) {
+      return { action: "delivery", name: parts[2], value: parts[3] };
+    }
+    return null;
   }
 
   private async cancelPending(chatId: string): Promise<void> {

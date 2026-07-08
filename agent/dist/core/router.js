@@ -57,6 +57,14 @@ class Router {
         if (normalized === "/schedule") {
             return (0, scheduler_1.formatScheduleList)((0, scheduler_1.loadScheduledChecks)());
         }
+        if (normalized.startsWith("/schedule show ")) {
+            const name = normalized.replace("/schedule show ", "").trim();
+            return (0, scheduler_1.formatScheduleDetails)(name);
+        }
+        if (normalized.startsWith("/schedule history ")) {
+            const name = normalized.replace("/schedule history ", "").trim();
+            return (0, scheduler_1.formatScheduleHistory)(name);
+        }
         if (normalized.startsWith("/schedule run ")) {
             const name = normalized.replace("/schedule run ", "").trim();
             const check = (0, scheduler_1.findScheduledCheck)(name);
@@ -68,6 +76,26 @@ class Router {
                 defaultTimeoutMs: this.commandTimeoutMs,
             });
             return (0, scheduler_1.formatScheduledCheckResult)(result);
+        }
+        const scheduleUpdate = this.parseScheduleUpdate(normalized);
+        if (scheduleUpdate) {
+            const { preview, digest } = (0, scheduler_1.scheduleUpdatePreview)(scheduleUpdate);
+            const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+            (0, repositories_1.upsertPendingConfirmation)({
+                chatId: message.chatId,
+                traceId: message.traceId,
+                commandName: `schedule.${scheduleUpdate.action}.${scheduleUpdate.name}`,
+                payload: { scheduleUpdate, preview, digest },
+                expiresAt,
+            });
+            return [
+                `Schedule update needs confirmation.`,
+                `Action: ${scheduleUpdate.action}`,
+                `Name: ${scheduleUpdate.name}`,
+                scheduleUpdate.value === undefined ? "" : `Value: ${scheduleUpdate.value}`,
+                `Approval: ${digest.slice(0, 12)}`,
+                `Gõ: confirm schedule.${scheduleUpdate.action}.${scheduleUpdate.name} ${digest.slice(0, 12)}`,
+            ].filter(Boolean).join("\n");
         }
         if ((0, debugCommands_1.isDebugCommand)(text)) {
             logger_1.log.info(message.traceId, normalized.startsWith("/debug ") ? "debug.trace.requested" : "system.status.requested", { command: normalized });
@@ -137,6 +165,17 @@ class Router {
         let recomputedDigest;
         try {
             payload = JSON.parse(pending.payload_json);
+            if (payload.scheduleUpdate) {
+                recomputedDigest = (0, scheduler_1.scheduleUpdatePreview)(payload.scheduleUpdate).digest;
+                if (payload.digest !== recomputedDigest) {
+                    throw new Error("Pending schedule update digest mismatch.");
+                }
+                if (pending.command_name.toLowerCase() !== match[1] || payload.digest.slice(0, 12) !== match[2]) {
+                    return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+                }
+                (0, repositories_1.deletePendingConfirmation)(message.chatId);
+                return (0, scheduler_1.applyScheduleUpdate)(payload.scheduleUpdate);
+            }
             if (!payload.action || !payload.preview || typeof payload.digest !== "string") {
                 throw new Error("Pending confirmation payload is incomplete.");
             }
@@ -158,6 +197,21 @@ class Router {
         }
         (0, repositories_1.deletePendingConfirmation)(message.chatId);
         return this.run(message, payload.action, true);
+    }
+    parseScheduleUpdate(normalized) {
+        const parts = normalized.split(/\s+/);
+        if (parts[0] !== "/schedule")
+            return null;
+        if ((parts[1] === "enable" || parts[1] === "disable") && parts[2]) {
+            return { action: parts[1], name: parts[2] };
+        }
+        if (parts[1] === "interval" && parts[2] && parts[3]) {
+            return { action: "interval", name: parts[2], value: Number(parts[3]) };
+        }
+        if (parts[1] === "delivery" && parts[2] && parts[3]) {
+            return { action: "delivery", name: parts[2], value: parts[3] };
+        }
+        return null;
     }
     async cancelPending(chatId) {
         if ((0, repositories_1.getPendingConfirmation)(chatId))

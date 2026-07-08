@@ -28,7 +28,7 @@ leave enough trace data to debug what happened.
 | P2 Operator UX | User can preview, confirm, inspect, and debug actions. | US-005, US-006 |
 | P3 Skill-Aware Workflows | Agent can discover skills and complete the Bemo late-day workflow safely. | US-007, US-008 |
 | P4 AI Routing | AI provider can choose allowed tools without gaining raw system access. | US-009 |
-| P5 Later Automation | Agent can run controlled scheduled checks after manual flows are proven. | US-010 |
+| P5 Later Automation | Agent can run and manage controlled scheduled checks after manual flows are proven. | US-010, US-011 |
 
 ## User Stories
 
@@ -43,7 +43,8 @@ leave enough trace data to debug what happened.
 | US-007 | Skill Registry And Context Loading | normal | implemented | The agent discovers valid skills, surfaces registry errors, and loads only selected skill context. |
 | US-008 | Bemo Late-Day Workflow | high-risk | in_progress | Bemo skill owns structured plan/create behavior; Telegram/provider preview smoke and successful provider-write proof remain. |
 | US-009 | AI Tool Router | high-risk | in_progress | Generic policy-gated tool loop is implemented; Telegram/provider smoke remains. |
-| US-010 | Scheduled Local Checks | normal | in_progress | Read-only scheduled checks are implemented behind explicit disabled config; Telegram/systemd smoke remains. |
+| US-010 | Scheduled Local Checks | normal | implemented | Read-only scheduled checks are implemented, enabled hourly for `bemo-late`, and proven through manual plus systemd schedule smoke. |
+| US-011 | Schedule Management Upgrade | high-risk | implemented | SQLite persistence, chat management, history, delivery controls, change-only delivery, and preview-only autonomy are implemented and proven through systemd scheduler smoke. |
 
 ## Recommended Implementation Order
 
@@ -88,9 +89,10 @@ generic AI tool loop are implemented. The deployed `/skills` and `/status`
 smoke for US-007 passed. The Bemo workflow now has a tested structured
 plan/create foundation, a read-only local Bemo smoke, and one attempted
 confirmed provider create that filled and saved the form but failed post-save
-verification; Telegram/provider preview smoke still gates closure. US-010 now
-has a small read-only scheduler slice with disabled Bemo config; platform smoke
-and any enabled production schedule remain separate proof.
+verification; Telegram/provider preview smoke still gates closure. US-010 has
+an enabled hourly `bemo-late` read-only scheduler slice with manual and systemd
+smoke proof. US-011 extends that scheduler with durable SQLite jobs and chat
+management while keeping external writes behind digest-bound confirmation.
 
 The external architecture comparison and local risk review are recorded in
 `docs/research/LOCAL_AGENT_ARCHITECTURE_REVIEW.md`. Its main conclusion is to

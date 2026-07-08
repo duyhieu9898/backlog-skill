@@ -8,10 +8,14 @@ const { Router } = require("../dist/core/router");
 const { SkillRegistry } = require("../dist/skills/registry");
 const { getJsonState } = require("../dist/storage/repositories");
 const {
+  applyScheduleUpdate,
   findScheduledCheck,
   formatScheduleList,
+  formatScheduleHistory,
   normalizeScheduledCheck,
   runScheduledCheck,
+  scheduleUpdatePreview,
+  seedScheduledJobsFromConfig,
 } = require("../dist/scheduler");
 
 function catalog(root) {
@@ -60,7 +64,7 @@ test("scheduled checks must reference read-only allowlisted commands", (t) => {
   assert.equal(check.name, "daily-read");
   assert.equal(check.label, "Daily read");
   assert.equal(check.enabled, true);
-  assert.match(formatScheduleList([check]), /daily-read - Daily read \[enabled, every 15m\]/);
+  assert.match(formatScheduleList([check]), /daily-read - Daily read \[enabled, every 15m, telegram\]/);
   assert.throws(
     () =>
       normalizeScheduledCheck(
@@ -89,6 +93,7 @@ test("scheduled run records traceable command result and last scheduled state", 
     check,
     chatId: "schedule-test-chat",
     defaultTimeoutMs: 5000,
+    notify: async () => {},
   });
   const last = getJsonState("runtime_state", "lastScheduledRun");
 
@@ -96,6 +101,7 @@ test("scheduled run records traceable command result and last scheduled state", 
   assert.match(result.outputTail, /scheduled-ok/);
   assert.equal(last.name, "manual-read");
   assert.equal(last.traceId, result.traceId);
+  assert.match(formatScheduleHistory("manual-read"), /SUCCESS manual-read/);
 });
 
 test("findScheduledCheck resolves named checks from supplied list", (t) => {
@@ -120,5 +126,53 @@ test("Router exposes configured schedule listing", async () => {
     timestamp: new Date(),
   });
 
-  assert.match(reply, /bemo-late - Bemo late-day read-only check \[enabled, every 60m\]/);
+  assert.match(reply, /bemo-late - Bemo late-day read-only check \[enabled, every 60m, telegram, change-only\]/);
+});
+
+test("schedule update preview requires exact digest before applying", () => {
+  seedScheduledJobsFromConfig([
+    {
+      name: "digest-read",
+      command: "test.read",
+      intervalMinutes: 5,
+      enabled: false,
+    },
+  ], catalog(__dirname));
+  const update = { action: "interval", name: "digest-read", value: 12 };
+  const first = scheduleUpdatePreview(update);
+  const second = scheduleUpdatePreview(update);
+
+  assert.equal(first.digest, second.digest);
+  assert.equal(applyScheduleUpdate(update), "Updated digest-read interval to 12m.");
+});
+
+test("change-only delivery suppresses duplicate successful notification", async (t) => {
+  const root = workspace(t);
+  const name = `change-only-${Date.now()}`;
+  const check = {
+    ...normalizeScheduledCheck(
+      { name, command: "test.read", intervalMinutes: 5, notifyOnChangeOnly: true },
+      catalog(root),
+    ),
+    notifyOnChangeOnly: true,
+  };
+  let sent = 0;
+  await runScheduledCheck({
+    check,
+    chatId: "change-only-chat",
+    defaultTimeoutMs: 5000,
+    notify: async () => {
+      sent += 1;
+    },
+  });
+  await runScheduledCheck({
+    check,
+    chatId: "change-only-chat",
+    defaultTimeoutMs: 5000,
+    notify: async () => {
+      sent += 1;
+    },
+  });
+
+  assert.equal(sent, 1);
 });

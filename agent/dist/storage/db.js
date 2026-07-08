@@ -84,6 +84,40 @@ function initializeSchema(database = getDb()) {
       value_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      name TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      command_name TEXT NOT NULL,
+      interval_minutes INTEGER NOT NULL,
+      enabled INTEGER NOT NULL,
+      delivery TEXT NOT NULL,
+      notify_on_change_only INTEGER NOT NULL,
+      prepare_effect_json TEXT,
+      next_run_at TEXT,
+      last_run_at TEXT,
+      last_status TEXT,
+      last_trace_id TEXT,
+      last_output_digest TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_name TEXT NOT NULL,
+      trace_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      exit_code INTEGER NOT NULL,
+      output_tail TEXT NOT NULL,
+      output_digest TEXT NOT NULL,
+      notification_sent INTEGER NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scheduled_runs_job_finished
+      ON scheduled_runs(job_name, finished_at DESC);
   `);
 }
 function closeDb() {

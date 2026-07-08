@@ -21,8 +21,13 @@ chat identifiers must never have source-code fallbacks.
 - `/last-error` — latest command or tool failure with trace ID.
 - `/debug <traceId>` — trace events for one execution.
 - `/commands` — allowlisted commands grouped by skill.
-- `/schedule` — configured scheduled checks.
+- `/schedule` — configured scheduled checks and delivery mode.
+- `/schedule show <name>` — one scheduled check's durable state.
+- `/schedule history <name>` — recent durable scheduled runs.
 - `/schedule run <name>` — run one configured scheduled check immediately.
+- `/schedule enable|disable <name>` — change schedule state after confirmation.
+- `/schedule interval <name> <minutes>` — change interval after confirmation.
+- `/schedule delivery <name> <telegram|silent>` — change delivery after confirmation.
 - `/skills` — loaded skill names and descriptions, plus any invalid skill
   metadata that was skipped during scanning.
 - `/help` — command summary.
@@ -117,17 +122,35 @@ Configure read-only scheduled checks in `config.json`:
       "label": "Bemo late-day read-only check",
       "command": "bemo.late-list",
       "intervalMinutes": 60,
-      "enabled": false
+      "enabled": true,
+      "delivery": "telegram",
+      "notifyOnChangeOnly": true,
+      "prepareEffect": {
+        "prepareCommand": "bemo.prepare-timeoff",
+        "prepareInput": { "skipDates": [] },
+        "effectCommand": "bemo.create-timeoff"
+      }
     }
   ]
 }
 ```
 
 Scheduled checks may reference only allowlisted commands that do not require
-confirmation and do not declare `externalSideEffect`. Enabled checks run from
-the background service and notify the allowlisted Telegram chat. `/schedule`
-lists configured checks, `/schedule run <name>` runs one immediately, and
-`/status` shows the latest scheduled result.
+confirmation and do not declare `externalSideEffect`. Configured checks seed a
+durable SQLite job registry with enabled state, interval, delivery mode, next
+run time, and last run metadata. The background service polls due jobs from
+SQLite, so confirmed changes to state, interval, or delivery do not require a
+service restart.
+
+Delivery can be `telegram` or `silent`. `notifyOnChangeOnly` suppresses
+duplicate successful Telegram notifications when command output has not
+changed; failures still notify. A schedule may prepare a follow-up external
+effect by creating a normal digest-bound confirmation preview, but it never
+executes that effect automatically.
+
+`/schedule` lists checks, `/schedule show <name>` shows durable state,
+`/schedule history <name>` shows recent runs, `/schedule run <name>` runs one
+immediately, and `/status` shows the latest scheduled result.
 
 ## Permission Policy
 

@@ -23,7 +23,14 @@
       "label": "Bemo late-day read-only check",
       "command": "bemo.late-list",
       "intervalMinutes": 60,
-      "enabled": true
+      "enabled": true,
+      "delivery": "telegram",
+      "notifyOnChangeOnly": true,
+      "prepareEffect": {
+        "prepareCommand": "bemo.prepare-timeoff",
+        "prepareInput": { "skipDates": [] },
+        "effectCommand": "bemo.create-timeoff"
+      }
     }
   ],
   "permissions": {

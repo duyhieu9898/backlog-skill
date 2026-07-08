@@ -43,7 +43,8 @@ async function poll() {
     if (offset === null) {
         offset = await initializeOffset();
     }
-    const scheduledRunner = new scheduler_1.ScheduledCheckRunner((0, scheduler_1.loadScheduledChecks)(agentConfig.schedules || []), telegramConfig.allowedChatId, (text) => telegram.sendMessage(telegramConfig.allowedChatId, text), agentConfig.runtime?.commandTimeoutMs);
+    (0, scheduler_1.seedScheduledJobsFromConfig)(agentConfig.schedules || []);
+    const scheduledRunner = new scheduler_1.ScheduledCheckRunner(telegramConfig.allowedChatId, (text) => telegram.sendMessage(telegramConfig.allowedChatId, text), agentConfig.runtime?.commandTimeoutMs);
     scheduledRunner.start();
     while (true) {
         try {

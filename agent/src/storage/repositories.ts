@@ -32,6 +32,37 @@ export type PendingConfirmationRow = {
   created_at: string;
 };
 
+export type ScheduledJobRow = {
+  name: string;
+  label: string;
+  command_name: string;
+  interval_minutes: number;
+  enabled: number;
+  delivery: string;
+  notify_on_change_only: number;
+  prepare_effect_json: string | null;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_trace_id: string | null;
+  last_output_digest: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScheduledRunRow = {
+  id: number;
+  job_name: string;
+  trace_id: string;
+  status: string;
+  exit_code: number;
+  output_tail: string;
+  output_digest: string;
+  notification_sent: number;
+  started_at: string;
+  finished_at: string;
+};
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
@@ -258,4 +289,156 @@ export function countPendingConfirmations(): number {
     .prepare(`SELECT COUNT(*) AS count FROM pending_confirmations WHERE expires_at > ?`)
     .get(nowIso()) as { count: number };
   return row.count;
+}
+
+export function upsertScheduledJob(input: {
+  name: string;
+  label: string;
+  commandName: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  delivery: string;
+  notifyOnChangeOnly: boolean;
+  prepareEffect?: unknown;
+  nextRunAt?: string | null;
+}): void {
+  const now = nowIso();
+  getDb()
+    .prepare(
+      `INSERT INTO scheduled_jobs
+       (name, label, command_name, interval_minutes, enabled, delivery,
+        notify_on_change_only, prepare_effect_json, next_run_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET
+         label = excluded.label,
+         command_name = excluded.command_name,
+         interval_minutes = excluded.interval_minutes,
+         enabled = excluded.enabled,
+         delivery = excluded.delivery,
+         notify_on_change_only = excluded.notify_on_change_only,
+         prepare_effect_json = excluded.prepare_effect_json,
+         next_run_at = COALESCE(scheduled_jobs.next_run_at, excluded.next_run_at),
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      input.name,
+      input.label,
+      input.commandName,
+      input.intervalMinutes,
+      input.enabled ? 1 : 0,
+      input.delivery,
+      input.notifyOnChangeOnly ? 1 : 0,
+      input.prepareEffect === undefined ? null : JSON.stringify(input.prepareEffect),
+      input.nextRunAt ?? null,
+      now,
+      now,
+    );
+}
+
+export function listScheduledJobs(): ScheduledJobRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM scheduled_jobs ORDER BY name ASC`)
+    .all() as ScheduledJobRow[];
+}
+
+export function getScheduledJob(name: string): ScheduledJobRow | null {
+  return (
+    (getDb()
+      .prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`)
+      .get(name) as ScheduledJobRow | undefined) || null
+  );
+}
+
+export function listDueScheduledJobs(now = nowIso()): ScheduledJobRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM scheduled_jobs
+       WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+       ORDER BY next_run_at ASC, name ASC`,
+    )
+    .all(now) as ScheduledJobRow[];
+}
+
+export function updateScheduledJobState(input: {
+  name: string;
+  enabled?: boolean;
+  intervalMinutes?: number;
+  delivery?: string;
+  nextRunAt?: string | null;
+}): void {
+  const current = getScheduledJob(input.name);
+  if (!current) throw new Error(`Scheduled job not found: ${input.name}`);
+  getDb()
+    .prepare(
+      `UPDATE scheduled_jobs
+       SET enabled = ?, interval_minutes = ?, delivery = ?, next_run_at = ?, updated_at = ?
+       WHERE name = ?`,
+    )
+    .run(
+      input.enabled === undefined ? current.enabled : input.enabled ? 1 : 0,
+      input.intervalMinutes ?? current.interval_minutes,
+      input.delivery ?? current.delivery,
+      input.nextRunAt === undefined ? current.next_run_at : input.nextRunAt,
+      nowIso(),
+      input.name,
+    );
+}
+
+export function recordScheduledRun(input: {
+  jobName: string;
+  traceId: string;
+  status: "success" | "failed";
+  exitCode: number;
+  outputTail: string;
+  outputDigest: string;
+  notificationSent: boolean;
+  startedAt: string;
+  finishedAt: string;
+  nextRunAt: string | null;
+}): void {
+  const db = getDb();
+  const transaction = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO scheduled_runs
+       (job_name, trace_id, status, exit_code, output_tail, output_digest,
+        notification_sent, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      input.jobName,
+      input.traceId,
+      input.status,
+      input.exitCode,
+      input.outputTail,
+      input.outputDigest,
+      input.notificationSent ? 1 : 0,
+      input.startedAt,
+      input.finishedAt,
+    );
+    db.prepare(
+      `UPDATE scheduled_jobs
+       SET next_run_at = ?, last_run_at = ?, last_status = ?, last_trace_id = ?,
+           last_output_digest = ?, updated_at = ?
+       WHERE name = ?`,
+    ).run(
+      input.nextRunAt,
+      input.finishedAt,
+      input.status,
+      input.traceId,
+      input.outputDigest,
+      nowIso(),
+      input.jobName,
+    );
+  });
+  transaction();
+}
+
+export function listScheduledRuns(jobName: string, limit = 5): ScheduledRunRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM scheduled_runs
+       WHERE job_name = ?
+       ORDER BY finished_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(jobName, limit) as ScheduledRunRow[];
 }

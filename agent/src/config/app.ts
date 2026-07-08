@@ -37,6 +37,13 @@ export type ScheduledCheckConfig = {
   command: string;
   intervalMinutes: number;
   enabled?: boolean;
+  delivery?: "telegram" | "silent";
+  notifyOnChangeOnly?: boolean;
+  prepareEffect?: {
+    prepareCommand: string;
+    prepareInput?: unknown;
+    effectCommand: string;
+  };
 };
 
 const defaultConfig: AgentConfig = {

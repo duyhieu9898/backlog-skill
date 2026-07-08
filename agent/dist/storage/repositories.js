@@ -17,6 +17,13 @@ exports.upsertPendingConfirmation = upsertPendingConfirmation;
 exports.getPendingConfirmation = getPendingConfirmation;
 exports.deletePendingConfirmation = deletePendingConfirmation;
 exports.countPendingConfirmations = countPendingConfirmations;
+exports.upsertScheduledJob = upsertScheduledJob;
+exports.listScheduledJobs = listScheduledJobs;
+exports.getScheduledJob = getScheduledJob;
+exports.listDueScheduledJobs = listDueScheduledJobs;
+exports.updateScheduledJobState = updateScheduledJobState;
+exports.recordScheduledRun = recordScheduledRun;
+exports.listScheduledRuns = listScheduledRuns;
 const db_1 = require("./db");
 function nowIso() {
     return new Date().toISOString();
@@ -135,4 +142,72 @@ function countPendingConfirmations() {
         .prepare(`SELECT COUNT(*) AS count FROM pending_confirmations WHERE expires_at > ?`)
         .get(nowIso());
     return row.count;
+}
+function upsertScheduledJob(input) {
+    const now = nowIso();
+    (0, db_1.getDb)()
+        .prepare(`INSERT INTO scheduled_jobs
+       (name, label, command_name, interval_minutes, enabled, delivery,
+        notify_on_change_only, prepare_effect_json, next_run_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET
+         label = excluded.label,
+         command_name = excluded.command_name,
+         interval_minutes = excluded.interval_minutes,
+         enabled = excluded.enabled,
+         delivery = excluded.delivery,
+         notify_on_change_only = excluded.notify_on_change_only,
+         prepare_effect_json = excluded.prepare_effect_json,
+         next_run_at = COALESCE(scheduled_jobs.next_run_at, excluded.next_run_at),
+         updated_at = excluded.updated_at`)
+        .run(input.name, input.label, input.commandName, input.intervalMinutes, input.enabled ? 1 : 0, input.delivery, input.notifyOnChangeOnly ? 1 : 0, input.prepareEffect === undefined ? null : JSON.stringify(input.prepareEffect), input.nextRunAt ?? null, now, now);
+}
+function listScheduledJobs() {
+    return (0, db_1.getDb)()
+        .prepare(`SELECT * FROM scheduled_jobs ORDER BY name ASC`)
+        .all();
+}
+function getScheduledJob(name) {
+    return ((0, db_1.getDb)()
+        .prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`)
+        .get(name) || null);
+}
+function listDueScheduledJobs(now = nowIso()) {
+    return (0, db_1.getDb)()
+        .prepare(`SELECT * FROM scheduled_jobs
+       WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+       ORDER BY next_run_at ASC, name ASC`)
+        .all(now);
+}
+function updateScheduledJobState(input) {
+    const current = getScheduledJob(input.name);
+    if (!current)
+        throw new Error(`Scheduled job not found: ${input.name}`);
+    (0, db_1.getDb)()
+        .prepare(`UPDATE scheduled_jobs
+       SET enabled = ?, interval_minutes = ?, delivery = ?, next_run_at = ?, updated_at = ?
+       WHERE name = ?`)
+        .run(input.enabled === undefined ? current.enabled : input.enabled ? 1 : 0, input.intervalMinutes ?? current.interval_minutes, input.delivery ?? current.delivery, input.nextRunAt === undefined ? current.next_run_at : input.nextRunAt, nowIso(), input.name);
+}
+function recordScheduledRun(input) {
+    const db = (0, db_1.getDb)();
+    const transaction = db.transaction(() => {
+        db.prepare(`INSERT INTO scheduled_runs
+       (job_name, trace_id, status, exit_code, output_tail, output_digest,
+        notification_sent, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.jobName, input.traceId, input.status, input.exitCode, input.outputTail, input.outputDigest, input.notificationSent ? 1 : 0, input.startedAt, input.finishedAt);
+        db.prepare(`UPDATE scheduled_jobs
+       SET next_run_at = ?, last_run_at = ?, last_status = ?, last_trace_id = ?,
+           last_output_digest = ?, updated_at = ?
+       WHERE name = ?`).run(input.nextRunAt, input.finishedAt, input.status, input.traceId, input.outputDigest, nowIso(), input.jobName);
+    });
+    transaction();
+}
+function listScheduledRuns(jobName, limit = 5) {
+    return (0, db_1.getDb)()
+        .prepare(`SELECT * FROM scheduled_runs
+       WHERE job_name = ?
+       ORDER BY finished_at DESC, id DESC
+       LIMIT ?`)
+        .all(jobName, limit);
 }

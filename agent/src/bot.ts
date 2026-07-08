@@ -12,7 +12,7 @@ import { TelegramClient } from "./telegram/client";
 import { loadTelegramConfig } from "./telegram/config";
 import { formatDate } from "./utils";
 import { loadAgentConfig } from "./config/app";
-import { loadScheduledChecks, ScheduledCheckRunner } from "./scheduler";
+import { seedScheduledJobsFromConfig, ScheduledCheckRunner } from "./scheduler";
 
 loadEnv(path.join(agentDir, ".env"));
 
@@ -45,8 +45,8 @@ async function poll(): Promise<void> {
     offset = await initializeOffset();
   }
 
+  seedScheduledJobsFromConfig(agentConfig.schedules || []);
   const scheduledRunner = new ScheduledCheckRunner(
-    loadScheduledChecks(agentConfig.schedules || []),
     telegramConfig.allowedChatId,
     (text) => telegram.sendMessage(telegramConfig.allowedChatId, text),
     agentConfig.runtime?.commandTimeoutMs,
