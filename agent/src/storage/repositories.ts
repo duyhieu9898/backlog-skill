@@ -46,6 +46,9 @@ export type ScheduledJobRow = {
   last_status: string | null;
   last_trace_id: string | null;
   last_output_digest: string | null;
+  version: number;
+  lease_owner: string | null;
+  lease_until: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -313,7 +316,11 @@ export function upsertScheduledJob(input: {
          label = excluded.label,
          command_name = excluded.command_name,
          prepare_effect_json = excluded.prepare_effect_json,
-         updated_at = excluded.updated_at`,
+         version = scheduled_jobs.version + 1,
+         updated_at = excluded.updated_at
+       WHERE scheduled_jobs.label IS NOT excluded.label
+          OR scheduled_jobs.command_name IS NOT excluded.command_name
+          OR scheduled_jobs.prepare_effect_json IS NOT excluded.prepare_effect_json`,
     )
     .run(
       input.name,
@@ -354,19 +361,62 @@ export function listDueScheduledJobs(now = nowIso()): ScheduledJobRow[] {
     .all(now) as ScheduledJobRow[];
 }
 
+export function claimDueScheduledJob(input: {
+  name: string;
+  leaseOwner: string;
+  leaseUntil: string;
+  now?: string;
+}): ScheduledJobRow | null {
+  const now = input.now || nowIso();
+  const db = getDb();
+  const transaction = db.transaction(() => {
+    const current = db
+      .prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`)
+      .get(input.name) as ScheduledJobRow | undefined;
+    if (
+      !current ||
+      current.enabled !== 1 ||
+      !current.next_run_at ||
+      current.next_run_at > now ||
+      (current.lease_until && current.lease_until > now)
+    ) {
+      return null;
+    }
+    const result = db
+      .prepare(
+        `UPDATE scheduled_jobs
+         SET lease_owner = ?, lease_until = ?, updated_at = ?
+         WHERE name = ?
+           AND enabled = 1
+           AND next_run_at IS NOT NULL
+           AND next_run_at <= ?
+           AND (lease_until IS NULL OR lease_until <= ?)`,
+      )
+      .run(input.leaseOwner, input.leaseUntil, now, input.name, now, now);
+    if (result.changes !== 1) return null;
+    return db.prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`).get(input.name) as ScheduledJobRow;
+  });
+  return transaction();
+}
+
 export function updateScheduledJobState(input: {
   name: string;
   enabled?: boolean;
   intervalMinutes?: number;
   delivery?: string;
   nextRunAt?: string | null;
-}): void {
+  expectedVersion?: number;
+}): ScheduledJobRow {
   const current = getScheduledJob(input.name);
   if (!current) throw new Error(`Scheduled job not found: ${input.name}`);
-  getDb()
+  if (input.expectedVersion !== undefined && current.version !== input.expectedVersion) {
+    throw new Error(`Scheduled job changed. Expected version ${input.expectedVersion}, got ${current.version}.`);
+  }
+  const result = getDb()
     .prepare(
       `UPDATE scheduled_jobs
-       SET enabled = ?, interval_minutes = ?, delivery = ?, next_run_at = ?, updated_at = ?
+       SET enabled = ?, interval_minutes = ?, delivery = ?, next_run_at = ?,
+           version = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?
        WHERE name = ?`,
     )
     .run(
@@ -374,13 +424,17 @@ export function updateScheduledJobState(input: {
       input.intervalMinutes ?? current.interval_minutes,
       input.delivery ?? current.delivery,
       input.nextRunAt === undefined ? current.next_run_at : input.nextRunAt,
+      current.version + 1,
       nowIso(),
       input.name,
     );
+  if (result.changes !== 1) throw new Error(`Scheduled job update failed: ${input.name}`);
+  return getScheduledJob(input.name)!;
 }
 
 export function recordScheduledRun(input: {
   jobName: string;
+  leaseOwner?: string;
   traceId: string;
   status: "success" | "failed";
   exitCode: number;
@@ -412,8 +466,8 @@ export function recordScheduledRun(input: {
     db.prepare(
       `UPDATE scheduled_jobs
        SET next_run_at = ?, last_run_at = ?, last_status = ?, last_trace_id = ?,
-           last_output_digest = ?, updated_at = ?
-       WHERE name = ?`,
+           last_output_digest = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?
+       WHERE name = ? AND (? IS NULL OR lease_owner = ?)`,
     ).run(
       input.nextRunAt,
       input.finishedAt,
@@ -422,6 +476,8 @@ export function recordScheduledRun(input: {
       input.outputDigest,
       nowIso(),
       input.jobName,
+      input.leaseOwner || null,
+      input.leaseOwner || null,
     );
   });
   transaction();

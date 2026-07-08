@@ -13,6 +13,7 @@ import {
 import { generateTraceId } from "./logging/trace";
 import { log } from "./logging/logger";
 import {
+  claimDueScheduledJob,
   getScheduledJob,
   listDueScheduledJobs,
   listScheduledJobs,
@@ -218,10 +219,12 @@ export function formatScheduleDetails(name: string): string {
     `interval: ${row.interval_minutes}m`,
     `delivery: ${row.delivery}`,
     `change-only: ${row.notify_on_change_only ? "yes" : "no"}`,
+    `version: ${row.version}`,
     `next: ${row.next_run_at || "-"}`,
     `last: ${row.last_run_at || "-"}`,
     `last status: ${row.last_status || "-"}`,
     `last traceId: ${row.last_trace_id || "-"}`,
+    `lease: ${row.lease_owner && row.lease_until ? `${row.lease_owner} until ${row.lease_until}` : "-"}`,
   ].join("\n");
 }
 
@@ -256,6 +259,7 @@ export async function runScheduledCheck(input: {
   defaultTimeoutMs?: number;
   notify?: SchedulerNotifier;
   forceNotify?: boolean;
+  leaseOwner?: string;
 }): Promise<ScheduledCheckResult> {
   if (!getScheduledJob(input.check.name)) {
     upsertScheduledJob({
@@ -340,6 +344,7 @@ export async function runScheduledCheck(input: {
   const nextRunAt = nextRunAtFor(input.check);
   recordScheduledRun({
     jobName: input.check.name,
+    leaseOwner: input.leaseOwner,
     traceId,
     status,
     exitCode,
@@ -427,6 +432,7 @@ export function scheduleUpdatePreview(input: {
   action: "enable" | "disable" | "interval" | "delivery";
   name: string;
   value?: string | number;
+  expectedVersion?: number;
 }): { digest: string; preview: string } {
   const preview = JSON.stringify(input);
   return {
@@ -439,36 +445,48 @@ export function applyScheduleUpdate(input: {
   action: "enable" | "disable" | "interval" | "delivery";
   name: string;
   value?: string | number;
+  expectedVersion?: number;
 }): string {
   const row = getScheduledJob(input.name);
   if (!row) return `Scheduled check not found: ${input.name}`;
-  if (input.action === "enable") {
-    updateScheduledJobState({
-      name: input.name,
-      enabled: true,
-      nextRunAt: addMinutes(new Date(), row.interval_minutes).toISOString(),
-    });
-    return `Enabled ${input.name}.`;
-  }
-  if (input.action === "disable") {
-    updateScheduledJobState({ name: input.name, enabled: false, nextRunAt: null });
-    return `Disabled ${input.name}.`;
-  }
-  if (input.action === "interval") {
-    const minutes = Number(input.value);
-    if (!Number.isFinite(minutes) || minutes < 1) return "Interval must be at least 1 minute.";
-    updateScheduledJobState({
-      name: input.name,
-      intervalMinutes: minutes,
-      nextRunAt: row.enabled ? addMinutes(new Date(), minutes).toISOString() : null,
-    });
-    return `Updated ${input.name} interval to ${minutes}m.`;
-  }
-  if (input.action === "delivery") {
-    const delivery = String(input.value);
-    if (delivery !== "telegram" && delivery !== "silent") return "Delivery must be telegram or silent.";
-    updateScheduledJobState({ name: input.name, delivery });
-    return `Updated ${input.name} delivery to ${delivery}.`;
+  try {
+    if (input.action === "enable") {
+      updateScheduledJobState({
+        name: input.name,
+        enabled: true,
+        expectedVersion: input.expectedVersion,
+        nextRunAt: addMinutes(new Date(), row.interval_minutes).toISOString(),
+      });
+      return `Enabled ${input.name}.`;
+    }
+    if (input.action === "disable") {
+      updateScheduledJobState({
+        name: input.name,
+        enabled: false,
+        expectedVersion: input.expectedVersion,
+        nextRunAt: null,
+      });
+      return `Disabled ${input.name}.`;
+    }
+    if (input.action === "interval") {
+      const minutes = Number(input.value);
+      if (!Number.isFinite(minutes) || minutes < 1) return "Interval must be at least 1 minute.";
+      updateScheduledJobState({
+        name: input.name,
+        intervalMinutes: minutes,
+        expectedVersion: input.expectedVersion,
+        nextRunAt: row.enabled ? addMinutes(new Date(), minutes).toISOString() : null,
+      });
+      return `Updated ${input.name} interval to ${minutes}m.`;
+    }
+    if (input.action === "delivery") {
+      const delivery = String(input.value);
+      if (delivery !== "telegram" && delivery !== "silent") return "Delivery must be telegram or silent.";
+      updateScheduledJobState({ name: input.name, delivery, expectedVersion: input.expectedVersion });
+      return `Updated ${input.name} delivery to ${delivery}.`;
+    }
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
   return "Unsupported schedule update.";
 }
@@ -476,6 +494,7 @@ export function applyScheduleUpdate(input: {
 export class ScheduledCheckRunner {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private readonly runnerId = `scheduler-${process.pid}-${Math.random().toString(16).slice(2)}`;
 
   constructor(
     private readonly chatId: string,
@@ -502,22 +521,34 @@ export class ScheduledCheckRunner {
     try {
       const catalog = loadCommandCatalog();
       for (const row of listDueScheduledJobs()) {
-        const check = safeScheduledCheckFromRow(row, catalog);
+        const leaseOwner = `${this.runnerId}-${row.name}-${Date.now()}`;
+        const claimed = claimDueScheduledJob({
+          name: row.name,
+          leaseOwner,
+          leaseUntil: new Date(Date.now() + (this.defaultTimeoutMs || 10 * 60 * 1000) + 60_000).toISOString(),
+        });
+        if (!claimed) continue;
+        const check = safeScheduledCheckFromRow(claimed, catalog);
         if (!check) continue;
-        await this.runAndNotify(check, false);
+        await this.runAndNotify(check, false, leaseOwner);
       }
     } finally {
       this.running = false;
     }
   }
 
-  async runAndNotify(check: ScheduledCheck, forceNotify = true): Promise<ScheduledCheckResult> {
+  async runAndNotify(
+    check: ScheduledCheck,
+    forceNotify = true,
+    leaseOwner?: string,
+  ): Promise<ScheduledCheckResult> {
     return runScheduledCheck({
       check,
       chatId: this.chatId,
       defaultTimeoutMs: this.defaultTimeoutMs,
       notify: this.notify,
       forceNotify,
+      leaseOwner,
     });
   }
 }

@@ -6,7 +6,12 @@ const test = require("node:test");
 const { buildCommandCatalog } = require("../dist/commands");
 const { Router } = require("../dist/core/router");
 const { SkillRegistry } = require("../dist/skills/registry");
-const { getJsonState, getScheduledJob, updateScheduledJobState } = require("../dist/storage/repositories");
+const {
+  claimDueScheduledJob,
+  getJsonState,
+  getScheduledJob,
+  updateScheduledJobState,
+} = require("../dist/storage/repositories");
 const {
   applyScheduleUpdate,
   findScheduledCheck,
@@ -186,6 +191,80 @@ test("config seeding preserves runtime schedule controls", () => {
   assert.equal(row.delivery, "silent");
   assert.equal(row.notify_on_change_only, 1);
   assert.equal(row.next_run_at, null);
+});
+
+test("config seeding does not bump version when metadata is unchanged", () => {
+  const name = `seed-version-${Date.now()}`;
+  const config = {
+    name,
+    label: "Stable label",
+    command: "test.read",
+    intervalMinutes: 5,
+    enabled: true,
+    delivery: "telegram",
+    notifyOnChangeOnly: true,
+  };
+  seedScheduledJobsFromConfig([config], catalog(__dirname));
+  const first = getScheduledJob(name);
+
+  seedScheduledJobsFromConfig([config], catalog(__dirname));
+  const second = getScheduledJob(name);
+  seedScheduledJobsFromConfig([{ ...config, label: "Changed label" }], catalog(__dirname));
+  const third = getScheduledJob(name);
+
+  assert.equal(second.version, first.version);
+  assert.equal(third.version, first.version + 1);
+});
+
+test("due job claim uses a lease to prevent duplicate runners", () => {
+  const name = `claim-${Date.now()}`;
+  seedScheduledJobsFromConfig([
+    {
+      name,
+      command: "test.read",
+      intervalMinutes: 5,
+      enabled: true,
+    },
+  ], catalog(__dirname));
+  updateScheduledJobState({
+    name,
+    nextRunAt: new Date(Date.now() - 1000).toISOString(),
+  });
+
+  const first = claimDueScheduledJob({
+    name,
+    leaseOwner: "runner-a",
+    leaseUntil: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const second = claimDueScheduledJob({
+    name,
+    leaseOwner: "runner-b",
+    leaseUntil: new Date(Date.now() + 60_000).toISOString(),
+  });
+
+  assert.equal(first.name, name);
+  assert.equal(first.lease_owner, "runner-a");
+  assert.equal(second, null);
+});
+
+test("schedule updates reject stale expected versions", () => {
+  const name = `versioned-update-${Date.now()}`;
+  seedScheduledJobsFromConfig([
+    {
+      name,
+      command: "test.read",
+      intervalMinutes: 5,
+      enabled: true,
+    },
+  ], catalog(__dirname));
+  const initial = getScheduledJob(name);
+
+  assert.equal(applyScheduleUpdate({ action: "interval", name, value: 8, expectedVersion: initial.version }), `Updated ${name} interval to 8m.`);
+  assert.match(
+    applyScheduleUpdate({ action: "delivery", name, value: "silent", expectedVersion: initial.version }),
+    /Scheduled job changed/,
+  );
+  assert.equal(getScheduledJob(name).delivery, "telegram");
 });
 
 test("change-only delivery suppresses duplicate successful notification", async (t) => {

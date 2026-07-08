@@ -97,6 +97,9 @@ export function initializeSchema(database = getDb()): void {
       last_status TEXT,
       last_trace_id TEXT,
       last_output_digest TEXT,
+      version INTEGER NOT NULL DEFAULT 1,
+      lease_owner TEXT,
+      lease_until TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -117,6 +120,25 @@ export function initializeSchema(database = getDb()): void {
     CREATE INDEX IF NOT EXISTS idx_scheduled_runs_job_finished
       ON scheduled_runs(job_name, finished_at DESC);
   `);
+  migrateScheduledJobs();
+}
+
+function migrateScheduledJobs(): void {
+  const columns = new Set(
+    db!
+      .prepare(`PRAGMA table_info(scheduled_jobs)`)
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+  if (!columns.has("version")) {
+    db!.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN version INTEGER NOT NULL DEFAULT 1`).run();
+  }
+  if (!columns.has("lease_owner")) {
+    db!.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN lease_owner TEXT`).run();
+  }
+  if (!columns.has("lease_until")) {
+    db!.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN lease_until TEXT`).run();
+  }
 }
 
 export function closeDb(): void {

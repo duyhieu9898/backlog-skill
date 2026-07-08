@@ -66,16 +66,23 @@ to refuse autonomous external writes.
   - Config seeding bootstraps new jobs and refreshes job metadata, while
     preserving SQLite runtime controls so confirmed schedule changes survive
     service restarts.
+  - Scheduled jobs now carry `version`, `lease_owner`, and `lease_until`.
+    Versioned updates prevent stale confirmations or future dashboard saves
+    from overwriting newer edits, and leased due-job claims prevent duplicate
+    runs when more than one runner sees the same due row.
   - `agent/src/core/router.ts` exposes `/schedule`, `/schedule show`,
     `/schedule history`, `/schedule run`, and confirmed schedule updates for
     enable, disable, interval, and delivery.
   - `agent/config.json` enables hourly `bemo-late` with Telegram change-only
     delivery and a preview-only Bemo time-off follow-up.
 - Automated proof:
-  - `cd agent && npm test` passed: 49 tests, 0 failures.
+  - `cd agent && npm test` passed: 52 tests, 0 failures.
   - Regression coverage verifies config seeding preserves enabled state,
     interval, delivery, change-only behavior, and next run time after runtime
     updates.
+  - Regression coverage verifies unchanged config seed does not bump version,
+    due-job lease claim rejects a second runner, and stale expected versions
+    cannot apply schedule updates.
 - Platform proof:
   - Restarted the installed `my-agent` systemd user service at 2026-07-08
     09:26:51 +07 to load the upgraded scheduler.

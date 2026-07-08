@@ -164,10 +164,12 @@ function formatScheduleDetails(name) {
         `interval: ${row.interval_minutes}m`,
         `delivery: ${row.delivery}`,
         `change-only: ${row.notify_on_change_only ? "yes" : "no"}`,
+        `version: ${row.version}`,
         `next: ${row.next_run_at || "-"}`,
         `last: ${row.last_run_at || "-"}`,
         `last status: ${row.last_status || "-"}`,
         `last traceId: ${row.last_trace_id || "-"}`,
+        `lease: ${row.lease_owner && row.lease_until ? `${row.lease_owner} until ${row.lease_until}` : "-"}`,
     ].join("\n");
 }
 function formatScheduleHistory(name, limit = 5) {
@@ -272,6 +274,7 @@ async function runScheduledCheck(input) {
     const nextRunAt = nextRunAtFor(input.check);
     (0, repositories_1.recordScheduledRun)({
         jobName: input.check.name,
+        leaseOwner: input.leaseOwner,
         traceId,
         status,
         exitCode,
@@ -360,35 +363,47 @@ function applyScheduleUpdate(input) {
     const row = (0, repositories_1.getScheduledJob)(input.name);
     if (!row)
         return `Scheduled check not found: ${input.name}`;
-    if (input.action === "enable") {
-        (0, repositories_1.updateScheduledJobState)({
-            name: input.name,
-            enabled: true,
-            nextRunAt: addMinutes(new Date(), row.interval_minutes).toISOString(),
-        });
-        return `Enabled ${input.name}.`;
+    try {
+        if (input.action === "enable") {
+            (0, repositories_1.updateScheduledJobState)({
+                name: input.name,
+                enabled: true,
+                expectedVersion: input.expectedVersion,
+                nextRunAt: addMinutes(new Date(), row.interval_minutes).toISOString(),
+            });
+            return `Enabled ${input.name}.`;
+        }
+        if (input.action === "disable") {
+            (0, repositories_1.updateScheduledJobState)({
+                name: input.name,
+                enabled: false,
+                expectedVersion: input.expectedVersion,
+                nextRunAt: null,
+            });
+            return `Disabled ${input.name}.`;
+        }
+        if (input.action === "interval") {
+            const minutes = Number(input.value);
+            if (!Number.isFinite(minutes) || minutes < 1)
+                return "Interval must be at least 1 minute.";
+            (0, repositories_1.updateScheduledJobState)({
+                name: input.name,
+                intervalMinutes: minutes,
+                expectedVersion: input.expectedVersion,
+                nextRunAt: row.enabled ? addMinutes(new Date(), minutes).toISOString() : null,
+            });
+            return `Updated ${input.name} interval to ${minutes}m.`;
+        }
+        if (input.action === "delivery") {
+            const delivery = String(input.value);
+            if (delivery !== "telegram" && delivery !== "silent")
+                return "Delivery must be telegram or silent.";
+            (0, repositories_1.updateScheduledJobState)({ name: input.name, delivery, expectedVersion: input.expectedVersion });
+            return `Updated ${input.name} delivery to ${delivery}.`;
+        }
     }
-    if (input.action === "disable") {
-        (0, repositories_1.updateScheduledJobState)({ name: input.name, enabled: false, nextRunAt: null });
-        return `Disabled ${input.name}.`;
-    }
-    if (input.action === "interval") {
-        const minutes = Number(input.value);
-        if (!Number.isFinite(minutes) || minutes < 1)
-            return "Interval must be at least 1 minute.";
-        (0, repositories_1.updateScheduledJobState)({
-            name: input.name,
-            intervalMinutes: minutes,
-            nextRunAt: row.enabled ? addMinutes(new Date(), minutes).toISOString() : null,
-        });
-        return `Updated ${input.name} interval to ${minutes}m.`;
-    }
-    if (input.action === "delivery") {
-        const delivery = String(input.value);
-        if (delivery !== "telegram" && delivery !== "silent")
-            return "Delivery must be telegram or silent.";
-        (0, repositories_1.updateScheduledJobState)({ name: input.name, delivery });
-        return `Updated ${input.name} delivery to ${delivery}.`;
+    catch (error) {
+        return error instanceof Error ? error.message : String(error);
     }
     return "Unsupported schedule update.";
 }
@@ -399,6 +414,7 @@ class ScheduledCheckRunner {
     tickMs;
     timer = null;
     running = false;
+    runnerId = `scheduler-${process.pid}-${Math.random().toString(16).slice(2)}`;
     constructor(chatId, notify, defaultTimeoutMs, tickMs = DEFAULT_TICK_MS) {
         this.chatId = chatId;
         this.notify = notify;
@@ -424,23 +440,32 @@ class ScheduledCheckRunner {
         try {
             const catalog = (0, commands_1.loadCommandCatalog)();
             for (const row of (0, repositories_1.listDueScheduledJobs)()) {
-                const check = safeScheduledCheckFromRow(row, catalog);
+                const leaseOwner = `${this.runnerId}-${row.name}-${Date.now()}`;
+                const claimed = (0, repositories_1.claimDueScheduledJob)({
+                    name: row.name,
+                    leaseOwner,
+                    leaseUntil: new Date(Date.now() + (this.defaultTimeoutMs || 10 * 60 * 1000) + 60_000).toISOString(),
+                });
+                if (!claimed)
+                    continue;
+                const check = safeScheduledCheckFromRow(claimed, catalog);
                 if (!check)
                     continue;
-                await this.runAndNotify(check, false);
+                await this.runAndNotify(check, false, leaseOwner);
             }
         }
         finally {
             this.running = false;
         }
     }
-    async runAndNotify(check, forceNotify = true) {
+    async runAndNotify(check, forceNotify = true, leaseOwner) {
         return runScheduledCheck({
             check,
             chatId: this.chatId,
             defaultTimeoutMs: this.defaultTimeoutMs,
             notify: this.notify,
             forceNotify,
+            leaseOwner,
         });
     }
 }

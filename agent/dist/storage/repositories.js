@@ -21,6 +21,7 @@ exports.upsertScheduledJob = upsertScheduledJob;
 exports.listScheduledJobs = listScheduledJobs;
 exports.getScheduledJob = getScheduledJob;
 exports.listDueScheduledJobs = listDueScheduledJobs;
+exports.claimDueScheduledJob = claimDueScheduledJob;
 exports.updateScheduledJobState = updateScheduledJobState;
 exports.recordScheduledRun = recordScheduledRun;
 exports.listScheduledRuns = listScheduledRuns;
@@ -154,7 +155,11 @@ function upsertScheduledJob(input) {
          label = excluded.label,
          command_name = excluded.command_name,
          prepare_effect_json = excluded.prepare_effect_json,
-         updated_at = excluded.updated_at`)
+         version = scheduled_jobs.version + 1,
+         updated_at = excluded.updated_at
+       WHERE scheduled_jobs.label IS NOT excluded.label
+          OR scheduled_jobs.command_name IS NOT excluded.command_name
+          OR scheduled_jobs.prepare_effect_json IS NOT excluded.prepare_effect_json`)
         .run(input.name, input.label, input.commandName, input.intervalMinutes, input.enabled ? 1 : 0, input.delivery, input.notifyOnChangeOnly ? 1 : 0, input.prepareEffect === undefined ? null : JSON.stringify(input.prepareEffect), input.nextRunAt ?? null, now, now);
 }
 function listScheduledJobs() {
@@ -174,15 +179,51 @@ function listDueScheduledJobs(now = nowIso()) {
        ORDER BY next_run_at ASC, name ASC`)
         .all(now);
 }
+function claimDueScheduledJob(input) {
+    const now = input.now || nowIso();
+    const db = (0, db_1.getDb)();
+    const transaction = db.transaction(() => {
+        const current = db
+            .prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`)
+            .get(input.name);
+        if (!current ||
+            current.enabled !== 1 ||
+            !current.next_run_at ||
+            current.next_run_at > now ||
+            (current.lease_until && current.lease_until > now)) {
+            return null;
+        }
+        const result = db
+            .prepare(`UPDATE scheduled_jobs
+         SET lease_owner = ?, lease_until = ?, updated_at = ?
+         WHERE name = ?
+           AND enabled = 1
+           AND next_run_at IS NOT NULL
+           AND next_run_at <= ?
+           AND (lease_until IS NULL OR lease_until <= ?)`)
+            .run(input.leaseOwner, input.leaseUntil, now, input.name, now, now);
+        if (result.changes !== 1)
+            return null;
+        return db.prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`).get(input.name);
+    });
+    return transaction();
+}
 function updateScheduledJobState(input) {
     const current = getScheduledJob(input.name);
     if (!current)
         throw new Error(`Scheduled job not found: ${input.name}`);
-    (0, db_1.getDb)()
+    if (input.expectedVersion !== undefined && current.version !== input.expectedVersion) {
+        throw new Error(`Scheduled job changed. Expected version ${input.expectedVersion}, got ${current.version}.`);
+    }
+    const result = (0, db_1.getDb)()
         .prepare(`UPDATE scheduled_jobs
-       SET enabled = ?, interval_minutes = ?, delivery = ?, next_run_at = ?, updated_at = ?
+       SET enabled = ?, interval_minutes = ?, delivery = ?, next_run_at = ?,
+           version = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?
        WHERE name = ?`)
-        .run(input.enabled === undefined ? current.enabled : input.enabled ? 1 : 0, input.intervalMinutes ?? current.interval_minutes, input.delivery ?? current.delivery, input.nextRunAt === undefined ? current.next_run_at : input.nextRunAt, nowIso(), input.name);
+        .run(input.enabled === undefined ? current.enabled : input.enabled ? 1 : 0, input.intervalMinutes ?? current.interval_minutes, input.delivery ?? current.delivery, input.nextRunAt === undefined ? current.next_run_at : input.nextRunAt, current.version + 1, nowIso(), input.name);
+    if (result.changes !== 1)
+        throw new Error(`Scheduled job update failed: ${input.name}`);
+    return getScheduledJob(input.name);
 }
 function recordScheduledRun(input) {
     const db = (0, db_1.getDb)();
@@ -193,8 +234,8 @@ function recordScheduledRun(input) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.jobName, input.traceId, input.status, input.exitCode, input.outputTail, input.outputDigest, input.notificationSent ? 1 : 0, input.startedAt, input.finishedAt);
         db.prepare(`UPDATE scheduled_jobs
        SET next_run_at = ?, last_run_at = ?, last_status = ?, last_trace_id = ?,
-           last_output_digest = ?, updated_at = ?
-       WHERE name = ?`).run(input.nextRunAt, input.finishedAt, input.status, input.traceId, input.outputDigest, nowIso(), input.jobName);
+           last_output_digest = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?
+       WHERE name = ? AND (? IS NULL OR lease_owner = ?)`).run(input.nextRunAt, input.finishedAt, input.status, input.traceId, input.outputDigest, nowIso(), input.jobName, input.leaseOwner || null, input.leaseOwner || null);
     });
     transaction();
 }

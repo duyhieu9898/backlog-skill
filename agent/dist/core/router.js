@@ -79,19 +79,24 @@ class Router {
         }
         const scheduleUpdate = this.parseScheduleUpdate(normalized);
         if (scheduleUpdate) {
-            const { preview, digest } = (0, scheduler_1.scheduleUpdatePreview)(scheduleUpdate);
+            const row = (0, repositories_1.getScheduledJob)(scheduleUpdate.name);
+            if (!row)
+                return `Scheduled check not found: ${scheduleUpdate.name}`;
+            const versionedScheduleUpdate = { ...scheduleUpdate, expectedVersion: row.version };
+            const { preview, digest } = (0, scheduler_1.scheduleUpdatePreview)(versionedScheduleUpdate);
             const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
             (0, repositories_1.upsertPendingConfirmation)({
                 chatId: message.chatId,
                 traceId: message.traceId,
                 commandName: `schedule.${scheduleUpdate.action}.${scheduleUpdate.name}`,
-                payload: { scheduleUpdate, preview, digest },
+                payload: { scheduleUpdate: versionedScheduleUpdate, preview, digest },
                 expiresAt,
             });
             return [
                 `Schedule update needs confirmation.`,
                 `Action: ${scheduleUpdate.action}`,
                 `Name: ${scheduleUpdate.name}`,
+                `Version: ${row.version}`,
                 scheduleUpdate.value === undefined ? "" : `Value: ${scheduleUpdate.value}`,
                 `Approval: ${digest.slice(0, 12)}`,
                 `Gõ: confirm schedule.${scheduleUpdate.action}.${scheduleUpdate.name} ${digest.slice(0, 12)}`,
