@@ -17,6 +17,15 @@
     "telegramChunkSize": 3500,
     "sqlitePath": "data/agent.sqlite"
   },
+  "schedules": [
+    {
+      "name": "bemo-late",
+      "label": "Bemo late-day read-only check",
+      "command": "bemo.late-list",
+      "intervalMinutes": 60,
+      "enabled": false
+    }
+  ],
   "permissions": {
     "workspaceRoot": "..",
     "allowedReadRoots": [".."],

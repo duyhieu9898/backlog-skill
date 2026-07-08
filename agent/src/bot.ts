@@ -11,6 +11,8 @@ import { readOffset, writeOffset } from "./state";
 import { TelegramClient } from "./telegram/client";
 import { loadTelegramConfig } from "./telegram/config";
 import { formatDate } from "./utils";
+import { loadAgentConfig } from "./config/app";
+import { loadScheduledChecks, ScheduledCheckRunner } from "./scheduler";
 
 loadEnv(path.join(agentDir, ".env"));
 
@@ -18,6 +20,7 @@ const telegramConfig = loadTelegramConfig();
 const telegram = new TelegramClient(telegramConfig);
 const skills = new SkillRegistry();
 const router = new Router(skills);
+const agentConfig = loadAgentConfig();
 
 async function initializeOffset(): Promise<number> {
   const updates = await telegram.getUpdates(null, 0);
@@ -41,6 +44,14 @@ async function poll(): Promise<void> {
   if (offset === null) {
     offset = await initializeOffset();
   }
+
+  const scheduledRunner = new ScheduledCheckRunner(
+    loadScheduledChecks(agentConfig.schedules || []),
+    telegramConfig.allowedChatId,
+    (text) => telegram.sendMessage(telegramConfig.allowedChatId, text),
+    agentConfig.runtime?.commandTimeoutMs,
+  );
+  scheduledRunner.start();
 
   while (true) {
     try {

@@ -75,5 +75,8 @@ High-risk because it protects external effects and destructive local changes.
     label, executable, args, cwd, timeout, and risk flags. Telegram uses the
     first 12 hex characters as the explicit approval token.
 - Gaps:
-  - File previews are internal and are not yet persisted or shown by Router.
-  - Bemo skipped dates and structured external action previews remain pending.
+  - File previews are internal and are not yet shown through a real Telegram
+    provider-routed file action.
+  - Bemo skipped dates and structured external action previews are implemented
+    in US-008/US-009 automated proof, but human Telegram preview and confirm
+    proof remains open.

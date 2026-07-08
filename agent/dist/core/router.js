@@ -9,6 +9,7 @@ const repositories_1 = require("../storage/repositories");
 const loop_1 = require("../tools/loop");
 const debugCommands_1 = require("./debugCommands");
 const presenter_1 = require("./presenter");
+const scheduler_1 = require("../scheduler");
 class Router {
     registry;
     toolLoop;
@@ -53,6 +54,21 @@ class Router {
     async routeInner(message) {
         const text = message.text.trim();
         const normalized = text.toLowerCase();
+        if (normalized === "/schedule") {
+            return (0, scheduler_1.formatScheduleList)((0, scheduler_1.loadScheduledChecks)());
+        }
+        if (normalized.startsWith("/schedule run ")) {
+            const name = normalized.replace("/schedule run ", "").trim();
+            const check = (0, scheduler_1.findScheduledCheck)(name);
+            if (!check)
+                return `Scheduled check not found: ${name}`;
+            const result = await (0, scheduler_1.runScheduledCheck)({
+                check,
+                chatId: message.chatId,
+                defaultTimeoutMs: this.commandTimeoutMs,
+            });
+            return (0, scheduler_1.formatScheduledCheckResult)(result);
+        }
         if ((0, debugCommands_1.isDebugCommand)(text)) {
             logger_1.log.info(message.traceId, normalized.startsWith("/debug ") ? "debug.trace.requested" : "system.status.requested", { command: normalized });
             return (0, debugCommands_1.handleDebugCommand)(text, this.registry);

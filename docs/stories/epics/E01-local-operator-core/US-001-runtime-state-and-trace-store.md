@@ -63,11 +63,17 @@ Update durable proof flags after persistence tests exist.
   - `agent/src/storage/repositories.ts` writes chat messages, trace events,
     command runs, pending confirmations, and runtime state.
   - `agent/src/bot.ts` assigns/propagates trace IDs for Telegram messages.
+  - `agent/src/core/router.ts` persists inbound user messages and outbound
+    assistant replies through `insertChatMessage`.
   - `agent/src/commands.ts` records command start, completion, output tail, and
     error state.
 - Validation:
-  - `npm test` in `agent/` passed on 2026-06-26 with 10/10 tests.
+  - `scripts/bin/harness-cli story verify-all` passed all configured story
+    verification commands on 2026-07-07.
+  - `cd agent && npm test` passed 42/42 on 2026-07-07.
 - Gaps:
-  - Trace/log redaction is not fully proven.
-  - Telegram E2E proof is not recorded.
-  - Tool calls beyond commands are not represented yet.
+  - Chat persistence is wired in `Router`, but direct tests/assertions for
+    stored user/assistant chat rows are still missing.
+  - Trace/log redaction is implemented for sensitive payload keys, but direct
+    redaction tests are still missing.
+  - Telegram E2E proof for trace/chat persistence is not recorded.

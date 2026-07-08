@@ -17,6 +17,9 @@ Use lowercase words and underscores only when the action needs multiple words.
 - `bemo.checkout`
 - `bemo.sync`
 - `bemo.verify`
+- `bemo.late-list`
+- `bemo.prepare-timeoff`
+- `bemo.create-timeoff`
 - `bemo.run`
 - `bemo.auth`
 
@@ -48,3 +51,5 @@ Use lowercase words and underscores only when the action needs multiple words.
 - Skill commands must use a cwd matching their `skillSlug`; stale entries fail catalog loading.
 - Commands that write external data or delete data set both
   `requiresConfirmation: true` and `externalSideEffect: true`.
+- Commands referenced by `config.json` scheduled checks must be read-only:
+  `requiresConfirmation: false` and `externalSideEffect: false`.

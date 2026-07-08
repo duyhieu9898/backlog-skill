@@ -22,6 +22,7 @@ test("debug command parser recognizes every built-in command", () => {
     "/debug",
     "/debug trace-123",
     "/commands",
+    "/schedule",
     "/skills",
     "/help",
     "help",
@@ -35,6 +36,7 @@ test("status, help, command, and skill output include required fields", () => {
   const status = handleDebugCommand("/status", registry);
   assert.match(status, /uptime:/);
   assert.match(status, /current:/);
+  assert.match(status, /last scheduled:/);
   assert.match(status, /pending confirmations:/);
   assert.match(status, /loaded commands: \d+/);
   assert.match(status, /loaded skills: 3/);
@@ -45,6 +47,9 @@ test("status, help, command, and skill output include required fields", () => {
   assert.match(commands, /general/);
   assert.match(commands, /bemo\.checkout/);
 
+  const schedule = handleDebugCommand("/schedule", registry);
+  assert.match(schedule, /bemo-late/);
+
   const skills = handleDebugCommand("/skills", registry);
   assert.match(skills, /bemo/);
   assert.match(skills, /gmail/);
@@ -52,6 +57,7 @@ test("status, help, command, and skill output include required fields", () => {
 
   const help = handleDebugCommand("/help", registry);
   assert.match(help, /\/last-error/);
+  assert.match(help, /\/schedule/);
   assert.match(help, /Command aliases:/);
   assert.equal(handleDebugCommand("/debug", registry), "Usage: /debug <traceId>");
 });

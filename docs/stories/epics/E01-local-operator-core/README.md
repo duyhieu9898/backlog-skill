@@ -34,16 +34,16 @@ leave enough trace data to debug what happened.
 
 | Story | Title | Lane | Status | Why It Matters |
 | --- | --- | --- | --- | --- |
-| US-001 | Runtime State And Trace Store | normal | in_progress | Debugging depends on persistent facts, not chat memory. |
-| US-002 | Permission Policy For Local Tools | high-risk | in_progress | Central policy and command enforcement are implemented; file-tool and Telegram proof remain. |
-| US-003 | Safe File Tools | high-risk | in_progress | Internal policy-gated tools pass unit/integration proof; Telegram and platform proof remain. |
+| US-001 | Runtime State And Trace Store | normal | in_progress | Runtime state, chat rows, command runs, pending confirmations, and trace events are wired; direct proof and full Telegram proof remain. |
+| US-002 | Permission Policy For Local Tools | high-risk | in_progress | Central policy and command/file enforcement pass automated proof; denied-file Telegram proof remains. |
+| US-003 | Safe File Tools | high-risk | in_progress | Internal policy-gated tools pass unit/integration proof; Telegram-routed file action proof remains. |
 | US-004 | Allowlisted Command Tools | high-risk | in_progress | Skills should run through reviewed commands, not arbitrary shell. |
-| US-005 | Preview And Confirmation Flow | high-risk | in_progress | Real external effects need a deliberate user approval step. |
-| US-006 | Debug And Status Commands | normal | in_progress | The user needs `/status`, `/last`, `/last-error`, and `/debug`. |
+| US-005 | Preview And Confirmation Flow | high-risk | in_progress | Exact digest confirmation works in tests and deployed previews; full human Telegram confirm proof remains. |
+| US-006 | Debug And Status Commands | normal | in_progress | Built-ins pass parser/formatter/storage proof; full manual Telegram smoke for all commands remains. |
 | US-007 | Skill Registry And Context Loading | normal | implemented | The agent discovers valid skills, surfaces registry errors, and loads only selected skill context. |
-| US-008 | Bemo Late-Day Workflow | high-risk | in_progress | Bemo skill owns structured plan/create behavior; natural-language preview smoke remains. |
+| US-008 | Bemo Late-Day Workflow | high-risk | in_progress | Bemo skill owns structured plan/create behavior; Telegram/provider preview smoke and successful provider-write proof remain. |
 | US-009 | AI Tool Router | high-risk | in_progress | Generic policy-gated tool loop is implemented; Telegram/provider smoke remains. |
-| US-010 | Scheduled Local Checks | normal | planned | Scheduling comes after manual execution is observable and reversible. |
+| US-010 | Scheduled Local Checks | normal | in_progress | Read-only scheduled checks are implemented behind explicit disabled config; Telegram/systemd smoke remains. |
 
 ## Recommended Implementation Order
 
@@ -85,9 +85,12 @@ debug commands, skill registry, context hydration, and AI provider routing.
 The permission policy, safe file tools, fixed-argv command hardening,
 exact-action confirmations, debug commands, skill-registry hardening, and the
 generic AI tool loop are implemented. The deployed `/skills` and `/status`
-smoke for US-007 passed; the Bemo workflow now has a tested structured
-plan/create foundation and needs a deployed read-only list plus natural-language
-unconfirmed preview smoke.
+smoke for US-007 passed. The Bemo workflow now has a tested structured
+plan/create foundation, a read-only local Bemo smoke, and one attempted
+confirmed provider create that filled and saved the form but failed post-save
+verification; Telegram/provider preview smoke still gates closure. US-010 now
+has a small read-only scheduler slice with disabled Bemo config; platform smoke
+and any enabled production schedule remain separate proof.
 
 The external architecture comparison and local risk review are recorded in
 `docs/research/LOCAL_AGENT_ARCHITECTURE_REVIEW.md`. Its main conclusion is to

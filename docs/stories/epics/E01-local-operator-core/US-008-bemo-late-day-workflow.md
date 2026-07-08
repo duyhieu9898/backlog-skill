@@ -78,12 +78,17 @@ High-risk because it can write to an external Bemo service.
     pause-before-confirmed-effect behavior.
   - Bemo suite passes 6/6 with a fake create callback and no browser/provider
     access.
+  - `scripts/bin/harness-cli story verify-all` passed all configured story
+    verification commands on 2026-07-07.
   - Read-only local smoke parsed the current ignored `action-needed.json`:
     count=1, createDates=1, skippedDates=0; no provider write executed.
+  - A confirmed provider create was attempted on 2026-07-07. The automation
+    filled and saved the Bemo form, then failed post-save verification, so it
+    counts as orchestration proof but not successful provider-write proof.
   - Installed `my-agent` service restarted, rebuilt TypeScript, launched
     `node dist/bot.js`, and entered Telegram polling.
 - Remaining proof:
   - Complete human Telegram `/bemo_late` plus natural-language create preview
-    smoke through the AI tool router.
-    without confirming a real write.
-  - A real provider write requires a separate explicit user decision.
+    smoke through the AI tool router without confirming a real write.
+  - Successful real provider-write proof requires a separate explicit user
+    decision and post-save verification evidence.

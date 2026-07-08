@@ -8,6 +8,7 @@ exports.handleDebugCommand = handleDebugCommand;
 const commands_1 = require("../commands");
 const paths_1 = require("../config/paths");
 const repositories_1 = require("../storage/repositories");
+const scheduler_1 = require("../scheduler");
 const startedAt = Date.now();
 function formatLastRun(run) {
     if (!run)
@@ -60,6 +61,7 @@ function isDebugCommand(text) {
         normalized === "/debug" ||
         normalized.startsWith("/debug ") ||
         normalized === "/commands" ||
+        normalized === "/schedule" ||
         normalized === "/skills" ||
         normalized === "/help" ||
         normalized === "help");
@@ -76,6 +78,8 @@ function handleDebugCommand(text, registry) {
             "/last-error - latest failed command",
             "/debug <traceId> - raw trace events",
             "/commands - command aliases grouped by skill",
+            "/schedule - configured scheduled checks",
+            "/schedule run <name> - run one scheduled check now",
             "/skills - scanned skills",
             "",
             "Command aliases:",
@@ -84,6 +88,9 @@ function handleDebugCommand(text, registry) {
     }
     if (normalized === "/commands") {
         return formatCommands(catalog.allow);
+    }
+    if (normalized === "/schedule") {
+        return (0, scheduler_1.formatScheduleList)((0, scheduler_1.loadScheduledChecks)());
     }
     if (normalized === "/skills") {
         const skills = registry.listSkills();
@@ -103,10 +110,12 @@ function handleDebugCommand(text, registry) {
     }
     if (normalized === "/status") {
         const currentRun = (0, repositories_1.getJsonState)("runtime_state", "currentRun");
+        const lastScheduledRun = (0, repositories_1.getJsonState)("runtime_state", "lastScheduledRun");
         return [
             "Status",
             `uptime: ${formatDuration(Date.now() - startedAt)}`,
             `current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
+            `last scheduled: ${lastScheduledRun ? JSON.stringify(lastScheduledRun) : "none"}`,
             `pending confirmations: ${(0, repositories_1.countPendingConfirmations)()}`,
             `loaded commands: ${catalog.allow.length}`,
             `loaded skills: ${registry.listSkills().length}`,

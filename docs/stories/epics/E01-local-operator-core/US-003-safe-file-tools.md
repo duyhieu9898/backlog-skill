@@ -80,5 +80,5 @@ Implementation slice completed on 2026-07-03:
 
 Remaining proof before completion:
 
-- Telegram E2E after US-009 exposes validated file actions.
-- Installed systemd service cwd smoke proof.
+- Telegram/provider E2E after US-009 exposes validated file actions.
+- Installed systemd service cwd/path smoke proof for a non-mutating file action.

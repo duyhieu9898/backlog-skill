@@ -39,8 +39,12 @@ scripts/bin/harness-cli story verify US-008
 
 - `cd agent && npm test`: 42/42 pass.
 - `cd skills/bemo && npm test`: 6/6 pass.
+- `scripts/bin/harness-cli story verify-all`: all configured stories passed on
+  2026-07-07.
 - Read-only local Bemo smoke: current ignored `action-needed.json` parses with
   count=1 and skip-empty plan has createDates=1.
+- Confirmed provider create attempt on 2026-07-07 filled and saved the Bemo
+  form, then failed post-save verification; this is orchestration evidence, not
+  successful provider-write evidence.
 - Installed service restart/build/polling: pass.
-- No provider write was executed.
 - Human Telegram list/natural-language preview smoke remains pending.

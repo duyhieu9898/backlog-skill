@@ -71,7 +71,9 @@ None expected.
   - `/debug` without a trace ID returns explicit usage guidance.
   - `agent/README.md` documents every debug command.
 - Gaps:
-  - Telegram manual smoke proof is not recorded.
+  - Human-authored Telegram smoke proof is recorded for `/status` and
+    `/skills`; `/last`, `/last-error`, `/debug`, `/commands`, and `/help`
+    still need manual smoke evidence before closure.
 - Follow-up resolved by US-007:
   - `/status` now reports the skill-registry error count and details without
     preventing valid skills from loading.

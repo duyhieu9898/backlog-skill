@@ -15,11 +15,14 @@ const state_1 = require("./state");
 const client_1 = require("./telegram/client");
 const config_1 = require("./telegram/config");
 const utils_1 = require("./utils");
+const app_1 = require("./config/app");
+const scheduler_1 = require("./scheduler");
 (0, env_1.loadEnv)(node_path_1.default.join(paths_1.agentDir, ".env"));
 const telegramConfig = (0, config_1.loadTelegramConfig)();
 const telegram = new client_1.TelegramClient(telegramConfig);
 const skills = new registry_1.SkillRegistry();
 const router = new router_1.Router(skills);
+const agentConfig = (0, app_1.loadAgentConfig)();
 async function initializeOffset() {
     const updates = await telegram.getUpdates(null, 0);
     const offset = updates.length ? updates[updates.length - 1].update_id + 1 : 0;
@@ -40,6 +43,8 @@ async function poll() {
     if (offset === null) {
         offset = await initializeOffset();
     }
+    const scheduledRunner = new scheduler_1.ScheduledCheckRunner((0, scheduler_1.loadScheduledChecks)(agentConfig.schedules || []), telegramConfig.allowedChatId, (text) => telegram.sendMessage(telegramConfig.allowedChatId, text), agentConfig.runtime?.commandTimeoutMs);
+    scheduledRunner.start();
     while (true) {
         try {
             const updates = await telegram.getUpdates(offset, telegramConfig.pollTimeoutSeconds);

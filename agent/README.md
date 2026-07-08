@@ -21,6 +21,8 @@ chat identifiers must never have source-code fallbacks.
 - `/last-error` — latest command or tool failure with trace ID.
 - `/debug <traceId>` — trace events for one execution.
 - `/commands` — allowlisted commands grouped by skill.
+- `/schedule` — configured scheduled checks.
+- `/schedule run <name>` — run one configured scheduled check immediately.
 - `/skills` — loaded skill names and descriptions, plus any invalid skill
   metadata that was skipped during scanning.
 - `/help` — command summary.
@@ -102,6 +104,30 @@ is rejected if the stored action or preview changes.
 Commands may optionally declare `inputMode: "json-stdin"` and an `inputSchema`.
 Those commands are exposed to the AI as typed tools; arguments are schema
 validated before execution and sent over stdin instead of argv.
+
+## Scheduled Checks
+
+Configure read-only scheduled checks in `config.json`:
+
+```json
+{
+  "schedules": [
+    {
+      "name": "bemo-late",
+      "label": "Bemo late-day read-only check",
+      "command": "bemo.late-list",
+      "intervalMinutes": 60,
+      "enabled": false
+    }
+  ]
+}
+```
+
+Scheduled checks may reference only allowlisted commands that do not require
+confirmation and do not declare `externalSideEffect`. Enabled checks run from
+the background service and notify the allowlisted Telegram chat. `/schedule`
+lists configured checks, `/schedule run <name>` runs one immediately, and
+`/status` shows the latest scheduled result.
 
 ## Permission Policy
 

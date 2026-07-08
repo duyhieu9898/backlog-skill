@@ -74,6 +74,8 @@ High-risk because AI can initiate local and external actions through tools.
 - `cd agent && npm test` passes 42/42, including unknown tool rejection,
   JSON-stdin input validation, read-only prepare followed by confirmed create
   preview, and exact confirmed execution.
+- `scripts/bin/harness-cli story verify-all` passed all configured story
+  verification commands on 2026-07-07.
 - Installed `my-agent` service restarted successfully after rebuild and entered
   Telegram polling with the generic tool loop build.
 - Remaining proof: real Telegram natural-language smoke with configured AI

@@ -81,5 +81,6 @@ High-risk because this grants local execution authority.
   - Child processes inherit only a small non-secret environment allowlist.
   - Stale Backlog entries were removed because `skills/backlog` is absent.
 - Remaining proof:
-  - Telegram smoke test from the installed service.
-  - Platform proof for cwd and executable resolution under systemd.
+  - Full human Telegram confirm-and-execute smoke for an allowlisted command.
+  - Platform proof for cwd and executable resolution under systemd exists for
+    preview; execution proof remains open for a harmless command.

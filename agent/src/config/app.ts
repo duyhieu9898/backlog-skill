@@ -22,12 +22,21 @@ export type AgentConfig = {
   runtime?: {
     commandTimeoutMs?: number;
   };
+  schedules?: ScheduledCheckConfig[];
   permissions: {
     workspaceRoot: string;
     allowedReadRoots: string[];
     allowedWriteRoots: string[];
     deniedPaths: string[];
   };
+};
+
+export type ScheduledCheckConfig = {
+  name: string;
+  label?: string;
+  command: string;
+  intervalMinutes: number;
+  enabled?: boolean;
 };
 
 const defaultConfig: AgentConfig = {
@@ -47,6 +56,7 @@ const defaultConfig: AgentConfig = {
   runtime: {
     commandTimeoutMs: 10 * 60 * 1000,
   },
+  schedules: [],
   permissions: {
     workspaceRoot: repoDir,
     allowedReadRoots: [repoDir],
@@ -73,6 +83,7 @@ export function loadAgentConfig(): AgentConfig {
       ...defaultConfig.runtime,
       ...config.runtime,
     },
+    schedules: config.schedules || defaultConfig.schedules,
     permissions: {
       ...defaultConfig.permissions,
       ...config.permissions,

@@ -1,0 +1,124 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+
+const { buildCommandCatalog } = require("../dist/commands");
+const { Router } = require("../dist/core/router");
+const { SkillRegistry } = require("../dist/skills/registry");
+const { getJsonState } = require("../dist/storage/repositories");
+const {
+  findScheduledCheck,
+  formatScheduleList,
+  normalizeScheduledCheck,
+  runScheduledCheck,
+} = require("../dist/scheduler");
+
+function catalog(root) {
+  return buildCommandCatalog({
+    allow: [
+      {
+        name: "test.read",
+        label: "Read-only check",
+        cwd: root,
+        argv: [process.execPath, "-e", 'process.stdout.write("scheduled-ok")'],
+        requiresConfirmation: false,
+        externalSideEffect: false,
+      },
+      {
+        name: "test.write",
+        label: "Risky write",
+        cwd: root,
+        argv: [process.execPath, "-e", 'process.stdout.write("write")'],
+        requiresConfirmation: true,
+        externalSideEffect: true,
+      },
+    ],
+  });
+}
+
+function workspace(t) {
+  const root = fs.mkdtempSync(path.join(__dirname, "schedule-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+
+test("scheduled checks must reference read-only allowlisted commands", (t) => {
+  const root = workspace(t);
+  const commands = catalog(root);
+  const check = normalizeScheduledCheck(
+    {
+      name: "daily-read",
+      label: "Daily read",
+      command: "test.read",
+      intervalMinutes: 15,
+      enabled: true,
+    },
+    commands,
+  );
+
+  assert.equal(check.name, "daily-read");
+  assert.equal(check.label, "Daily read");
+  assert.equal(check.enabled, true);
+  assert.match(formatScheduleList([check]), /daily-read - Daily read \[enabled, every 15m\]/);
+  assert.throws(
+    () =>
+      normalizeScheduledCheck(
+        { name: "bad-write", command: "test.write", intervalMinutes: 15 },
+        commands,
+      ),
+    /read-only command/,
+  );
+  assert.throws(
+    () =>
+      normalizeScheduledCheck(
+        { name: "missing", command: "test.missing", intervalMinutes: 15 },
+        commands,
+      ),
+    /unknown command/,
+  );
+});
+
+test("scheduled run records traceable command result and last scheduled state", async (t) => {
+  const root = workspace(t);
+  const check = normalizeScheduledCheck(
+    { name: "manual-read", command: "test.read", intervalMinutes: 5 },
+    catalog(root),
+  );
+  const result = await runScheduledCheck({
+    check,
+    chatId: "schedule-test-chat",
+    defaultTimeoutMs: 5000,
+  });
+  const last = getJsonState("runtime_state", "lastScheduledRun");
+
+  assert.equal(result.status, "success");
+  assert.match(result.outputTail, /scheduled-ok/);
+  assert.equal(last.name, "manual-read");
+  assert.equal(last.traceId, result.traceId);
+});
+
+test("findScheduledCheck resolves named checks from supplied list", (t) => {
+  const root = workspace(t);
+  const check = normalizeScheduledCheck(
+    { name: "named-read", command: "test.read", intervalMinutes: 5 },
+    catalog(root),
+  );
+
+  assert.equal(findScheduledCheck("named-read", [check]), check);
+  assert.equal(findScheduledCheck("other", [check]), null);
+});
+
+test("Router exposes configured schedule listing", async () => {
+  const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
+  const reply = await router.route({
+    traceId: `schedule-list-${Date.now()}`,
+    provider: "telegram",
+    chatId: "schedule-list-chat",
+    userId: "test-user",
+    text: "/schedule",
+    timestamp: new Date(),
+  });
+
+  assert.match(reply, /bemo-late - Bemo late-day read-only check \[disabled, every 60m\]/);
+});

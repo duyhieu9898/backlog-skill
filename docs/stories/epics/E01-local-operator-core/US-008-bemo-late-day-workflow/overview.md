@@ -2,16 +2,18 @@
 
 ## Current Behavior
 
-The Bemo skill can sync attendance/time-off data and can create every record in
-`data/action-needed.json`. The Telegram agent can run fixed allowlisted
-commands, but it cannot select dates to skip or bind a confirmation to the
-filtered set of records.
+The Bemo skill can sync attendance/time-off data, list late-day candidates,
+prepare a digest-bound selected-record plan with skipped dates, and execute the
+selected create plan through JSON stdin after confirmation. The Telegram agent
+can run fixed allowlisted commands and the generic AI tool loop can compose a
+read-only prepare step into a confirmed create preview.
 
-## Target Behavior
+## Remaining Target Behavior
 
-The operator exposes a read-only late-list command and a typed create-preview
-flow. A user may name dates to skip; the preview shows skipped and create dates,
-and confirmation executes only the immutable selected plan.
+The deployed operator still needs human Telegram smoke showing `/bemo_late` and
+a natural-language create preview through the configured provider without
+confirming a real write. Successful provider-write proof is deliberately
+separate and requires explicit approval.
 
 ## Affected Users
 

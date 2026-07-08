@@ -25,6 +25,7 @@ const defaultConfig = {
     runtime: {
         commandTimeoutMs: 10 * 60 * 1000,
     },
+    schedules: [],
     permissions: {
         workspaceRoot: paths_1.repoDir,
         allowedReadRoots: [paths_1.repoDir],
@@ -51,6 +52,7 @@ function loadAgentConfig() {
             ...defaultConfig.runtime,
             ...config.runtime,
         },
+        schedules: config.schedules || defaultConfig.schedules,
         permissions: {
             ...defaultConfig.permissions,
             ...config.permissions,

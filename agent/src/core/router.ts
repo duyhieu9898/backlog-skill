@@ -21,6 +21,13 @@ import type { StandardMessage } from "../types/messages";
 import { AgentToolLoop } from "../tools/loop";
 import { handleDebugCommand, isDebugCommand } from "./debugCommands";
 import { presentCommandResult } from "./presenter";
+import {
+  findScheduledCheck,
+  formatScheduledCheckResult,
+  formatScheduleList,
+  loadScheduledChecks,
+  runScheduledCheck,
+} from "../scheduler";
 
 export class Router {
   private readonly hydrator: ContextHydrator;
@@ -68,6 +75,22 @@ export class Router {
   private async routeInner(message: StandardMessage): Promise<string> {
     const text = message.text.trim();
     const normalized = text.toLowerCase();
+
+    if (normalized === "/schedule") {
+      return formatScheduleList(loadScheduledChecks());
+    }
+
+    if (normalized.startsWith("/schedule run ")) {
+      const name = normalized.replace("/schedule run ", "").trim();
+      const check = findScheduledCheck(name);
+      if (!check) return `Scheduled check not found: ${name}`;
+      const result = await runScheduledCheck({
+        check,
+        chatId: message.chatId,
+        defaultTimeoutMs: this.commandTimeoutMs,
+      });
+      return formatScheduledCheckResult(result);
+    }
 
     if (isDebugCommand(text)) {
       log.info(

@@ -11,6 +11,7 @@ import {
   type TraceEventRow,
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
+import { formatScheduleList, loadScheduledChecks } from "../scheduler";
 
 const startedAt = Date.now();
 
@@ -66,6 +67,7 @@ export function isDebugCommand(text: string): boolean {
     normalized === "/debug" ||
     normalized.startsWith("/debug ") ||
     normalized === "/commands" ||
+    normalized === "/schedule" ||
     normalized === "/skills" ||
     normalized === "/help" ||
     normalized === "help"
@@ -85,6 +87,8 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
       "/last-error - latest failed command",
       "/debug <traceId> - raw trace events",
       "/commands - command aliases grouped by skill",
+      "/schedule - configured scheduled checks",
+      "/schedule run <name> - run one scheduled check now",
       "/skills - scanned skills",
       "",
       "Command aliases:",
@@ -94,6 +98,10 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
 
   if (normalized === "/commands") {
     return formatCommands(catalog.allow);
+  }
+
+  if (normalized === "/schedule") {
+    return formatScheduleList(loadScheduledChecks());
   }
 
   if (normalized === "/skills") {
@@ -114,10 +122,12 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
 
   if (normalized === "/status") {
     const currentRun = getJsonState<unknown>("runtime_state", "currentRun");
+    const lastScheduledRun = getJsonState<unknown>("runtime_state", "lastScheduledRun");
     return [
       "Status",
       `uptime: ${formatDuration(Date.now() - startedAt)}`,
       `current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
+      `last scheduled: ${lastScheduledRun ? JSON.stringify(lastScheduledRun) : "none"}`,
       `pending confirmations: ${countPendingConfirmations()}`,
       `loaded commands: ${catalog.allow.length}`,
       `loaded skills: ${registry.listSkills().length}`,

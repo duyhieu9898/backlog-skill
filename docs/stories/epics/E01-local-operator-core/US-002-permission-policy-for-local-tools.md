@@ -94,6 +94,7 @@ Implementation slice completed on 2026-07-03:
 
 Remaining proof before completion:
 
-- Telegram E2E must show a clear denied-file refusal once file tools are
-  routable.
-- Platform smoke proof should exercise the installed service cwd.
+- Telegram/provider E2E must show a clear denied-file refusal through the
+  routed file-tool path.
+- Platform proof for command cwd exists via installed-service command previews;
+  file-tool cwd/path proof under the installed service remains open.
