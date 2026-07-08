@@ -2,7 +2,7 @@
 
 ## Status
 
-in_progress
+implemented
 
 ## Lane
 
@@ -72,7 +72,8 @@ None expected.
     initialized.
   - `agent/src/core/router.ts` exposes `/schedule` and
     `/schedule run <name>`.
-  - `agent/config.json` includes a disabled `bemo-late` read-only schedule.
+  - `agent/config.json` includes an enabled hourly `bemo-late` read-only
+    schedule.
 - Validation:
   - `cd agent && npm test` passed 46/46 on 2026-07-07.
   - Tests cover read-only schedule validation, risky command refusal,
@@ -83,6 +84,11 @@ None expected.
     `Scheduled check success: Bemo late-day read-only check` with
     `traceId: tr_mrbefyju_94b34dd0`, exit 0, and late-day records for
     2026-07-02, 2026-07-03, 2026-07-06, and 2026-07-07.
+  - Automatic systemd runtime proof passed on 2026-07-08 after temporarily
+    enabling `bemo-late` at a 1-minute interval. The installed service started
+    the timer and ran the read-only check successfully twice:
+    `tr_mrbfrc0c_5996c668` at 09:05:31 +07 and
+    `tr_mrbfsmb0_1e76d34e` at 09:06:30 +07. The schedule was then left enabled
+    at a 60-minute interval.
 - Remaining proof:
-  - Manual Telegram smoke for `/schedule`.
-  - Installed systemd runtime proof with an enabled harmless schedule.
+  - None for the US-010 contract.

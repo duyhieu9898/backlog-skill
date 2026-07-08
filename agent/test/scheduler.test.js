@@ -120,5 +120,5 @@ test("Router exposes configured schedule listing", async () => {
     timestamp: new Date(),
   });
 
-  assert.match(reply, /bemo-late - Bemo late-day read-only check \[disabled, every 60m\]/);
+  assert.match(reply, /bemo-late - Bemo late-day read-only check \[enabled, every 60m\]/);
 });

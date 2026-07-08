@@ -23,7 +23,7 @@
       "label": "Bemo late-day read-only check",
       "command": "bemo.late-list",
       "intervalMinutes": 60,
-      "enabled": false
+      "enabled": true
     }
   ],
   "permissions": {
