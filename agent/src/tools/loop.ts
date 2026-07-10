@@ -56,7 +56,11 @@ export class AgentToolLoop {
     private readonly executor = new ToolExecutor(),
   ) {}
 
-  async run(message: StandardMessage, context: AiPromptContext): Promise<string> {
+  async run(
+    message: StandardMessage,
+    context: AiPromptContext,
+    onReplyMarkup?: (markup: unknown) => void,
+  ): Promise<string> {
     const steps: AiToolStep[] = [];
     const failures = new Map<string, number>();
     const tools = this.executor.definitions(context.toolScope);
@@ -94,6 +98,16 @@ export class AgentToolLoop {
           log.info(message.traceId, "ai.tool.confirmation_required", {
             toolName: prepared.call.name,
             confirmationKey: prepared.key,
+          });
+          onReplyMarkup?.({
+            inline_keyboard: [
+              [
+                {
+                  text: `✅ Xác nhận: ${prepared.key}`,
+                  callback_data: `confirm ${prepared.key} ${prepared.digest.slice(0, 12)}`,
+                },
+              ],
+            ],
           });
           return [
             `${prepared.key} cần xác nhận trước khi chạy.`,

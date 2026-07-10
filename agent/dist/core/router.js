@@ -134,7 +134,7 @@ class Router {
             return `Lệnh không tồn tại. Danh sách lệnh hỗ trợ:\n\n${(0, debugCommands_1.handleDebugCommand)("/commands", this.registry)}`;
         }
         const context = this.hydrator.hydrate(message);
-        return this.toolLoop.run(message, context.prompt);
+        return this.toolLoop.run(message, context.prompt, onReplyMarkup);
     }
     async prepareOrRun(message, action, onReplyMarkup) {
         const decision = (0, commands_1.evaluateCommandPermission)(action);

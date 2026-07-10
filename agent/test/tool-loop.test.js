@@ -241,14 +241,20 @@ test("AgentToolLoop composes a read-only command then pauses at one confirmed ef
     executor,
   );
   const input = message("prepare then create", "compose");
+  let replyMarkup;
 
-  const preview = await loop.run(input, "context");
+  const preview = await loop.run(input, "context", (markup) => {
+    replyMarkup = markup;
+  });
   const pending = getPendingConfirmation(input.chatId);
 
   assert.match(preview, /test\.create cần xác nhận/);
   assert.equal(fs.existsSync(marker), false);
   assert.ok(pending);
   const token = preview.match(/Approval: ([a-f0-9]{12})/)[1];
+  assert.deepEqual(replyMarkup, {
+    inline_keyboard: [[{ text: "✅ Xác nhận: test.create", callback_data: `confirm test.create ${token}` }]],
+  });
   const confirmed = await loop.consumeConfirmation({
     ...input,
     text: `confirm test.create ${token}`,

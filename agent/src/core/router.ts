@@ -172,7 +172,7 @@ export class Router {
     }
 
     const context = this.hydrator.hydrate(message);
-    return this.toolLoop.run(message, context.prompt);
+    return this.toolLoop.run(message, context.prompt, onReplyMarkup);
   }
 
   private async prepareOrRun(

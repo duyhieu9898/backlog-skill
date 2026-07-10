@@ -40,7 +40,7 @@ class AgentToolLoop {
         this.ai = ai;
         this.executor = executor;
     }
-    async run(message, context) {
+    async run(message, context, onReplyMarkup) {
         const steps = [];
         const failures = new Map();
         const tools = this.executor.definitions(context.toolScope);
@@ -78,6 +78,16 @@ class AgentToolLoop {
                     logger_1.log.info(message.traceId, "ai.tool.confirmation_required", {
                         toolName: prepared.call.name,
                         confirmationKey: prepared.key,
+                    });
+                    onReplyMarkup?.({
+                        inline_keyboard: [
+                            [
+                                {
+                                    text: `✅ Xác nhận: ${prepared.key}`,
+                                    callback_data: `confirm ${prepared.key} ${prepared.digest.slice(0, 12)}`,
+                                },
+                            ],
+                        ],
                     });
                     return [
                         `${prepared.key} cần xác nhận trước khi chạy.`,
