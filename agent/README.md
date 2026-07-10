@@ -132,6 +132,15 @@ only that skill's commands, while file-intent requests receive only file tools.
 Gemini uses native system instructions and JSON-schema output; server-side
 validation remains the final guard.
 
+Before committing agent changes, run:
+
+```bash
+npm run verify
+```
+
+It builds and runs the automated tests, then checks both staged and unstaged
+diffs for whitespace errors.
+
 ## Raw AI Interaction Logs
 
 Every provider request, response, and provider error is written as raw JSONL
