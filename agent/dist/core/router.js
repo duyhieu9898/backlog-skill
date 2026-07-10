@@ -21,7 +21,7 @@ class Router {
         this.hydrator = new hydrator_1.ContextHydrator(registry);
         this.commandTimeoutMs = (0, app_1.loadAgentConfig)().runtime?.commandTimeoutMs || 10 * 60 * 1000;
     }
-    async route(message) {
+    async route(message, onReplyMarkup) {
         logger_1.log.info(message.traceId, "route.started", {
             provider: message.provider,
             chatId: message.chatId,
@@ -35,7 +35,7 @@ class Router {
         });
         let reply;
         try {
-            reply = await this.routeInner(message);
+            reply = await this.routeInner(message, onReplyMarkup);
             (0, repositories_1.insertChatMessage)({
                 chatId: message.chatId,
                 userId: "agent",
@@ -51,7 +51,7 @@ class Router {
             throw error;
         }
     }
-    async routeInner(message) {
+    async routeInner(message, onReplyMarkup) {
         const text = message.text.trim();
         const normalized = text.toLowerCase();
         if (normalized === "/schedule") {
@@ -92,6 +92,18 @@ class Router {
                 payload: { scheduleUpdate: versionedScheduleUpdate, preview, digest },
                 expiresAt,
             });
+            if (onReplyMarkup) {
+                onReplyMarkup({
+                    inline_keyboard: [
+                        [
+                            {
+                                text: `✅ Xác nhận Update Schedule`,
+                                callback_data: `confirm schedule.${scheduleUpdate.action}.${scheduleUpdate.name} ${digest.slice(0, 12)}`,
+                            },
+                        ],
+                    ],
+                });
+            }
             return [
                 `Schedule update needs confirmation.`,
                 `Action: ${scheduleUpdate.action}`,
@@ -116,7 +128,7 @@ class Router {
         const action = catalog.byAlias[normalized];
         if (action) {
             await this.cancelPending(message.chatId);
-            return this.prepareOrRun(message, action);
+            return this.prepareOrRun(message, action, onReplyMarkup);
         }
         if (normalized.startsWith("/")) {
             return `Lệnh không tồn tại. Danh sách lệnh hỗ trợ:\n\n${(0, debugCommands_1.handleDebugCommand)("/commands", this.registry)}`;
@@ -124,7 +136,7 @@ class Router {
         const context = this.hydrator.hydrate(message);
         return this.toolLoop.run(message, this.hydrator.toPromptSections(context));
     }
-    async prepareOrRun(message, action) {
+    async prepareOrRun(message, action, onReplyMarkup) {
         const decision = (0, commands_1.evaluateCommandPermission)(action);
         if (decision.outcome === "deny") {
             return `Từ chối [${decision.reasonCode}]: ${decision.reason}`;
@@ -140,6 +152,18 @@ class Router {
                 payload: { action, preview, digest },
                 expiresAt,
             });
+            if (onReplyMarkup) {
+                onReplyMarkup({
+                    inline_keyboard: [
+                        [
+                            {
+                                text: `✅ Xác nhận: ${action.label}`,
+                                callback_data: `confirm ${action.name || action.label} ${digest.slice(0, 12)}`,
+                            },
+                        ],
+                    ],
+                });
+            }
             return [
                 `${action.label} cần xác nhận trước khi chạy.`,
                 `Executable: ${preview.executable}`,
@@ -153,15 +177,24 @@ class Router {
         return this.run(message, action, false);
     }
     async consumeConfirmation(message) {
-        const confirmationText = message.text.trim().toLowerCase();
-        if (!confirmationText.startsWith("confirm"))
+        const text = message.text.trim().toLowerCase();
+        // Check if it's a confirmation message
+        const isShortConfirm = text === "y" || text === "yes" || text === "confirm";
+        const matchTokenOnly = text.match(/^confirm\s+([a-f0-9]{12})$/);
+        const matchFull = text.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
+        if (!isShortConfirm && !matchTokenOnly && !matchFull) {
+            if (text.startsWith("confirm")) {
+                return "Confirmation cần command name và approval token từ preview, hoặc chỉ cần gõ 'confirm', 'y', 'yes'.";
+            }
             return null;
-        const match = confirmationText.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
-        if (!match)
-            return "Confirmation cần command name và approval token từ preview.";
+        }
         const pending = (0, repositories_1.getPendingConfirmation)(message.chatId);
-        if (!pending)
-            return "Không có confirmation nào đang chờ.";
+        if (!pending) {
+            if (text.startsWith("confirm") || text === "y" || text === "yes") {
+                return "Không có confirmation nào đang chờ.";
+            }
+            return null;
+        }
         if (pending.expires_at <= (0, repositories_1.nowIso)()) {
             (0, repositories_1.deletePendingConfirmation)(message.chatId);
             return "Confirmation đã hết hạn. Gửi lại command để tạo confirmation mới.";
@@ -175,9 +208,18 @@ class Router {
                 if (payload.digest !== recomputedDigest) {
                     throw new Error("Pending schedule update digest mismatch.");
                 }
-                if (pending.command_name.toLowerCase() !== match[1] || payload.digest.slice(0, 12) !== match[2]) {
-                    return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+                // Match check
+                if (matchFull) {
+                    if (pending.command_name.toLowerCase() !== matchFull[1] || payload.digest.slice(0, 12) !== matchFull[2]) {
+                        return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+                    }
                 }
+                else if (matchTokenOnly) {
+                    if (payload.digest.slice(0, 12) !== matchTokenOnly[1]) {
+                        return `Confirmation token không khớp.`;
+                    }
+                }
+                // If isShortConfirm (just "confirm", "y", "yes"), we auto-match without token check.
                 (0, repositories_1.deletePendingConfirmation)(message.chatId);
                 return (0, scheduler_1.applyScheduleUpdate)(payload.scheduleUpdate);
             }
@@ -197,8 +239,16 @@ class Router {
             });
             return "Confirmation không còn hợp lệ vì action đã thay đổi. Gửi lại command để tạo preview mới.";
         }
-        if (pending.command_name.toLowerCase() !== match[1] || payload.digest.slice(0, 12) !== match[2]) {
-            return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+        // Match check for commands
+        if (matchFull) {
+            if (pending.command_name.toLowerCase() !== matchFull[1] || payload.digest.slice(0, 12) !== matchFull[2]) {
+                return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+            }
+        }
+        else if (matchTokenOnly) {
+            if (payload.digest.slice(0, 12) !== matchTokenOnly[1]) {
+                return `Confirmation token không khớp.`;
+            }
         }
         (0, repositories_1.deletePendingConfirmation)(message.chatId);
         return this.run(message, payload.action, true);

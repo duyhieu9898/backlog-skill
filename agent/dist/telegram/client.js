@@ -9,12 +9,15 @@ class TelegramClient {
     async deleteWebhook() {
         await this.request("deleteWebhook", {});
     }
-    async sendMessage(chatId, text) {
-        for (const chunk of splitTelegramText(text)) {
+    async sendMessage(chatId, text, replyMarkup) {
+        const chunks = splitTelegramText(text);
+        for (let i = 0; i < chunks.length; i++) {
+            const isLast = i === chunks.length - 1;
             await this.request("sendMessage", {
                 chat_id: chatId,
-                text: chunk,
+                text: chunks[i],
                 disable_web_page_preview: true,
+                reply_markup: isLast ? replyMarkup : undefined,
             });
         }
     }
@@ -22,9 +25,21 @@ class TelegramClient {
         const result = await this.request("getUpdates", {
             offset: offset ?? undefined,
             timeout,
-            allowed_updates: ["message"],
+            allowed_updates: ["message", "callback_query"],
         });
         return result || [];
+    }
+    async answerCallbackQuery(callbackQueryId, text) {
+        await this.request("answerCallbackQuery", {
+            callback_query_id: callbackQueryId,
+            text,
+        });
+    }
+    async sendChatAction(chatId, action = "typing") {
+        await this.request("sendChatAction", {
+            chat_id: chatId,
+            action,
+        });
     }
     async request(method, payload) {
         const response = await fetch(`https://api.telegram.org/bot${this.config.botToken}/${method}`, {

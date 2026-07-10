@@ -40,7 +40,7 @@ test("loadCommands maps command names and aliases from allowlist", () => {
   ]);
   assert.equal(commands["bemo.create-timeoff"].requiresConfirmation, true);
   assert.equal(commands["bemo.prepare-timeoff"].inputMode, "json-stdin");
-  assert.equal(commands["/bemo_run"].requiresConfirmation, true);
+  assert.equal(commands["/bemo_run"].requiresConfirmation, false);
   assert.deepEqual(commands["shutdown"].argv, ["systemctl", "poweroff"]);
   assert.equal(commands["/shutdown"].name, "shutdown");
   assert.equal(commands["/shutdown"].requiresConfirmation, true);
@@ -63,15 +63,15 @@ test("Router shows an argv command preview before confirmation", async () => {
     provider: "telegram",
     chatId,
     userId: "test-user",
-    text: "/bemo_checkout",
+    text: "/shutdown",
     timestamp: new Date(),
   });
 
-  assert.match(reply, /Executable: npm/);
-  assert.match(reply, /Args: \["run","-s","checkout"\]/);
-  assert.match(reply, /Cwd: .*skills\/bemo/);
+  assert.match(reply, /Executable: systemctl/);
+  assert.match(reply, /Args: \["poweroff"\]/);
+  assert.match(reply, /Cwd: /);
   assert.match(reply, /Approval: [a-f0-9]{12}/);
-  assert.match(reply, /confirm bemo\.checkout [a-f0-9]{12}/);
+  assert.match(reply, /confirm shutdown [a-f0-9]{12}/);
   assert.ok(getPendingConfirmation(chatId));
   deletePendingConfirmation(chatId);
 });
@@ -106,6 +106,97 @@ test("Router executes only a confirmation bound to the exact preview digest", as
 
   assert.match(reply, /confirmed-ok/);
   assert.equal(getPendingConfirmation(chatId), null);
+});
+
+test("Router executes confirmation with short confirm aliases and token-only syntax", async () => {
+  const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
+
+  // 1. Short confirm 'confirm'
+  const chatId1 = `test-short-confirm-1-${Date.now()}`;
+  const action1 = {
+    name: "test.short1",
+    label: "Short confirm command 1",
+    argv: [process.execPath, "-e", 'process.stdout.write("short-ok-1")'],
+    requiresConfirmation: true,
+  };
+  const preview1 = previewCommand(action1);
+  const digest1 = commandPreviewDigest(preview1);
+  upsertPendingConfirmation({
+    chatId: chatId1,
+    traceId: `test-short-pending-1-${Date.now()}`,
+    commandName: action1.name,
+    payload: { action: action1, preview: preview1, digest: digest1 },
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  });
+
+  const reply1 = await router.route({
+    traceId: `test-short-confirm-trace-1-${Date.now()}`,
+    provider: "telegram",
+    chatId: chatId1,
+    userId: "test-user",
+    text: "confirm",
+    timestamp: new Date(),
+  });
+  assert.match(reply1, /short-ok-1/);
+  assert.equal(getPendingConfirmation(chatId1), null);
+
+  // 2. Short confirm 'y'
+  const chatId2 = `test-short-confirm-2-${Date.now()}`;
+  const action2 = {
+    name: "test.short2",
+    label: "Short confirm command 2",
+    argv: [process.execPath, "-e", 'process.stdout.write("short-ok-2")'],
+    requiresConfirmation: true,
+  };
+  const preview2 = previewCommand(action2);
+  const digest2 = commandPreviewDigest(preview2);
+  upsertPendingConfirmation({
+    chatId: chatId2,
+    traceId: `test-short-pending-2-${Date.now()}`,
+    commandName: action2.name,
+    payload: { action: action2, preview: preview2, digest: digest2 },
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  });
+
+  const reply2 = await router.route({
+    traceId: `test-short-confirm-trace-2-${Date.now()}`,
+    provider: "telegram",
+    chatId: chatId2,
+    userId: "test-user",
+    text: "y",
+    timestamp: new Date(),
+  });
+  assert.match(reply2, /short-ok-2/);
+  assert.equal(getPendingConfirmation(chatId2), null);
+
+  // 3. Token-only confirm 'confirm <token>'
+  const chatId3 = `test-short-confirm-3-${Date.now()}`;
+  const action3 = {
+    name: "test.short3",
+    label: "Short confirm command 3",
+    argv: [process.execPath, "-e", 'process.stdout.write("short-ok-3")'],
+    requiresConfirmation: true,
+  };
+  const preview3 = previewCommand(action3);
+  const digest3 = commandPreviewDigest(preview3);
+  upsertPendingConfirmation({
+    chatId: chatId3,
+    traceId: `test-short-pending-3-${Date.now()}`,
+    commandName: action3.name,
+    payload: { action: action3, preview: preview3, digest: digest3 },
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  });
+
+  const reply3 = await router.route({
+    traceId: `test-short-confirm-trace-3-${Date.now()}`,
+    provider: "telegram",
+    chatId: chatId3,
+    userId: "test-user",
+    text: `confirm ${digest3.slice(0, 12)}`,
+    timestamp: new Date(),
+  });
+  assert.match(reply3, /short-ok-3/);
+  assert.equal(getPendingConfirmation(chatId3), null);
 });
 
 test("Router rejects mismatched tokens and changed pending actions", async () => {

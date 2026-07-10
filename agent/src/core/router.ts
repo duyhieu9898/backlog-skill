@@ -46,7 +46,7 @@ export class Router {
     this.commandTimeoutMs = loadAgentConfig().runtime?.commandTimeoutMs || 10 * 60 * 1000;
   }
 
-  async route(message: StandardMessage): Promise<string> {
+  async route(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void): Promise<string> {
     log.info(message.traceId, "route.started", {
       provider: message.provider,
       chatId: message.chatId,
@@ -61,7 +61,7 @@ export class Router {
 
     let reply: string;
     try {
-      reply = await this.routeInner(message);
+      reply = await this.routeInner(message, onReplyMarkup);
       insertChatMessage({
         chatId: message.chatId,
         userId: "agent",
@@ -77,7 +77,7 @@ export class Router {
     }
   }
 
-  private async routeInner(message: StandardMessage): Promise<string> {
+  private async routeInner(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void): Promise<string> {
     const text = message.text.trim();
     const normalized = text.toLowerCase();
 
@@ -121,6 +121,20 @@ export class Router {
         payload: { scheduleUpdate: versionedScheduleUpdate, preview, digest },
         expiresAt,
       });
+
+      if (onReplyMarkup) {
+        onReplyMarkup({
+          inline_keyboard: [
+            [
+              {
+                text: `✅ Xác nhận Update Schedule`,
+                callback_data: `confirm schedule.${scheduleUpdate.action}.${scheduleUpdate.name} ${digest.slice(0, 12)}`,
+              },
+            ],
+          ],
+        });
+      }
+
       return [
         `Schedule update needs confirmation.`,
         `Action: ${scheduleUpdate.action}`,
@@ -150,7 +164,7 @@ export class Router {
     const action = catalog.byAlias[normalized];
     if (action) {
       await this.cancelPending(message.chatId);
-      return this.prepareOrRun(message, action);
+      return this.prepareOrRun(message, action, onReplyMarkup);
     }
 
     if (normalized.startsWith("/")) {
@@ -164,6 +178,7 @@ export class Router {
   private async prepareOrRun(
     message: StandardMessage,
     action: AgentCommand,
+    onReplyMarkup?: (markup: unknown) => void,
   ): Promise<string> {
     const decision = evaluateCommandPermission(action);
     if (decision.outcome === "deny") {
@@ -180,6 +195,20 @@ export class Router {
         payload: { action, preview, digest },
         expiresAt,
       });
+
+      if (onReplyMarkup) {
+        onReplyMarkup({
+          inline_keyboard: [
+            [
+              {
+                text: `✅ Xác nhận: ${action.label}`,
+                callback_data: `confirm ${action.name || action.label} ${digest.slice(0, 12)}`,
+              },
+            ],
+          ],
+        });
+      }
+
       return [
         `${action.label} cần xác nhận trước khi chạy.`,
         `Executable: ${preview.executable}`,
@@ -195,17 +224,33 @@ export class Router {
   }
 
   private async consumeConfirmation(message: StandardMessage): Promise<string | null> {
-    const confirmationText = message.text.trim().toLowerCase();
-    if (!confirmationText.startsWith("confirm")) return null;
-    const match = confirmationText.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
-    if (!match) return "Confirmation cần command name và approval token từ preview.";
+    const text = message.text.trim().toLowerCase();
+
+    // Check if it's a confirmation message
+    const isShortConfirm = text === "y" || text === "yes" || text === "confirm";
+    const matchTokenOnly = text.match(/^confirm\s+([a-f0-9]{12})$/);
+    const matchFull = text.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
+
+    if (!isShortConfirm && !matchTokenOnly && !matchFull) {
+      if (text.startsWith("confirm")) {
+        return "Confirmation cần command name và approval token từ preview, hoặc chỉ cần gõ 'confirm', 'y', 'yes'.";
+      }
+      return null;
+    }
 
     const pending = getPendingConfirmation(message.chatId);
-    if (!pending) return "Không có confirmation nào đang chờ.";
+    if (!pending) {
+      if (text.startsWith("confirm") || text === "y" || text === "yes") {
+        return "Không có confirmation nào đang chờ.";
+      }
+      return null;
+    }
+
     if (pending.expires_at <= nowIso()) {
       deletePendingConfirmation(message.chatId);
       return "Confirmation đã hết hạn. Gửi lại command để tạo confirmation mới.";
     }
+
     let payload: {
       action: AgentCommand;
       preview: ReturnType<typeof previewCommand>;
@@ -220,12 +265,23 @@ export class Router {
         if (payload.digest !== recomputedDigest) {
           throw new Error("Pending schedule update digest mismatch.");
         }
-        if (pending.command_name.toLowerCase() !== match[1] || payload.digest.slice(0, 12) !== match[2]) {
-          return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+
+        // Match check
+        if (matchFull) {
+          if (pending.command_name.toLowerCase() !== matchFull[1] || payload.digest.slice(0, 12) !== matchFull[2]) {
+            return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+          }
+        } else if (matchTokenOnly) {
+          if (payload.digest.slice(0, 12) !== matchTokenOnly[1]) {
+            return `Confirmation token không khớp.`;
+          }
         }
+        // If isShortConfirm (just "confirm", "y", "yes"), we auto-match without token check.
+
         deletePendingConfirmation(message.chatId);
         return applyScheduleUpdate(payload.scheduleUpdate);
       }
+
       if (!payload.action || !payload.preview || typeof payload.digest !== "string") {
         throw new Error("Pending confirmation payload is incomplete.");
       }
@@ -241,8 +297,16 @@ export class Router {
       });
       return "Confirmation không còn hợp lệ vì action đã thay đổi. Gửi lại command để tạo preview mới.";
     }
-    if (pending.command_name.toLowerCase() !== match[1] || payload.digest.slice(0, 12) !== match[2]) {
-      return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+
+    // Match check for commands
+    if (matchFull) {
+      if (pending.command_name.toLowerCase() !== matchFull[1] || payload.digest.slice(0, 12) !== matchFull[2]) {
+        return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
+      }
+    } else if (matchTokenOnly) {
+      if (payload.digest.slice(0, 12) !== matchTokenOnly[1]) {
+        return `Confirmation token không khớp.`;
+      }
     }
 
     deletePendingConfirmation(message.chatId);

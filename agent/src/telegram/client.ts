@@ -7,9 +7,17 @@ export type TelegramMessage = {
   date?: number;
 };
 
+export type TelegramCallbackQuery = {
+  id: string;
+  from: { id: number | string };
+  message?: TelegramMessage;
+  data?: string;
+};
+
 export type TelegramUpdate = {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 };
 
 type TelegramResponse<T> = {
@@ -25,12 +33,15 @@ export class TelegramClient {
     await this.request("deleteWebhook", {});
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
-    for (const chunk of splitTelegramText(text)) {
+  async sendMessage(chatId: string, text: string, replyMarkup?: unknown): Promise<void> {
+    const chunks = splitTelegramText(text);
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
       await this.request("sendMessage", {
         chat_id: chatId,
-        text: chunk,
+        text: chunks[i],
         disable_web_page_preview: true,
+        reply_markup: isLast ? replyMarkup : undefined,
       });
     }
   }
@@ -39,10 +50,24 @@ export class TelegramClient {
     const result = await this.request<TelegramUpdate[]>("getUpdates", {
       offset: offset ?? undefined,
       timeout,
-      allowed_updates: ["message"],
+      allowed_updates: ["message", "callback_query"],
     });
 
     return result || [];
+  }
+
+  async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+    await this.request("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      text,
+    });
+  }
+
+  async sendChatAction(chatId: string, action: "typing" | "upload_document" = "typing"): Promise<void> {
+    await this.request("sendChatAction", {
+      chat_id: chatId,
+      action,
+    });
   }
 
   private async request<T>(method: string, payload: Record<string, unknown>): Promise<T> {

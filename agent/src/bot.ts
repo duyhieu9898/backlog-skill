@@ -70,15 +70,33 @@ async function poll(): Promise<void> {
           continue;
         }
 
-        log.info(standard.traceId, "message.received", { adapter: "telegram" });
+        if (update.callback_query) {
+          telegram.answerCallbackQuery(update.callback_query.id, "Đang xử lý...").catch((e) => {
+            log.error(standard.traceId, "telegram.answerCallbackQuery.failed", { error: e });
+          });
+        }
+
+        const typingInterval = setInterval(() => {
+          telegram.sendChatAction(standard.chatId, "typing").catch(() => {});
+        }, 4000);
+        telegram.sendChatAction(standard.chatId, "typing").catch(() => {});
+
+        let replyMarkup: unknown;
         router
-          .route(standard)
+          .route(standard, (markup) => {
+            replyMarkup = markup;
+          })
           .then(async (reply) => {
-            log.info(standard.traceId, "telegram.reply.started", {});
-            await telegram.sendMessage(standard.chatId, reply);
+            clearInterval(typingInterval);
+            log.info(standard.traceId, "telegram.reply.started", {
+              hasReplyMarkup: replyMarkup !== undefined,
+              replyMarkup: replyMarkup ?? null,
+            });
+            await telegram.sendMessage(standard.chatId, reply, replyMarkup);
             log.info(standard.traceId, "telegram.reply.completed", {});
           })
           .catch(async (error: unknown) => {
+            clearInterval(typingInterval);
             const messageText = error instanceof Error ? error.message : String(error);
             log.error(standard.traceId, "telegram.reply.failed", { error });
             await telegram.sendMessage(standard.chatId, `Agent lỗi\ntraceId: ${standard.traceId}\n\n${messageText}`);

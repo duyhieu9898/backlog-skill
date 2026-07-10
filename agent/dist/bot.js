@@ -60,15 +60,31 @@ async function poll() {
                     await telegram.sendMessage(standard.chatId, "không có quyền");
                     continue;
                 }
-                logger_1.log.info(standard.traceId, "message.received", { adapter: "telegram" });
+                if (update.callback_query) {
+                    telegram.answerCallbackQuery(update.callback_query.id, "Đang xử lý...").catch((e) => {
+                        logger_1.log.error(standard.traceId, "telegram.answerCallbackQuery.failed", { error: e });
+                    });
+                }
+                const typingInterval = setInterval(() => {
+                    telegram.sendChatAction(standard.chatId, "typing").catch(() => { });
+                }, 4000);
+                telegram.sendChatAction(standard.chatId, "typing").catch(() => { });
+                let replyMarkup;
                 router
-                    .route(standard)
+                    .route(standard, (markup) => {
+                    replyMarkup = markup;
+                })
                     .then(async (reply) => {
-                    logger_1.log.info(standard.traceId, "telegram.reply.started", {});
-                    await telegram.sendMessage(standard.chatId, reply);
+                    clearInterval(typingInterval);
+                    logger_1.log.info(standard.traceId, "telegram.reply.started", {
+                        hasReplyMarkup: replyMarkup !== undefined,
+                        replyMarkup: replyMarkup ?? null,
+                    });
+                    await telegram.sendMessage(standard.chatId, reply, replyMarkup);
                     logger_1.log.info(standard.traceId, "telegram.reply.completed", {});
                 })
                     .catch(async (error) => {
+                    clearInterval(typingInterval);
                     const messageText = error instanceof Error ? error.message : String(error);
                     logger_1.log.error(standard.traceId, "telegram.reply.failed", { error });
                     await telegram.sendMessage(standard.chatId, `Agent lỗi\ntraceId: ${standard.traceId}\n\n${messageText}`);
