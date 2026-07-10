@@ -16,13 +16,74 @@ export type AiToolStep = {
   result: unknown;
 };
 
+export type AiChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type AiRuntimeContext = {
+  currentTime: string;
+  timezone: string;
+  locale: string;
+};
+
+export type AiToolScope = {
+  skillSlug?: string;
+  includeFileTools: boolean;
+};
+
+export type AiPromptContext = {
+  history: AiChatTurn[];
+  runtime: AiRuntimeContext;
+  selectedSkill?: {
+    slug: string;
+    name: string;
+    description: string;
+    instructions?: string;
+  };
+  toolScope?: AiToolScope;
+};
+
 export type AiRequest = {
   system: string;
-  context: string;
+  context: AiPromptContext;
   userMessage: string;
   tools: AiToolDefinition[];
   steps: AiToolStep[];
 };
+
+export const aiResponseJsonSchema = {
+  anyOf: [
+    {
+      type: "object",
+      properties: { text: { type: "string" } },
+      required: ["text"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: { clarification: { type: "string" } },
+      required: ["clarification"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        toolCall: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            arguments: { type: "object" },
+          },
+          required: ["name", "arguments"],
+          additionalProperties: false,
+        },
+      },
+      required: ["toolCall"],
+      additionalProperties: false,
+    },
+  ],
+} as const;
 
 export type AiResponse = {
   text?: string;
@@ -36,6 +97,10 @@ export function validateAiResponse(value: unknown): AiResponse {
     throw new Error("AI response must be a JSON object.");
   }
   const response = value as Record<string, unknown>;
+  const allowedKeys = new Set(["text", "clarification", "toolCall", "usage"]);
+  if (Object.keys(response).some((key) => !allowedKeys.has(key))) {
+    throw new Error("AI response contains unsupported fields.");
+  }
   const outcomes = [response.text, response.clarification, response.toolCall].filter(
     (item) => item !== undefined,
   );

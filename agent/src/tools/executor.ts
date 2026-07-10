@@ -9,7 +9,7 @@ import {
   withCommandInput,
   type AgentCommand,
 } from "../commands";
-import type { AiToolCall, AiToolDefinition } from "../brain/provider";
+import type { AiToolCall, AiToolDefinition, AiToolScope } from "../brain/provider";
 import { FileTools } from "./files";
 import type { FileToolAction, ToolResult } from "./contracts";
 import { validateJsonSchema, type JsonSchema } from "./schema";
@@ -125,8 +125,13 @@ export class ToolExecutor {
     private readonly catalogLoader = loadCommandCatalog,
   ) {}
 
-  definitions(): AiToolDefinition[] {
-    const commandDefinitions = this.catalogLoader().allow.map<AiToolDefinition>((command) => ({
+  definitions(scope?: AiToolScope): AiToolDefinition[] {
+    const commands = scope?.skillSlug
+      ? this.catalogLoader().allow.filter((command) => command.skillSlug === scope.skillSlug)
+      : scope
+        ? []
+        : this.catalogLoader().allow;
+    const commandDefinitions = commands.map<AiToolDefinition>((command) => ({
       name: `command.${command.name}`,
       description: `${command.label}. Fixed argv; ${
         command.requiresConfirmation || command.externalSideEffect
@@ -135,11 +140,12 @@ export class ToolExecutor {
       }.`,
       inputSchema: command.inputSchema || emptyObjectSchema,
     }));
-    return [...fileDefinitions, ...commandDefinitions].sort((a, b) => a.name.localeCompare(b.name));
+    const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
+    return [...files, ...commandDefinitions].sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  prepare(call: AiToolCall, traceId: string): PreparedToolCall {
-    const definition = this.definitions().find((tool) => tool.name === call.name);
+  prepare(call: AiToolCall, traceId: string, definitions = this.definitions()): PreparedToolCall {
+    const definition = definitions.find((tool) => tool.name === call.name);
     if (!definition) throw new Error(`Unknown tool: ${call.name}`);
     const errors = validateJsonSchema(definition.inputSchema, call.arguments, "arguments");
     if (errors.length) throw new Error(`Invalid tool arguments for ${call.name}: ${errors.join(" ")}`);

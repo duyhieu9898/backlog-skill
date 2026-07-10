@@ -110,6 +110,28 @@ Commands may optionally declare `inputMode: "json-stdin"` and an `inputSchema`.
 Those commands are exposed to the AI as typed tools; arguments are schema
 validated before execution and sent over stdin instead of argv.
 
+## AI Tool Retry Guard
+
+The AI tool loop allows one retry of the same tool call after a failure. If the
+same tool name, arguments, and failure code occur twice in one request, the
+loop stops immediately instead of spending the remaining tool steps. The reply
+includes the failed tool and code so the user can adjust the request or choose
+a different action.
+
+Transient AI-provider failures (`429`, `5xx`, timeouts, or connection resets)
+retry at most twice with short backoff delays. Invalid or permanent provider
+errors do not retry.
+
+## AI Prompt Protocol
+
+Every provider receives the same structured prompt context: a system policy,
+role-preserved and redacted conversation history, the current user message,
+and runtime time, timezone, and locale. The current message is never repeated
+in history. General conversation receives no tools; a matched skill receives
+only that skill's commands, while file-intent requests receive only file tools.
+Gemini uses native system instructions and JSON-schema output; server-side
+validation remains the final guard.
+
 ## Scheduled Checks
 
 Configure read-only scheduled checks in `config.json`:

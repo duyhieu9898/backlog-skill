@@ -6,9 +6,32 @@ const logger_1 = require("../logging/logger");
 const repositories_1 = require("../storage/repositories");
 const executor_1 = require("./executor");
 const MAX_TOOL_STEPS = 4;
+const MAX_IDENTICAL_FAILURES = 2;
 function formatResult(result) {
     const data = result.data === undefined ? "" : `\n${JSON.stringify(result.data, null, 2)}`;
     return `${result.ok ? "Tool completed" : "Tool failed"} [${result.code}]\n${result.summary}${data}`;
+}
+function stableJson(value) {
+    if (Array.isArray(value))
+        return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        const object = value;
+        return `{${Object.keys(object)
+            .sort()
+            .map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value);
+}
+function failureKey(call, result) {
+    return `${call.name}:${stableJson(call.arguments)}:${result.code}`;
+}
+function repeatedFailureMessage(call, result) {
+    return [
+        `Đã dừng sau ${MAX_IDENTICAL_FAILURES} lần lỗi lặp lại cho ${call.name} [${result.code}] để tránh hao token.`,
+        result.summary,
+        "Hãy thay đổi tham số, chọn tool khác, hoặc gửi yêu cầu rõ hơn trước khi thử lại.",
+    ].join("\n");
 }
 class AgentToolLoop {
     ai;
@@ -19,7 +42,8 @@ class AgentToolLoop {
     }
     async run(message, context) {
         const steps = [];
-        const tools = this.executor.definitions();
+        const failures = new Map();
+        const tools = this.executor.definitions(context.toolScope);
         for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
             const response = await this.ai.complete(message.traceId, context, message.text, tools, steps);
             if (response.clarification) {
@@ -35,7 +59,7 @@ class AgentToolLoop {
                 toolName: response.toolCall.name,
             });
             try {
-                const prepared = this.executor.prepare(response.toolCall, message.traceId);
+                const prepared = this.executor.prepare(response.toolCall, message.traceId, tools);
                 if (prepared.requiresConfirmation) {
                     const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
                     const pending = {
@@ -73,6 +97,20 @@ class AgentToolLoop {
                     ok: result.ok,
                     code: result.code,
                 });
+                if (!result.ok) {
+                    const key = failureKey(response.toolCall, result);
+                    const attempts = (failures.get(key) || 0) + 1;
+                    failures.set(key, attempts);
+                    if (attempts >= MAX_IDENTICAL_FAILURES) {
+                        logger_1.log.warn(message.traceId, "ai.tool.repeated_failure_stopped", {
+                            step: index,
+                            toolName: response.toolCall.name,
+                            code: result.code,
+                            attempts,
+                        });
+                        return repeatedFailureMessage(response.toolCall, result);
+                    }
+                }
             }
             catch (error) {
                 const result = {
@@ -86,6 +124,18 @@ class AgentToolLoop {
                     toolName: response.toolCall.name,
                     reason: result.summary,
                 });
+                const key = failureKey(response.toolCall, result);
+                const attempts = (failures.get(key) || 0) + 1;
+                failures.set(key, attempts);
+                if (attempts >= MAX_IDENTICAL_FAILURES) {
+                    logger_1.log.warn(message.traceId, "ai.tool.repeated_failure_stopped", {
+                        step: index,
+                        toolName: response.toolCall.name,
+                        code: result.code,
+                        attempts,
+                    });
+                    return repeatedFailureMessage(response.toolCall, result);
+                }
             }
         }
         return `Đã dừng sau ${MAX_TOOL_STEPS} bước tool để tránh vòng lặp tự động. Hãy thu hẹp yêu cầu hoặc thử lại.`;

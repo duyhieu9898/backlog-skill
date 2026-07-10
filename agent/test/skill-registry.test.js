@@ -100,14 +100,11 @@ test("ContextHydrator loads instructions only for a selected skill", () => {
   const selected = hydrator.hydrate(message);
   const general = hydrator.hydrate({ ...message, text: "xin chào" });
 
-  assert.match(selected.selectedSkillContent, /# Bemo Automation/);
-  assert.match(selected.selectedSkillContent, new RegExp(path.resolve(repoSkillsDir, "bemo")));
-  assert.equal(general.selectedSkillContent, undefined);
-  assert.deepEqual(selected.skillMetadata.map((skill) => skill.slug), [
-    "bemo",
-    "gmail",
-    "linux-janitor",
-  ]);
+  assert.match(selected.prompt.selectedSkill.instructions, /# Bemo Automation/);
+  assert.match(selected.prompt.selectedSkill.instructions, new RegExp(path.resolve(repoSkillsDir, "bemo")));
+  assert.equal(selected.prompt.toolScope.skillSlug, "bemo");
+  assert.equal(general.prompt.selectedSkill, undefined);
+  assert.equal(general.prompt.toolScope, undefined);
 });
 
 test("default SkillRegistry resolves repository skills outside the service cwd", () => {

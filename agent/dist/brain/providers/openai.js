@@ -6,6 +6,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenAiProvider = void 0;
 const openai_1 = __importDefault(require("openai"));
 const provider_1 = require("../provider");
+function userPayload(input) {
+    return JSON.stringify({
+        runtime: input.context.runtime,
+        selectedSkill: input.context.selectedSkill,
+        availableTools: input.tools,
+        previousToolSteps: input.steps,
+        userMessage: input.userMessage,
+    });
+}
 class OpenAiProvider {
     model;
     client;
@@ -18,20 +27,13 @@ class OpenAiProvider {
             model: this.model,
             messages: [
                 { role: "system", content: input.system },
+                ...input.context.history.map((entry) => ({
+                    role: entry.role === "assistant" ? "assistant" : "user",
+                    content: entry.content,
+                })),
                 {
                     role: "user",
-                    content: [
-                        "Return strict JSON with exactly one key: text, clarification, or toolCall.",
-                        "toolCall must be {name, arguments} and name must match an available tool.",
-                        "Available tools:",
-                        JSON.stringify(input.tools),
-                        "Previous tool steps:",
-                        JSON.stringify(input.steps),
-                        "Context:",
-                        input.context,
-                        "User:",
-                        input.userMessage,
-                    ].join("\n\n"),
+                    content: userPayload(input),
                 },
             ],
             response_format: { type: "json_object" },

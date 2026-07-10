@@ -24,6 +24,8 @@ const defaultConfig = {
     },
     runtime: {
         commandTimeoutMs: 10 * 60 * 1000,
+        timezone: "Asia/Ho_Chi_Minh",
+        locale: "vi-VN",
     },
     schedules: [],
     permissions: {

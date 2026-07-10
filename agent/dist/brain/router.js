@@ -9,12 +9,18 @@ const app_1 = require("../config/app");
 const logger_1 = require("../logging/logger");
 const gemini_1 = require("./providers/gemini");
 const openai_1 = require("./providers/openai");
+const PROVIDER_RETRY_DELAYS_MS = [250, 500];
+function isTransientProviderError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /\b(429|500|502|503|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i.test(message);
+}
 class AiRouter {
     provider;
     systemPrompt;
     providerName;
     model;
     cacheableHash;
+    sleep;
     constructor(options = {}) {
         const config = (0, app_1.loadAgentConfig)();
         this.systemPrompt = options.systemPrompt ?? (0, app_1.loadSystemPrompt)();
@@ -23,6 +29,7 @@ class AiRouter {
         this.model = options.model ?? providerConfig?.model ?? "";
         const apiKey = providerConfig ? process.env[providerConfig.apiKeyEnv] : undefined;
         this.cacheableHash = node_crypto_1.default.createHash("sha256").update(this.systemPrompt).digest("hex");
+        this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
         if ("provider" in options) {
             this.provider = options.provider ?? null;
         }
@@ -51,25 +58,38 @@ class AiRouter {
             model: this.model,
             cacheablePrefixHash: this.cacheableHash,
         });
-        try {
-            const response = await this.provider.complete({
-                system: this.systemPrompt,
-                context,
-                userMessage,
-                tools,
-                steps,
-            });
-            logger_1.log.info(traceId, "ai.response.received", {
-                latencyMs: Date.now() - started,
-                selectedTool: response.toolCall?.name,
-                usage: response.usage,
-            });
-            return response;
+        for (let attempt = 0; attempt <= PROVIDER_RETRY_DELAYS_MS.length; attempt += 1) {
+            try {
+                const response = await this.provider.complete({
+                    system: this.systemPrompt,
+                    context,
+                    userMessage,
+                    tools,
+                    steps,
+                });
+                logger_1.log.info(traceId, "ai.response.received", {
+                    latencyMs: Date.now() - started,
+                    selectedTool: response.toolCall?.name,
+                    usage: response.usage,
+                    attempt: attempt + 1,
+                });
+                return response;
+            }
+            catch (error) {
+                const retryDelay = PROVIDER_RETRY_DELAYS_MS[attempt];
+                if (retryDelay === undefined || !isTransientProviderError(error)) {
+                    logger_1.log.error(traceId, "ai.failed", { error, attempt: attempt + 1 });
+                    throw error;
+                }
+                logger_1.log.warn(traceId, "ai.retry.scheduled", {
+                    attempt: attempt + 1,
+                    retryDelayMs: retryDelay,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                await this.sleep(retryDelay);
+            }
         }
-        catch (error) {
-            logger_1.log.error(traceId, "ai.failed", { error });
-            throw error;
-        }
+        throw new Error("AI provider retry loop ended unexpectedly.");
     }
 }
 exports.AiRouter = AiRouter;

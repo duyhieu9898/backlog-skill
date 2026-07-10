@@ -1,11 +1,48 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.aiResponseJsonSchema = void 0;
 exports.validateAiResponse = validateAiResponse;
+exports.aiResponseJsonSchema = {
+    anyOf: [
+        {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"],
+            additionalProperties: false,
+        },
+        {
+            type: "object",
+            properties: { clarification: { type: "string" } },
+            required: ["clarification"],
+            additionalProperties: false,
+        },
+        {
+            type: "object",
+            properties: {
+                toolCall: {
+                    type: "object",
+                    properties: {
+                        name: { type: "string" },
+                        arguments: { type: "object" },
+                    },
+                    required: ["name", "arguments"],
+                    additionalProperties: false,
+                },
+            },
+            required: ["toolCall"],
+            additionalProperties: false,
+        },
+    ],
+};
 function validateAiResponse(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("AI response must be a JSON object.");
     }
     const response = value;
+    const allowedKeys = new Set(["text", "clarification", "toolCall", "usage"]);
+    if (Object.keys(response).some((key) => !allowedKeys.has(key))) {
+        throw new Error("AI response contains unsupported fields.");
+    }
     const outcomes = [response.text, response.clarification, response.toolCall].filter((item) => item !== undefined);
     if (outcomes.length !== 1)
         throw new Error("AI response must contain exactly one outcome.");

@@ -20,6 +20,7 @@ const { SkillRegistry } = require("../dist/skills/registry");
 const {
   deletePendingConfirmation,
   getPendingConfirmation,
+  insertChatMessage,
   listRecentCommandRuns,
   listTraceEvents,
   upsertPendingConfirmation,
@@ -40,7 +41,10 @@ test("loadCommands maps command names and aliases from allowlist", () => {
   ]);
   assert.equal(commands["bemo.create-timeoff"].requiresConfirmation, true);
   assert.equal(commands["bemo.prepare-timeoff"].inputMode, "json-stdin");
-  assert.equal(commands["/bemo_run"].requiresConfirmation, false);
+  assert.equal(commands["/bemo_checkout"].requiresConfirmation, true);
+  assert.equal(commands["/bemo_checkout"].externalSideEffect, true);
+  assert.equal(commands["/bemo_run"].requiresConfirmation, true);
+  assert.equal(commands["/bemo_run"].externalSideEffect, true);
   assert.deepEqual(commands["shutdown"].argv, ["systemctl", "poweroff"]);
   assert.equal(commands["/shutdown"].name, "shutdown");
   assert.equal(commands["/shutdown"].requiresConfirmation, true);
@@ -533,11 +537,58 @@ test("ContextHydrator respects dynamic context budget marker", () => {
       text: "bemo lỗi vừa rồi",
       timestamp: new Date(),
     },
-    recentChat: [],
-    skillMetadata: registry.listSkills(),
-    selectedSkillContent: "x".repeat(30 * 1024),
-    allowedCommands: [],
+    prompt: {
+      history: [],
+      runtime: { currentTime: "2026-07-10T16:35:14", timezone: "Asia/Ho_Chi_Minh", locale: "vi-VN" },
+      selectedSkill: {
+        slug: "test",
+        name: "Test",
+        description: "Test skill",
+        instructions: "x".repeat(30 * 1024),
+      },
+    },
   };
 
   assert.match(hydrator.toPromptSections(context), /\[truncated: dynamic context exceeded 24KB\]/);
+});
+
+test("ContextHydrator builds a minimal, redacted prompt for general conversation", () => {
+  const registry = new SkillRegistry(path.join(__dirname, "..", "..", "skills"));
+  const hydrator = new ContextHydrator(registry);
+  const chatId = `safe-context-${Date.now()}`;
+  const currentTraceId = `safe-context-current-${Date.now()}`;
+  insertChatMessage({
+    chatId,
+    userId: "agent",
+    role: "assistant",
+    content: "Tác vụ cần xác nhận.\nExecutable: systemctl\nArgs: [\"poweroff\"]\nCwd: /private\nApproval: secret-token",
+    traceId: "previous-trace",
+  });
+  insertChatMessage({
+    chatId,
+    userId: "user",
+    role: "user",
+    content: "hôm nay là thứ mấy",
+    traceId: currentTraceId,
+  });
+
+  const prompt = hydrator.hydrate({
+    traceId: currentTraceId,
+    provider: "telegram",
+    chatId,
+    userId: "user",
+    text: "hôm nay là thứ mấy",
+    timestamp: new Date("2026-07-10T18:30:00.000Z"),
+  }).prompt;
+
+  assert.deepEqual(prompt.toolScope, undefined);
+  assert.equal(prompt.selectedSkill, undefined);
+  assert.deepEqual(prompt.runtime, {
+    currentTime: "2026-07-11T01:30:00",
+    timezone: "Asia/Ho_Chi_Minh",
+    locale: "vi-VN",
+  });
+  assert.equal(prompt.history.length, 1);
+  assert.match(prompt.history[0].content, /Tác vụ cần xác nhận/);
+  assert.doesNotMatch(prompt.history[0].content, /Executable|Args|Cwd|Approval|secret-token/);
 });

@@ -1,5 +1,5 @@
 import { AiRouter } from "../brain/router";
-import type { AiToolCall, AiToolStep } from "../brain/provider";
+import type { AiPromptContext, AiToolCall, AiToolStep } from "../brain/provider";
 import { log } from "../logging/logger";
 import {
   deletePendingConfirmation,
@@ -12,6 +12,7 @@ import { ToolExecutor } from "./executor";
 import type { ToolResult } from "./contracts";
 
 const MAX_TOOL_STEPS = 4;
+const MAX_IDENTICAL_FAILURES = 2;
 
 type PendingAiTool = {
   kind: "ai-tool";
@@ -25,15 +26,40 @@ function formatResult(result: ToolResult): string {
   return `${result.ok ? "Tool completed" : "Tool failed"} [${result.code}]\n${result.summary}${data}`;
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function failureKey(call: AiToolCall, result: ToolResult): string {
+  return `${call.name}:${stableJson(call.arguments)}:${result.code}`;
+}
+
+function repeatedFailureMessage(call: AiToolCall, result: ToolResult): string {
+  return [
+    `Đã dừng sau ${MAX_IDENTICAL_FAILURES} lần lỗi lặp lại cho ${call.name} [${result.code}] để tránh hao token.`,
+    result.summary,
+    "Hãy thay đổi tham số, chọn tool khác, hoặc gửi yêu cầu rõ hơn trước khi thử lại.",
+  ].join("\n");
+}
+
 export class AgentToolLoop {
   constructor(
     private readonly ai = new AiRouter(),
     private readonly executor = new ToolExecutor(),
   ) {}
 
-  async run(message: StandardMessage, context: string): Promise<string> {
+  async run(message: StandardMessage, context: AiPromptContext): Promise<string> {
     const steps: AiToolStep[] = [];
-    const tools = this.executor.definitions();
+    const failures = new Map<string, number>();
+    const tools = this.executor.definitions(context.toolScope);
 
     for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
       const response = await this.ai.complete(message.traceId, context, message.text, tools, steps);
@@ -49,7 +75,7 @@ export class AgentToolLoop {
         toolName: response.toolCall.name,
       });
       try {
-        const prepared = this.executor.prepare(response.toolCall, message.traceId);
+        const prepared = this.executor.prepare(response.toolCall, message.traceId, tools);
         if (prepared.requiresConfirmation) {
           const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
           const pending: PendingAiTool = {
@@ -88,6 +114,20 @@ export class AgentToolLoop {
           ok: result.ok,
           code: result.code,
         });
+        if (!result.ok) {
+          const key = failureKey(response.toolCall, result);
+          const attempts = (failures.get(key) || 0) + 1;
+          failures.set(key, attempts);
+          if (attempts >= MAX_IDENTICAL_FAILURES) {
+            log.warn(message.traceId, "ai.tool.repeated_failure_stopped", {
+              step: index,
+              toolName: response.toolCall.name,
+              code: result.code,
+              attempts,
+            });
+            return repeatedFailureMessage(response.toolCall, result);
+          }
+        }
       } catch (error) {
         const result: ToolResult = {
           ok: false,
@@ -100,6 +140,18 @@ export class AgentToolLoop {
           toolName: response.toolCall.name,
           reason: result.summary,
         });
+        const key = failureKey(response.toolCall, result);
+        const attempts = (failures.get(key) || 0) + 1;
+        failures.set(key, attempts);
+        if (attempts >= MAX_IDENTICAL_FAILURES) {
+          log.warn(message.traceId, "ai.tool.repeated_failure_stopped", {
+            step: index,
+            toolName: response.toolCall.name,
+            code: result.code,
+            attempts,
+          });
+          return repeatedFailureMessage(response.toolCall, result);
+        }
       }
     }
 

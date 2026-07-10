@@ -3,6 +3,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.GeminiProvider = void 0;
 const genai_1 = require("@google/genai");
 const provider_1 = require("../provider");
+function userPayload(input) {
+    return JSON.stringify({
+        runtime: input.context.runtime,
+        selectedSkill: input.context.selectedSkill,
+        availableTools: input.tools,
+        previousToolSteps: input.steps,
+        userMessage: input.userMessage,
+    });
+}
 class GeminiProvider {
     model;
     client;
@@ -13,24 +22,21 @@ class GeminiProvider {
     async complete(input) {
         const response = await this.client.models.generateContent({
             model: this.model,
+            config: {
+                systemInstruction: input.system,
+                responseMimeType: "application/json",
+                responseJsonSchema: provider_1.aiResponseJsonSchema,
+            },
             contents: [
-                [
-                    input.system,
-                    "Return strict JSON with exactly one key: text, clarification, or toolCall.",
-                    "toolCall must be {name, arguments} and name must match an available tool.",
-                    "Available tools:",
-                    JSON.stringify(input.tools),
-                    "Previous tool steps:",
-                    JSON.stringify(input.steps),
-                    "Context:",
-                    input.context,
-                    "User:",
-                    input.userMessage,
-                ].join("\n\n"),
+                ...input.context.history.map((entry) => ({
+                    role: entry.role === "assistant" ? "model" : "user",
+                    parts: [{ text: entry.content }],
+                })),
+                { role: "user", parts: [{ text: userPayload(input) }] },
             ],
         });
         const text = response.text || "{}";
-        return (0, provider_1.validateAiResponse)(JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")));
+        return (0, provider_1.validateAiResponse)(JSON.parse(text));
     }
 }
 exports.GeminiProvider = GeminiProvider;

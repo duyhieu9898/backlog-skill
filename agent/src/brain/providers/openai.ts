@@ -2,6 +2,16 @@ import OpenAI from "openai";
 
 import { validateAiResponse, type AiProvider, type AiRequest, type AiResponse } from "../provider";
 
+function userPayload(input: AiRequest): string {
+  return JSON.stringify({
+    runtime: input.context.runtime,
+    selectedSkill: input.context.selectedSkill,
+    availableTools: input.tools,
+    previousToolSteps: input.steps,
+    userMessage: input.userMessage,
+  });
+}
+
 export class OpenAiProvider implements AiProvider {
   private readonly client: OpenAI;
 
@@ -17,20 +27,13 @@ export class OpenAiProvider implements AiProvider {
       model: this.model,
       messages: [
         { role: "system", content: input.system },
+        ...input.context.history.map((entry) => ({
+          role: entry.role === "assistant" ? "assistant" as const : "user" as const,
+          content: entry.content,
+        })),
         {
           role: "user",
-          content: [
-            "Return strict JSON with exactly one key: text, clarification, or toolCall.",
-            "toolCall must be {name, arguments} and name must match an available tool.",
-            "Available tools:",
-            JSON.stringify(input.tools),
-            "Previous tool steps:",
-            JSON.stringify(input.steps),
-            "Context:",
-            input.context,
-            "User:",
-            input.userMessage,
-          ].join("\n\n"),
+          content: userPayload(input),
         },
       ],
       response_format: { type: "json_object" },

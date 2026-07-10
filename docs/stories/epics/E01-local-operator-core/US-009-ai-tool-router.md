@@ -32,6 +32,13 @@ raw filesystem writes, or hidden instructions from skill docs.
   effect.
 - The loop stops after at most four tool steps and always pauses before the
   first command or file mutation requiring confirmation.
+- The loop allows one retry of an identical failed tool call, then stops when
+  the same tool name, arguments, and failure code recur in one request.
+- Transient provider errors retry at most twice with short backoff; permanent
+  provider errors fail immediately.
+- Provider adapters receive a common prompt context with role-preserved,
+  redacted history, current runtime time/timezone/locale, and only relevant
+  tools.
 - After confirmation, the agent executes exactly the approved tool call and does
   not auto-resume further AI planning.
 - Provider requests and responses are traced with sanitized summaries.
@@ -71,9 +78,20 @@ High-risk because AI can initiate local and external actions through tools.
 - Command catalog supports `inputMode: "json-stdin"` plus JSON schema
   validation; structured input is sent over stdin, not shell or argv.
 - Confirmation stores the exact approved AI tool call and preview digest.
-- `cd agent && npm test` passes 42/42, including unknown tool rejection,
-  JSON-stdin input validation, read-only prepare followed by confirmed create
-  preview, and exact confirmed execution.
+- Repeated identical tool failures are circuit-broken after the retry, with a
+  concise user-facing explanation and a structured trace event.
+- Gemini `503 UNAVAILABLE` failures from a real Telegram prompt are retried at
+  the provider boundary, where tool-loop protection cannot apply.
+- Gemini now receives the stable policy as a native system instruction and a
+  JSON-schema structured-output request; the model no longer receives one
+  large user-role prompt containing duplicated current message, full catalog,
+  and raw execution previews.
+- General conversation omits tools; selected skills expose only their commands
+  and generic file requests expose only file tools.
+- `cd agent && npm test` passes 56/56 on 2026-07-10, including unknown tool
+  rejection, JSON-stdin input validation, repeated-failure circuit breaking,
+  bounded transient-provider retry, read-only prepare followed by confirmed
+  create preview, and exact confirmed execution.
 - `scripts/bin/harness-cli story verify-all` passed all configured story
   verification commands on 2026-07-07.
 - Installed `my-agent` service restarted successfully after rebuild and entered

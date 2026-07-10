@@ -1,10 +1,33 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContextHydrator = void 0;
-const commands_1 = require("../commands");
+const app_1 = require("../config/app");
 const repositories_1 = require("../storage/repositories");
 const DEBUG_WORDS = ["lỗi", "bug", "vừa rồi", "lúc nãy", "tại sao", "failed", "error"];
-const COMMAND_WORDS = ["chạy", "run", "execute", "checkout", "sync", "verify", "xóa", "delete"];
+const FILE_WORDS = ["file", "tệp", "thư mục", "folder", "directory", "đọc", "read", "ghi", "write", "patch"];
+function redactHistory(content) {
+    return content
+        .split("\n")
+        .filter((line) => !/^(Executable|Args|Cwd|Timeout|Input|Approval|Gõ:\s*confirm)\s*:/i.test(line.trim()))
+        .join("\n")
+        .trim();
+}
+function runtimeContext(timestamp) {
+    const runtime = (0, app_1.loadAgentConfig)().runtime;
+    const timezone = runtime?.timezone || "Asia/Ho_Chi_Minh";
+    const locale = runtime?.locale || "vi-VN";
+    const currentTime = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+    }).format(timestamp).replace(" ", "T");
+    return { currentTime, timezone, locale };
+}
 class ContextHydrator {
     registry;
     constructor(registry) {
@@ -14,23 +37,43 @@ class ContextHydrator {
         const text = message.text.toLowerCase();
         const likelySkill = this.registry.findLikelySkill(text);
         const isDebug = DEBUG_WORDS.some((word) => text.includes(word));
-        const isCommand = COMMAND_WORDS.some((word) => text.includes(word));
+        const includesFileIntent = FILE_WORDS.some((word) => text.includes(word));
         const recentRuns = isDebug ? (0, repositories_1.listRecentCommandRuns)(message.chatId, 3) : undefined;
         const traceId = this.findTraceId(message.text) || recentRuns?.[0]?.trace_id;
+        const toolScope = likelySkill
+            ? { skillSlug: likelySkill.slug, includeFileTools: false }
+            : includesFileIntent
+                ? { includeFileTools: true }
+                : undefined;
+        const history = (0, repositories_1.listRecentChat)(message.chatId, 20)
+            .filter((entry) => entry.trace_id !== message.traceId)
+            .map((entry) => ({
+            role: entry.role === "assistant" ? "assistant" : "user",
+            content: redactHistory(entry.content),
+        }))
+            .filter((entry) => entry.content.length > 0);
+        const selectedSkill = likelySkill
+            ? {
+                slug: likelySkill.slug,
+                name: likelySkill.name,
+                description: likelySkill.description,
+                instructions: this.registry.loadSkillContent(likelySkill.slug, 8 * 1024) || undefined,
+            }
+            : undefined;
         return {
             message,
-            recentChat: (0, repositories_1.listRecentChat)(message.chatId, 20),
-            skillMetadata: this.registry.listSkills(),
-            selectedSkillContent: (isCommand || likelySkill) && likelySkill
-                ? this.registry.loadSkillContent(likelySkill.slug, 8 * 1024) || undefined
-                : undefined,
-            allowedCommands: (0, commands_1.loadCommandCatalog)().allow,
+            prompt: {
+                history,
+                runtime: runtimeContext(message.timestamp),
+                selectedSkill,
+                toolScope,
+            },
             relevantRuns: recentRuns,
             relevantTraceEvents: isDebug && traceId ? (0, repositories_1.listTraceEvents)(traceId, 50) : undefined,
         };
     }
     toPromptSections(context) {
-        const dynamic = JSON.stringify(context, null, 2);
+        const dynamic = JSON.stringify(context.prompt, null, 2);
         if (dynamic.length <= 24 * 1024)
             return dynamic;
         return `${dynamic.slice(0, 24 * 1024)}\n[truncated: dynamic context exceeded 24KB]`;

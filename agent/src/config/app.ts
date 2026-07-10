@@ -21,6 +21,8 @@ export type AgentConfig = {
   ai: AiProviderConfig;
   runtime?: {
     commandTimeoutMs?: number;
+    timezone?: string;
+    locale?: string;
   };
   schedules?: ScheduledCheckConfig[];
   permissions: {
@@ -62,6 +64,8 @@ const defaultConfig: AgentConfig = {
   },
   runtime: {
     commandTimeoutMs: 10 * 60 * 1000,
+    timezone: "Asia/Ho_Chi_Minh",
+    locale: "vi-VN",
   },
   schedules: [],
   permissions: {

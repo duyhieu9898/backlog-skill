@@ -15,7 +15,9 @@
   "runtime": {
     "commandTimeoutMs": 600000,
     "telegramChunkSize": 3500,
-    "sqlitePath": "data/agent.sqlite"
+    "sqlitePath": "data/agent.sqlite",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "locale": "vi-VN"
   },
   "schedules": [
     {

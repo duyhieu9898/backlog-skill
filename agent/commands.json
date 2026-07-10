@@ -7,8 +7,8 @@
       "aliases": ["/bemo_checkout"],
       "cwd": "../skills/bemo",
       "argv": ["npm", "run", "-s", "checkout"],
-      "requiresConfirmation": false,
-      "externalSideEffect": false
+      "requiresConfirmation": true,
+      "externalSideEffect": true
     },
     {
       "name": "bemo.sync",
@@ -109,8 +109,8 @@
       "aliases": ["/bemo_run"],
       "cwd": "../skills/bemo",
       "argv": ["npm", "run", "-s", "run"],
-      "requiresConfirmation": false,
-      "externalSideEffect": false
+      "requiresConfirmation": true,
+      "externalSideEffect": true
     },
     {
       "name": "shutdown",

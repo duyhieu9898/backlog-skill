@@ -104,18 +104,24 @@ class ToolExecutor {
         this.files = files;
         this.catalogLoader = catalogLoader;
     }
-    definitions() {
-        const commandDefinitions = this.catalogLoader().allow.map((command) => ({
+    definitions(scope) {
+        const commands = scope?.skillSlug
+            ? this.catalogLoader().allow.filter((command) => command.skillSlug === scope.skillSlug)
+            : scope
+                ? []
+                : this.catalogLoader().allow;
+        const commandDefinitions = commands.map((command) => ({
             name: `command.${command.name}`,
             description: `${command.label}. Fixed argv; ${command.requiresConfirmation || command.externalSideEffect
                 ? "requires explicit confirmation"
                 : "may run without confirmation"}.`,
             inputSchema: command.inputSchema || emptyObjectSchema,
         }));
-        return [...fileDefinitions, ...commandDefinitions].sort((a, b) => a.name.localeCompare(b.name));
+        const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
+        return [...files, ...commandDefinitions].sort((a, b) => a.name.localeCompare(b.name));
     }
-    prepare(call, traceId) {
-        const definition = this.definitions().find((tool) => tool.name === call.name);
+    prepare(call, traceId, definitions = this.definitions()) {
+        const definition = definitions.find((tool) => tool.name === call.name);
         if (!definition)
             throw new Error(`Unknown tool: ${call.name}`);
         const errors = (0, schema_1.validateJsonSchema)(definition.inputSchema, call.arguments, "arguments");

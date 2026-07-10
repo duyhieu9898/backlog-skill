@@ -1,6 +1,22 @@
 import { GoogleGenAI } from "@google/genai";
 
-import { validateAiResponse, type AiProvider, type AiRequest, type AiResponse } from "../provider";
+import {
+  aiResponseJsonSchema,
+  validateAiResponse,
+  type AiProvider,
+  type AiRequest,
+  type AiResponse,
+} from "../provider";
+
+function userPayload(input: AiRequest): string {
+  return JSON.stringify({
+    runtime: input.context.runtime,
+    selectedSkill: input.context.selectedSkill,
+    availableTools: input.tools,
+    previousToolSteps: input.steps,
+    userMessage: input.userMessage,
+  });
+}
 
 export class GeminiProvider implements AiProvider {
   private readonly client: GoogleGenAI;
@@ -15,23 +31,20 @@ export class GeminiProvider implements AiProvider {
   async complete(input: AiRequest): Promise<AiResponse> {
     const response = await this.client.models.generateContent({
       model: this.model,
+      config: {
+        systemInstruction: input.system,
+        responseMimeType: "application/json",
+        responseJsonSchema: aiResponseJsonSchema,
+      },
       contents: [
-        [
-          input.system,
-          "Return strict JSON with exactly one key: text, clarification, or toolCall.",
-          "toolCall must be {name, arguments} and name must match an available tool.",
-          "Available tools:",
-          JSON.stringify(input.tools),
-          "Previous tool steps:",
-          JSON.stringify(input.steps),
-          "Context:",
-          input.context,
-          "User:",
-          input.userMessage,
-        ].join("\n\n"),
+        ...input.context.history.map((entry) => ({
+          role: entry.role === "assistant" ? "model" : "user",
+          parts: [{ text: entry.content }],
+        })),
+        { role: "user", parts: [{ text: userPayload(input) }] },
       ],
     });
     const text = response.text || "{}";
-    return validateAiResponse(JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")));
+    return validateAiResponse(JSON.parse(text));
   }
 }

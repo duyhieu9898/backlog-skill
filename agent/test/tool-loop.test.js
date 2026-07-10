@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const { AiRouter } = require("../dist/brain/router");
 const { validateAiResponse } = require("../dist/brain/provider");
+const { GeminiProvider } = require("../dist/brain/providers/gemini");
 const { buildCommandCatalog } = require("../dist/commands");
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 const { getPendingConfirmation } = require("../dist/storage/repositories");
@@ -91,7 +92,89 @@ test("validateAiResponse enforces one structured outcome", () => {
     usage: undefined,
   });
   assert.throws(() => validateAiResponse({ text: "ok", clarification: "why" }), /exactly one/);
+  assert.throws(() => validateAiResponse({ text: "ok", extra: true }), /unsupported fields/);
   assert.throws(() => validateAiResponse({ toolCall: { name: "file.read", arguments: [] } }), /arguments/);
+});
+
+test("GeminiProvider sends system instructions, role history, and structured output config", async () => {
+  const provider = new GeminiProvider("test-key", "test-model");
+  let request;
+  provider.client.models.generateContent = async (input) => {
+    request = input;
+    return { text: '{"text":"ok"}' };
+  };
+
+  const response = await provider.complete({
+    system: "system policy",
+    userMessage: "current question",
+    context: {
+      history: [
+        { role: "user", content: "older question" },
+        { role: "assistant", content: "older answer" },
+      ],
+      runtime: { currentTime: "2026-07-11T01:30:00", timezone: "Asia/Ho_Chi_Minh", locale: "vi-VN" },
+    },
+    tools: [],
+    steps: [],
+  });
+
+  assert.equal(response.text, "ok");
+  assert.equal(request.config.systemInstruction, "system policy");
+  assert.equal(request.config.responseMimeType, "application/json");
+  assert.equal(request.contents[0].role, "user");
+  assert.equal(request.contents[1].role, "model");
+  const payload = JSON.parse(request.contents[2].parts[0].text);
+  assert.equal(payload.userMessage, "current question");
+  assert.deepEqual(payload.runtime, {
+    currentTime: "2026-07-11T01:30:00",
+    timezone: "Asia/Ho_Chi_Minh",
+    locale: "vi-VN",
+  });
+});
+
+test("AiRouter retries transient provider failures at most twice", async () => {
+  let calls = 0;
+  const delays = [];
+  const provider = {
+    async complete() {
+      calls += 1;
+      if (calls < 3) throw new Error('{"error":{"code":503,"status":"UNAVAILABLE"}}');
+      return { text: "recovered" };
+    },
+  };
+  const router = new AiRouter({
+    provider,
+    providerName: "fake",
+    model: "fake",
+    systemPrompt: "test",
+    sleep: async (milliseconds) => delays.push(milliseconds),
+  });
+
+  const response = await router.complete("provider-retry", "context", "hello");
+
+  assert.equal(response.text, "recovered");
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [250, 500]);
+});
+
+test("AiRouter does not retry permanent provider failures", async () => {
+  let calls = 0;
+  const provider = {
+    async complete() {
+      calls += 1;
+      throw new Error('{"error":{"code":400,"status":"INVALID_ARGUMENT"}}');
+    },
+  };
+  const router = new AiRouter({
+    provider,
+    providerName: "fake",
+    model: "fake",
+    systemPrompt: "test",
+    sleep: async () => assert.fail("Permanent provider errors must not be retried."),
+  });
+
+  await assert.rejects(() => router.complete("provider-permanent", "context", "hello"), /400/);
+  assert.equal(calls, 1);
 });
 
 test("ToolExecutor validates structured command input and sends JSON over stdin", async (t) => {
@@ -173,4 +256,40 @@ test("AgentToolLoop rejects unknown tools and lets the provider recover", async 
   );
 
   assert.equal(await loop.run(message("do unsafe thing", "unknown"), "context"), "rejected safely");
+});
+
+test("AgentToolLoop stops after one retry of the identical failure", async () => {
+  let calls = 0;
+  const provider = {
+    async complete() {
+      calls += 1;
+      return { toolCall: { name: "file.read", arguments: { path: "missing.txt" } } };
+    },
+  };
+  const failingExecutor = {
+    definitions: () => [],
+    prepare: (call) => ({
+      call,
+      key: call.name,
+      digest: "test-digest",
+      preview: call.name,
+      requiresConfirmation: false,
+    }),
+    execute: async () => ({
+      ok: false,
+      code: "TEST_FAILURE",
+      summary: "The test tool failed.",
+    }),
+  };
+  const loop = new AgentToolLoop(
+    new AiRouter({ provider, providerName: "fake", model: "fake", systemPrompt: "test" }),
+    failingExecutor,
+  );
+
+  const response = await loop.run(message("repeat unsafe thing", "repeated-failure"), "context");
+
+  assert.equal(calls, 2);
+  assert.match(response, /dừng sau 2 lần lỗi lặp lại/);
+  assert.match(response, /file\.read/);
+  assert.match(response, /TEST_FAILURE/);
 });

@@ -2,9 +2,18 @@ import crypto from "node:crypto";
 
 import { loadAgentConfig, loadSystemPrompt } from "../config/app";
 import { log } from "../logging/logger";
-import type { AiProvider, AiResponse, AiToolDefinition, AiToolStep } from "./provider";
+import type { AiPromptContext, AiProvider, AiResponse, AiToolDefinition, AiToolStep } from "./provider";
 import { GeminiProvider } from "./providers/gemini";
 import { OpenAiProvider } from "./providers/openai";
+
+const PROVIDER_RETRY_DELAYS_MS = [250, 500];
+
+function isTransientProviderError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(429|500|502|503|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i.test(
+    message,
+  );
+}
 
 export class AiRouter {
   private readonly provider: AiProvider | null;
@@ -12,12 +21,14 @@ export class AiRouter {
   private readonly providerName: string;
   private readonly model: string;
   private readonly cacheableHash: string;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
 
   constructor(options: {
     provider?: AiProvider | null;
     providerName?: string;
     model?: string;
     systemPrompt?: string;
+    sleep?: (milliseconds: number) => Promise<void>;
   } = {}) {
     const config = loadAgentConfig();
     this.systemPrompt = options.systemPrompt ?? loadSystemPrompt();
@@ -26,6 +37,7 @@ export class AiRouter {
     this.model = options.model ?? providerConfig?.model ?? "";
     const apiKey = providerConfig ? process.env[providerConfig.apiKeyEnv] : undefined;
     this.cacheableHash = crypto.createHash("sha256").update(this.systemPrompt).digest("hex");
+    this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
     if ("provider" in options) {
       this.provider = options.provider ?? null;
@@ -44,7 +56,7 @@ export class AiRouter {
 
   async complete(
     traceId: string,
-    context: string,
+    context: AiPromptContext,
     userMessage: string,
     tools: AiToolDefinition[] = [],
     steps: AiToolStep[] = [],
@@ -61,23 +73,37 @@ export class AiRouter {
       model: this.model,
       cacheablePrefixHash: this.cacheableHash,
     });
-    try {
-      const response = await this.provider.complete({
-        system: this.systemPrompt,
-        context,
-        userMessage,
-        tools,
-        steps,
-      });
-      log.info(traceId, "ai.response.received", {
-        latencyMs: Date.now() - started,
-        selectedTool: response.toolCall?.name,
-        usage: response.usage,
-      });
-      return response;
-    } catch (error) {
-      log.error(traceId, "ai.failed", { error });
-      throw error;
+    for (let attempt = 0; attempt <= PROVIDER_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        const response = await this.provider.complete({
+          system: this.systemPrompt,
+          context,
+          userMessage,
+          tools,
+          steps,
+        });
+        log.info(traceId, "ai.response.received", {
+          latencyMs: Date.now() - started,
+          selectedTool: response.toolCall?.name,
+          usage: response.usage,
+          attempt: attempt + 1,
+        });
+        return response;
+      } catch (error) {
+        const retryDelay = PROVIDER_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined || !isTransientProviderError(error)) {
+          log.error(traceId, "ai.failed", { error, attempt: attempt + 1 });
+          throw error;
+        }
+        log.warn(traceId, "ai.retry.scheduled", {
+          attempt: attempt + 1,
+          retryDelayMs: retryDelay,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await this.sleep(retryDelay);
+      }
     }
+
+    throw new Error("AI provider retry loop ended unexpectedly.");
   }
 }
