@@ -12,6 +12,9 @@ import {
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
 import { formatScheduleList, loadScheduledChecks } from "../scheduler";
+import { getDesktopAdapter } from "../desktop/adapter";
+import { DesktopRegistry } from "../desktop/registry";
+import { loadAgentConfig } from "../config/app";
 
 const startedAt = Date.now();
 
@@ -69,6 +72,7 @@ export function isDebugCommand(text: string): boolean {
     normalized === "/commands" ||
     normalized === "/schedule" ||
     normalized === "/skills" ||
+    normalized === "/desktop" ||
     normalized === "/help" ||
     normalized === "help"
   );
@@ -94,6 +98,7 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
       "/schedule enable|disable <name> - change state after confirmation",
       "/schedule interval <name> <minutes> - change interval after confirmation",
       "/skills - scanned skills",
+      "/desktop - desktop capability and permission status",
       "",
       "Command aliases:",
       formatCommands(catalog.allow),
@@ -122,6 +127,19 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
       "Registry errors:",
       ...errors.map((error) => `- ${error.slug}: ${error.message}`),
     ].join("\n\n");
+  }
+
+  if (normalized === "/desktop") {
+    const status = getDesktopAdapter().getStatus();
+    const registry = new DesktopRegistry(loadAgentConfig().desktop?.apps || []);
+    return [
+      `platform: ${status.platform}`,
+      ...status.capabilities.map(
+        (entry) => `${entry.capability}: ${entry.available ? "available" : "unavailable"} (${entry.permission.state})`,
+      ),
+      `displays: ${status.displays.length}`,
+      `declared apps: ${registry.list().length}`,
+    ].join("\n");
   }
 
   if (normalized === "/status") {

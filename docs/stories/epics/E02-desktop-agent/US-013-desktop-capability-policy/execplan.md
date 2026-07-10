@@ -10,9 +10,12 @@ Risk flags: authorization, audit/security, public workflow, weak proof.
 
 ## Work Phases
 
-1. Define adapter, app-registry, artifact metadata, event, and presenter contracts.
-2. Extend the existing permission and digest-confirmation paths with desktop action kinds.
-3. Add fake-adapter proof and capability status output for the Linux initial target.
+1. Complete: define adapter, app-registry, event envelope, and presenter-facing
+   capability-status contracts. Artifact metadata remains owned by US-014.
+2. Complete: extend the existing permission path with typed desktop action kinds
+   and digest-confirmation decisions; no desktop-specific state table exists.
+3. Complete for the safe baseline: add unavailable-adapter proof and `/desktop`
+   status output. A reviewed Linux adapter remains the US-015 prerequisite.
 
 ## Stop Conditions
 

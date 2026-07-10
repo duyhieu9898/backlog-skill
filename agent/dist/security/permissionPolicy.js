@@ -7,6 +7,7 @@ exports.PermissionPolicy = void 0;
 exports.canonicalizePolicyPath = canonicalizePolicyPath;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
+const contracts_1 = require("../tools/contracts");
 const DENIED_SEGMENTS = new Set([".git", "node_modules"]);
 const SECRET_FILE_PATTERNS = [
     /^\.env(?:\..+)?$/i,
@@ -50,7 +51,21 @@ function normalizeAction(action) {
     if (action.kind === "command.run") {
         return { ...action, cwd: canonicalizePolicyPath(action.cwd) };
     }
+    if ((0, contracts_1.isDesktopToolAction)(action))
+        return action;
     return { ...action, path: canonicalizePolicyPath(action.path) };
+}
+function desktopCapability(action) {
+    switch (action.kind) {
+        case "desktop.capture":
+            return "screen.capture";
+        case "desktop.launch":
+            return "app.launch";
+        case "desktop.observe":
+            return "ui.observe";
+        case "desktop.act":
+            return "ui.act";
+    }
 }
 function denied(action, reasonCode, reason) {
     return { outcome: "deny", reasonCode, reason, action };
@@ -60,11 +75,13 @@ class PermissionPolicy {
     allowedReadRoots;
     allowedWriteRoots;
     deniedPaths;
+    desktopAppIds;
     constructor(config) {
         this.workspaceRoot = canonicalizePolicyPath(config.workspaceRoot);
         this.allowedReadRoots = normalizeRoots(config.allowedReadRoots);
         this.allowedWriteRoots = normalizeRoots(config.allowedWriteRoots);
         this.deniedPaths = normalizeRoots(config.deniedPaths);
+        this.desktopAppIds = new Set(config.desktopAppIds || []);
         for (const writeRoot of this.allowedWriteRoots) {
             if (!this.allowedReadRoots.some((readRoot) => isWithin(writeRoot, readRoot))) {
                 throw new Error(`Allowed write root must be contained by an allowed read root: ${writeRoot}`);
@@ -83,6 +100,9 @@ class PermissionPolicy {
                 reason: error instanceof Error ? error.message : String(error),
                 action,
             };
+        }
+        if ((0, contracts_1.isDesktopToolAction)(normalized)) {
+            return this.evaluateDesktop(normalized, context);
         }
         const target = normalized.kind === "command.run" ? normalized.cwd : normalized.path;
         if (hasDeniedSegment(target) ||
@@ -125,6 +145,38 @@ class PermissionPolicy {
             reasonCode: "ALLOWED",
             reason: `${normalized.kind} is allowed by policy.`,
             action: normalized,
+        };
+    }
+    evaluateDesktop(action, context) {
+        const capability = desktopCapability(action);
+        const status = context.desktopStatus?.capabilities.find((entry) => entry.capability === capability);
+        if (!status?.available || status.permission.state === "unavailable") {
+            return denied(action, "DESKTOP_CAPABILITY_UNAVAILABLE", `${capability} is not available on this runtime.`);
+        }
+        if (status.permission.state !== "granted") {
+            return denied(action, "DESKTOP_PERMISSION_DENIED", `${capability} permission is not granted.`);
+        }
+        if (action.kind === "desktop.launch" && !this.desktopAppIds.has(action.appId)) {
+            return denied(action, "UNDECLARED_DESKTOP_APP", `Desktop app is not declared: ${action.appId}`);
+        }
+        if ((action.kind === "desktop.capture" || action.kind === "desktop.observe") &&
+            action.displayId &&
+            !context.desktopStatus?.displays.some((display) => display.id === action.displayId)) {
+            return denied(action, "UNKNOWN_DISPLAY", `Desktop display is not available: ${action.displayId}`);
+        }
+        if (!context.confirmationGranted) {
+            return {
+                outcome: "confirm",
+                reasonCode: "CONFIRMATION_REQUIRED",
+                reason: `${action.kind} requires explicit confirmation.`,
+                action,
+            };
+        }
+        return {
+            outcome: "allow",
+            reasonCode: "ALLOWED",
+            reason: `${action.kind} is allowed by policy.`,
+            action,
         };
     }
 }

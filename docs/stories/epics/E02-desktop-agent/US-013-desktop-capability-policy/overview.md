@@ -2,8 +2,10 @@
 
 ## Current Behavior
 
-The agent can use files and allowlisted commands but has no typed desktop or
-media capability.
+The agent can use files and allowlisted commands. It now has typed desktop
+capability, app-registry, permission, confirmation, and trace contracts, but
+the default adapter reports every desktop capability unavailable. No screen
+capture or app launch can run yet.
 
 ## Target Behavior
 

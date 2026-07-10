@@ -10,4 +10,10 @@
 
 ## Acceptance Evidence
 
-TBD
+- 2026-07-10: `scripts/bin/harness-cli query tools --capability desktop --status present`
+  returned no equipped desktop capability, so the runtime reports all desktop
+  capabilities as unavailable and performs no platform action.
+- 2026-07-10: `cd agent && npm run verify` passed 61/61 tests. Coverage proves
+  app ID validation, unavailable/denied desktop policy outcomes,
+  digest-confirmation gating, shared `desktop.*` trace events, and `/desktop`
+  status output.

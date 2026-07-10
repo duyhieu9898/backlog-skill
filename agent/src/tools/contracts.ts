@@ -47,7 +47,38 @@ export type CommandRunAction = {
   externalSideEffect: boolean;
 };
 
-export type ToolAction = FileToolAction | CommandRunAction;
+export type DesktopCaptureAction = {
+  kind: "desktop.capture";
+  displayId?: string;
+};
+
+export type DesktopLaunchAction = {
+  kind: "desktop.launch";
+  appId: string;
+};
+
+export type DesktopObserveAction = {
+  kind: "desktop.observe";
+  displayId?: string;
+};
+
+export type DesktopActAction = {
+  kind: "desktop.act";
+  targetId: string;
+  operation: "click" | "type" | "scroll";
+};
+
+export type DesktopToolAction =
+  | DesktopCaptureAction
+  | DesktopLaunchAction
+  | DesktopObserveAction
+  | DesktopActAction;
+
+export type ToolAction = FileToolAction | CommandRunAction | DesktopToolAction;
+
+export function isDesktopToolAction(action: ToolAction | NormalizedToolAction): action is DesktopToolAction {
+  return action.kind.startsWith("desktop.");
+}
 
 export type PolicyReasonCode =
   | "ALLOWED"
@@ -56,11 +87,16 @@ export type PolicyReasonCode =
   | "OUTSIDE_READ_ROOTS"
   | "OUTSIDE_WRITE_ROOTS"
   | "OUTSIDE_WORKSPACE"
-  | "INVALID_PATH";
+  | "INVALID_PATH"
+  | "DESKTOP_CAPABILITY_UNAVAILABLE"
+  | "DESKTOP_PERMISSION_DENIED"
+  | "UNDECLARED_DESKTOP_APP"
+  | "UNKNOWN_DISPLAY";
 
 export type NormalizedToolAction =
   | FileToolAction
-  | CommandRunAction;
+  | CommandRunAction
+  | DesktopToolAction;
 
 export type PolicyDecision =
   | {

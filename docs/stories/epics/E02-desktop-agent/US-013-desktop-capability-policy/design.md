@@ -4,6 +4,9 @@
 
 `DesktopCapability`, `DesktopPermission`, `DisplayInfo`, and `AppDefinition`
 are typed values. App definitions use reviewed IDs and fixed launch plans.
+`desktop.apps` is the single source of truth; the permission policy derives its
+launch allowlist from this validated registry rather than reading a second
+desktop-app configuration.
 This story also defines the shared desktop event envelope, artifact metadata
 contract, and presenter response reference used by US-014 through US-017.
 

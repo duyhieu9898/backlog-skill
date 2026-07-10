@@ -8,6 +8,7 @@ exports.loadSystemPrompt = loadSystemPrompt;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const paths_1 = require("./paths");
+const registry_1 = require("../desktop/registry");
 const defaultConfig = {
     ai: {
         default: "gemini",
@@ -28,6 +29,9 @@ const defaultConfig = {
         locale: "vi-VN",
     },
     schedules: [],
+    desktop: {
+        apps: [],
+    },
     permissions: {
         workspaceRoot: paths_1.repoDir,
         allowedReadRoots: [paths_1.repoDir],
@@ -55,19 +59,29 @@ function loadAgentConfig() {
             ...config.runtime,
         },
         schedules: config.schedules || defaultConfig.schedules,
+        desktop: {
+            ...defaultConfig.desktop,
+            ...config.desktop,
+        },
         permissions: {
             ...defaultConfig.permissions,
             ...config.permissions,
         },
     };
     const resolveFromAgent = (candidate) => node_path_1.default.isAbsolute(candidate) ? candidate : node_path_1.default.resolve(paths_1.agentDir, candidate);
+    const desktopApps = new registry_1.DesktopRegistry(merged.desktop.apps || []).list();
     return {
         ...merged,
+        desktop: {
+            ...merged.desktop,
+            apps: desktopApps,
+        },
         permissions: {
             workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
             allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
             allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
             deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
+            desktopAppIds: desktopApps.map((app) => app.id),
         },
     };
 }

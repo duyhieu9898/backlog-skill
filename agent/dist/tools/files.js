@@ -9,6 +9,7 @@ const node_path_1 = __importDefault(require("node:path"));
 const app_1 = require("../config/app");
 const logger_1 = require("../logging/logger");
 const permissionPolicy_1 = require("../security/permissionPolicy");
+const contracts_1 = require("./contracts");
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
 const MAX_READ_BYTES = 1024 * 1024;
 const DEFAULT_MAX_LIST_ENTRIES = 500;
@@ -34,8 +35,8 @@ function failure(code, summary) {
     return { ok: false, code, summary };
 }
 function actionPath(decision) {
-    if (decision.action.kind === "command.run") {
-        throw new Error("File policy returned a command action.");
+    if (decision.action.kind === "command.run" || (0, contracts_1.isDesktopToolAction)(decision.action)) {
+        throw new Error("File policy returned a non-file action.");
     }
     return decision.action.path;
 }
@@ -99,8 +100,8 @@ class FileTools {
         }
         try {
             const normalized = decision.action;
-            if (normalized.kind === "command.run") {
-                return failure("INVALID_ACTION", "File tool received a command action.");
+            if (normalized.kind === "command.run" || (0, contracts_1.isDesktopToolAction)(normalized)) {
+                return failure("INVALID_ACTION", "File tool received a non-file action.");
             }
             let result;
             switch (normalized.kind) {
@@ -122,6 +123,8 @@ class FileTools {
                 case "file.patch":
                     result = this.patch(normalized, context.traceId);
                     break;
+                default:
+                    return failure("INVALID_ACTION", "Unsupported file action.");
             }
             logger_1.log.info(context.traceId, "file.result", {
                 kind: normalized.kind,

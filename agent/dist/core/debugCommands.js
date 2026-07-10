@@ -9,6 +9,9 @@ const commands_1 = require("../commands");
 const paths_1 = require("../config/paths");
 const repositories_1 = require("../storage/repositories");
 const scheduler_1 = require("../scheduler");
+const adapter_1 = require("../desktop/adapter");
+const registry_1 = require("../desktop/registry");
+const app_1 = require("../config/app");
 const startedAt = Date.now();
 function formatLastRun(run) {
     if (!run)
@@ -63,6 +66,7 @@ function isDebugCommand(text) {
         normalized === "/commands" ||
         normalized === "/schedule" ||
         normalized === "/skills" ||
+        normalized === "/desktop" ||
         normalized === "/help" ||
         normalized === "help");
 }
@@ -85,6 +89,7 @@ function handleDebugCommand(text, registry) {
             "/schedule enable|disable <name> - change state after confirmation",
             "/schedule interval <name> <minutes> - change interval after confirmation",
             "/skills - scanned skills",
+            "/desktop - desktop capability and permission status",
             "",
             "Command aliases:",
             formatCommands(catalog.allow),
@@ -111,6 +116,16 @@ function handleDebugCommand(text, registry) {
             "Registry errors:",
             ...errors.map((error) => `- ${error.slug}: ${error.message}`),
         ].join("\n\n");
+    }
+    if (normalized === "/desktop") {
+        const status = (0, adapter_1.getDesktopAdapter)().getStatus();
+        const registry = new registry_1.DesktopRegistry((0, app_1.loadAgentConfig)().desktop?.apps || []);
+        return [
+            `platform: ${status.platform}`,
+            ...status.capabilities.map((entry) => `${entry.capability}: ${entry.available ? "available" : "unavailable"} (${entry.permission.state})`),
+            `displays: ${status.displays.length}`,
+            `declared apps: ${registry.list().length}`,
+        ].join("\n");
     }
     if (normalized === "/status") {
         const currentRun = (0, repositories_1.getJsonState)("runtime_state", "currentRun");

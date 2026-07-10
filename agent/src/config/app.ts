@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { agentDir, configFile, repoDir, skillsDir, systemPromptFile } from "./paths";
+import type { DesktopAppDefinition } from "../desktop/contracts";
+import { DesktopRegistry } from "../desktop/registry";
 
 export type AiProviderConfig = {
   default: "openai" | "gemini";
@@ -25,11 +27,15 @@ export type AgentConfig = {
     locale?: string;
   };
   schedules?: ScheduledCheckConfig[];
+  desktop?: {
+    apps?: DesktopAppDefinition[];
+  };
   permissions: {
     workspaceRoot: string;
     allowedReadRoots: string[];
     allowedWriteRoots: string[];
     deniedPaths: string[];
+    desktopAppIds?: string[];
   };
 };
 
@@ -68,6 +74,9 @@ const defaultConfig: AgentConfig = {
     locale: "vi-VN",
   },
   schedules: [],
+  desktop: {
+    apps: [],
+  },
   permissions: {
     workspaceRoot: repoDir,
     allowedReadRoots: [repoDir],
@@ -95,6 +104,10 @@ export function loadAgentConfig(): AgentConfig {
       ...config.runtime,
     },
     schedules: config.schedules || defaultConfig.schedules,
+    desktop: {
+      ...defaultConfig.desktop,
+      ...config.desktop,
+    },
     permissions: {
       ...defaultConfig.permissions,
       ...config.permissions,
@@ -102,13 +115,19 @@ export function loadAgentConfig(): AgentConfig {
   };
   const resolveFromAgent = (candidate: string): string =>
     path.isAbsolute(candidate) ? candidate : path.resolve(agentDir, candidate);
+  const desktopApps = new DesktopRegistry(merged.desktop.apps || []).list();
   return {
     ...merged,
+    desktop: {
+      ...merged.desktop,
+      apps: desktopApps,
+    },
     permissions: {
       workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
       allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
       allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
       deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
+      desktopAppIds: desktopApps.map((app) => app.id),
     },
   };
 }

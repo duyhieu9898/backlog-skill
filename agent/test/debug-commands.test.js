@@ -24,6 +24,7 @@ test("debug command parser recognizes every built-in command", () => {
     "/commands",
     "/schedule",
     "/skills",
+    "/desktop",
     "/help",
     "help",
   ]) {
@@ -55,9 +56,15 @@ test("status, help, command, and skill output include required fields", () => {
   assert.match(skills, /gmail/);
   assert.match(skills, /linux-janitor/);
 
+  const desktop = handleDebugCommand("/desktop", registry);
+  assert.match(desktop, /platform:/);
+  assert.match(desktop, /screen\.capture: unavailable \(unavailable\)/);
+  assert.match(desktop, /declared apps: 0/);
+
   const help = handleDebugCommand("/help", registry);
   assert.match(help, /\/last-error/);
   assert.match(help, /\/schedule/);
+  assert.match(help, /\/desktop/);
   assert.match(help, /Command aliases:/);
   assert.equal(handleDebugCommand("/debug", registry), "Usage: /debug <traceId>");
 });

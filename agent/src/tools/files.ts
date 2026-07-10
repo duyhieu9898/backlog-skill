@@ -4,6 +4,7 @@ import path from "node:path";
 import { loadAgentConfig } from "../config/app";
 import { log } from "../logging/logger";
 import { PermissionPolicy } from "../security/permissionPolicy";
+import { isDesktopToolAction } from "./contracts";
 import type {
   FileMutationAction,
   FilePatchAction,
@@ -61,8 +62,8 @@ function failure<T = never>(code: string, summary: string): ToolResult<T> {
 }
 
 function actionPath(decision: PolicyDecision): string {
-  if (decision.action.kind === "command.run") {
-    throw new Error("File policy returned a command action.");
+  if (decision.action.kind === "command.run" || isDesktopToolAction(decision.action)) {
+    throw new Error("File policy returned a non-file action.");
   }
   return decision.action.path;
 }
@@ -125,8 +126,8 @@ export class FileTools {
 
     try {
       const normalized = decision.action;
-      if (normalized.kind === "command.run") {
-        return failure("INVALID_ACTION", "File tool received a command action.");
+      if (normalized.kind === "command.run" || isDesktopToolAction(normalized)) {
+        return failure("INVALID_ACTION", "File tool received a non-file action.");
       }
       let result: ToolResult;
       switch (normalized.kind) {
@@ -148,6 +149,8 @@ export class FileTools {
         case "file.patch":
           result = this.patch(normalized, context.traceId);
           break;
+        default:
+          return failure("INVALID_ACTION", "Unsupported file action.");
       }
       log.info(context.traceId, "file.result", {
         kind: normalized.kind,
