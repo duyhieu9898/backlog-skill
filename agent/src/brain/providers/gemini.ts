@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 
+import { appendRawAiInteraction } from "../../logging/aiInteractions";
 import {
   aiResponseJsonSchema,
   validateAiResponse,
@@ -29,7 +30,7 @@ export class GeminiProvider implements AiProvider {
   }
 
   async complete(input: AiRequest): Promise<AiResponse> {
-    const response = await this.client.models.generateContent({
+    const request = {
       model: this.model,
       config: {
         systemInstruction: input.system,
@@ -43,6 +44,21 @@ export class GeminiProvider implements AiProvider {
         })),
         { role: "user", parts: [{ text: userPayload(input) }] },
       ],
+    };
+    appendRawAiInteraction({
+      traceId: input.traceId,
+      provider: "gemini",
+      model: this.model,
+      direction: "request",
+      payload: request,
+    });
+    const response = await this.client.models.generateContent(request);
+    appendRawAiInteraction({
+      traceId: input.traceId,
+      provider: "gemini",
+      model: this.model,
+      direction: "response",
+      payload: response,
     });
     const text = response.text || "{}";
     return validateAiResponse(JSON.parse(text));

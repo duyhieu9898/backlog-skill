@@ -10,6 +10,11 @@ domains that actually exist in that spec, for example `overview.md`,
 Do not create domain files before the spec just to fill the folder. Empty
 structure is healthier than fake product truth.
 
+## Current Contracts
+
+- `desktop-operator.md` — planned contract for typed desktop capabilities,
+  temporary media artifacts, reviewed app launch, and bounded UI workflows.
+
 ## Update Rule
 
 When behavior changes:

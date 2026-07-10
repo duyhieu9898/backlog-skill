@@ -39,6 +39,8 @@ raw filesystem writes, or hidden instructions from skill docs.
 - Provider adapters receive a common prompt context with role-preserved,
   redacted history, current runtime time/timezone/locale, and only relevant
   tools.
+- Raw provider request, response, and error payloads are written as local
+  JSONL records keyed by trace ID for debugging.
 - After confirmation, the agent executes exactly the approved tool call and does
   not auto-resume further AI planning.
 - Provider requests and responses are traced with sanitized summaries.
@@ -88,6 +90,10 @@ High-risk because AI can initiate local and external actions through tools.
   and raw execution previews.
 - General conversation omits tools; selected skills expose only their commands
   and generic file requests expose only file tools.
+- Raw provider interactions are retained in ignored local storage partitioned
+  by date and trace ID under `agent/logs/ai-interactions/`; a compact JSONL
+  index supports low-context discovery before an agent opens a raw record.
+  This intentionally sensitive data is not copied into SQLite trace events.
 - `cd agent && npm test` passes 56/56 on 2026-07-10, including unknown tool
   rejection, JSON-stdin input validation, repeated-failure circuit breaking,
   bounded transient-provider retry, read-only prepare followed by confirmed

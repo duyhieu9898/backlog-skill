@@ -6,6 +6,7 @@ const test = require("node:test");
 const { AiRouter } = require("../dist/brain/router");
 const { validateAiResponse } = require("../dist/brain/provider");
 const { GeminiProvider } = require("../dist/brain/providers/gemini");
+const { aiInteractionDir, aiInteractionIndex } = require("../dist/config/paths");
 const { buildCommandCatalog } = require("../dist/commands");
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 const { getPendingConfirmation } = require("../dist/storage/repositories");
@@ -105,6 +106,7 @@ test("GeminiProvider sends system instructions, role history, and structured out
   };
 
   const response = await provider.complete({
+    traceId: "gemini-provider-contract",
     system: "system policy",
     userMessage: "current question",
     context: {
@@ -130,6 +132,23 @@ test("GeminiProvider sends system instructions, role history, and structured out
     timezone: "Asia/Ho_Chi_Minh",
     locale: "vi-VN",
   });
+  const index = fs.readFileSync(aiInteractionIndex, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((record) => record.traceId === "gemini-provider-contract")
+    .slice(-2);
+  assert.deepEqual(index.map((record) => record.direction), ["request", "response"]);
+  const records = [...new Set(index.map((record) => record.file))]
+    .flatMap((file) => fs.readFileSync(path.join(aiInteractionDir, file), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line)))
+    .filter((record) => record.traceId === "gemini-provider-contract")
+    .slice(-2);
+  assert.deepEqual(records.map((record) => record.direction), ["request", "response"]);
+  assert.equal(records[0].payload.model, "test-model");
+  assert.equal(records[1].payload.text, '{"text":"ok"}');
 });
 
 test("AiRouter retries transient provider failures at most twice", async () => {

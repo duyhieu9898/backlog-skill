@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenAiProvider = void 0;
 const openai_1 = __importDefault(require("openai"));
+const aiInteractions_1 = require("../../logging/aiInteractions");
 const provider_1 = require("../provider");
 function userPayload(input) {
     return JSON.stringify({
@@ -23,7 +24,7 @@ class OpenAiProvider {
         this.client = new openai_1.default({ apiKey });
     }
     async complete(input) {
-        const response = await this.client.chat.completions.create({
+        const request = {
             model: this.model,
             messages: [
                 { role: "system", content: input.system },
@@ -37,6 +38,21 @@ class OpenAiProvider {
                 },
             ],
             response_format: { type: "json_object" },
+        };
+        (0, aiInteractions_1.appendRawAiInteraction)({
+            traceId: input.traceId,
+            provider: "openai",
+            model: this.model,
+            direction: "request",
+            payload: request,
+        });
+        const response = await this.client.chat.completions.create(request);
+        (0, aiInteractions_1.appendRawAiInteraction)({
+            traceId: input.traceId,
+            provider: "openai",
+            model: this.model,
+            direction: "response",
+            payload: response,
         });
         const content = response.choices[0]?.message.content || "{}";
         return { ...(0, provider_1.validateAiResponse)(JSON.parse(content)), usage: response.usage };

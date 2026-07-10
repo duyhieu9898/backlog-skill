@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AiRouter = void 0;
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const app_1 = require("../config/app");
+const aiInteractions_1 = require("../logging/aiInteractions");
 const logger_1 = require("../logging/logger");
 const gemini_1 = require("./providers/gemini");
 const openai_1 = require("./providers/openai");
@@ -61,6 +62,7 @@ class AiRouter {
         for (let attempt = 0; attempt <= PROVIDER_RETRY_DELAYS_MS.length; attempt += 1) {
             try {
                 const response = await this.provider.complete({
+                    traceId,
                     system: this.systemPrompt,
                     context,
                     userMessage,
@@ -76,6 +78,13 @@ class AiRouter {
                 return response;
             }
             catch (error) {
+                (0, aiInteractions_1.appendRawAiInteraction)({
+                    traceId,
+                    provider: this.providerName,
+                    model: this.model,
+                    direction: "error",
+                    payload: error,
+                });
                 const retryDelay = PROVIDER_RETRY_DELAYS_MS[attempt];
                 if (retryDelay === undefined || !isTransientProviderError(error)) {
                     logger_1.log.error(traceId, "ai.failed", { error, attempt: attempt + 1 });

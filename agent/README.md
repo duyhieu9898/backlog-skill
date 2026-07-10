@@ -132,6 +132,23 @@ only that skill's commands, while file-intent requests receive only file tools.
 Gemini uses native system instructions and JSON-schema output; server-side
 validation remains the final guard.
 
+## Raw AI Interaction Logs
+
+Every provider request, response, and provider error is written as raw JSONL
+to `logs/ai-interactions/<YYYY-MM-DD>/<traceId>.jsonl`. A compact
+`logs/ai-interactions/index.jsonl` stores only metadata for discovery, so an
+agent can find a trace without reading raw payloads. Use:
+
+```bash
+npm run ai-logs -- list --limit 20
+npm run ai-logs -- show <traceId>
+npm run ai-logs -- show <traceId> --direction response
+```
+
+Records include `traceId`, provider, model, direction, timestamp, and the
+complete payload. The directory is ignored by Git and intentionally not
+redacted; protect it as sensitive local debugging data.
+
 ## Scheduled Checks
 
 Configure read-only scheduled checks in `config.json`:

@@ -8,7 +8,8 @@
     "check": "tsc --noEmit",
     "start": "npm run build && node dist/bot.js",
     "test": "npm run build && node --test test/*.test.js",
-    "test:gemini": "node scripts/test-gemini.js"
+    "test:gemini": "node scripts/test-gemini.js",
+    "ai-logs": "node scripts/ai-logs.js"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

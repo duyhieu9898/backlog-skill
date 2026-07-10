@@ -45,6 +45,7 @@ export type AiPromptContext = {
 };
 
 export type AiRequest = {
+  traceId: string;
   system: string;
   context: AiPromptContext;
   userMessage: string;

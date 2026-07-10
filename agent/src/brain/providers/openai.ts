@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 
+import { appendRawAiInteraction } from "../../logging/aiInteractions";
 import { validateAiResponse, type AiProvider, type AiRequest, type AiResponse } from "../provider";
 
 function userPayload(input: AiRequest): string {
@@ -23,20 +24,35 @@ export class OpenAiProvider implements AiProvider {
   }
 
   async complete(input: AiRequest): Promise<AiResponse> {
-    const response = await this.client.chat.completions.create({
+    const request = {
       model: this.model,
       messages: [
-        { role: "system", content: input.system },
+        { role: "system" as const, content: input.system },
         ...input.context.history.map((entry) => ({
           role: entry.role === "assistant" ? "assistant" as const : "user" as const,
           content: entry.content,
         })),
         {
-          role: "user",
+          role: "user" as const,
           content: userPayload(input),
         },
       ],
-      response_format: { type: "json_object" },
+      response_format: { type: "json_object" as const },
+    };
+    appendRawAiInteraction({
+      traceId: input.traceId,
+      provider: "openai",
+      model: this.model,
+      direction: "request",
+      payload: request,
+    });
+    const response = await this.client.chat.completions.create(request);
+    appendRawAiInteraction({
+      traceId: input.traceId,
+      provider: "openai",
+      model: this.model,
+      direction: "response",
+      payload: response,
     });
 
     const content = response.choices[0]?.message.content || "{}";

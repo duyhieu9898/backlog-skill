@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { loadAgentConfig, loadSystemPrompt } from "../config/app";
+import { appendRawAiInteraction } from "../logging/aiInteractions";
 import { log } from "../logging/logger";
 import type { AiPromptContext, AiProvider, AiResponse, AiToolDefinition, AiToolStep } from "./provider";
 import { GeminiProvider } from "./providers/gemini";
@@ -76,6 +77,7 @@ export class AiRouter {
     for (let attempt = 0; attempt <= PROVIDER_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
         const response = await this.provider.complete({
+          traceId,
           system: this.systemPrompt,
           context,
           userMessage,
@@ -90,6 +92,13 @@ export class AiRouter {
         });
         return response;
       } catch (error) {
+        appendRawAiInteraction({
+          traceId,
+          provider: this.providerName,
+          model: this.model,
+          direction: "error",
+          payload: error,
+        });
         const retryDelay = PROVIDER_RETRY_DELAYS_MS[attempt];
         if (retryDelay === undefined || !isTransientProviderError(error)) {
           log.error(traceId, "ai.failed", { error, attempt: attempt + 1 });
