@@ -39,6 +39,7 @@
     "workspaceRoot": "..",
     "allowedReadRoots": [".."],
     "allowedWriteRoots": [".", "../skills"],
-    "deniedPaths": ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"]
+    "deniedPaths": ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
+    "desktopCaptureRequiresConfirmation": false
   }
 }

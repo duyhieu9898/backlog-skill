@@ -176,7 +176,7 @@ export class AgentToolLoop {
     return `Đã dừng sau ${MAX_TOOL_STEPS} bước tool để tránh vòng lặp tự động. Hãy thu hẹp yêu cầu hoặc thử lại.`;
   }
 
-  async consumeConfirmation(message: StandardMessage): Promise<string | null> {
+  async consumeConfirmation(message: StandardMessage, onArtifact?: (artifactId: string) => void): Promise<string | null> {
     const text = message.text.trim().toLowerCase();
     if (!text.startsWith("confirm")) return null;
     const pending = getPendingConfirmation(message.chatId);
@@ -218,6 +218,9 @@ export class AgentToolLoop {
       chatId: message.chatId,
       confirmationGranted: true,
     });
+    if (result.code === "DESKTOP_CAPTURED" && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
+      onArtifact?.((result.data as { artifactId: string }).artifactId);
+    }
     log.info(message.traceId, "ai.tool.confirmed", {
       toolName: prepared.call.name,
       ok: result.ok,

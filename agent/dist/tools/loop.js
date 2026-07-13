@@ -153,7 +153,7 @@ class AgentToolLoop {
         }
         return `Đã dừng sau ${MAX_TOOL_STEPS} bước tool để tránh vòng lặp tự động. Hãy thu hẹp yêu cầu hoặc thử lại.`;
     }
-    async consumeConfirmation(message) {
+    async consumeConfirmation(message, onArtifact) {
         const text = message.text.trim().toLowerCase();
         if (!text.startsWith("confirm"))
             return null;
@@ -195,6 +195,9 @@ class AgentToolLoop {
             chatId: message.chatId,
             confirmationGranted: true,
         });
+        if (result.code === "DESKTOP_CAPTURED" && typeof result.data?.artifactId === "string") {
+            onArtifact?.(result.data.artifactId);
+        }
         logger_1.log.info(message.traceId, "ai.tool.confirmed", {
             toolName: prepared.call.name,
             ok: result.ok,

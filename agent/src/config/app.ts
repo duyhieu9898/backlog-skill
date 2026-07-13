@@ -36,6 +36,7 @@ export type AgentConfig = {
     allowedWriteRoots: string[];
     deniedPaths: string[];
     desktopAppIds?: string[];
+    desktopCaptureRequiresConfirmation?: boolean;
   };
 };
 

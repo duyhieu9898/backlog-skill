@@ -16,6 +16,7 @@ export type PermissionPolicyConfig = {
   allowedWriteRoots: string[];
   deniedPaths: string[];
   desktopAppIds?: string[];
+  desktopCaptureRequiresConfirmation?: boolean;
 };
 
 export type PermissionContext = {
@@ -104,6 +105,7 @@ export class PermissionPolicy {
   private readonly allowedWriteRoots: string[];
   private readonly deniedPaths: string[];
   private readonly desktopAppIds: Set<string>;
+  private readonly desktopCaptureRequiresConfirmation: boolean;
 
   constructor(config: PermissionPolicyConfig) {
     this.workspaceRoot = canonicalizePolicyPath(config.workspaceRoot);
@@ -111,6 +113,7 @@ export class PermissionPolicy {
     this.allowedWriteRoots = normalizeRoots(config.allowedWriteRoots);
     this.deniedPaths = normalizeRoots(config.deniedPaths);
     this.desktopAppIds = new Set(config.desktopAppIds || []);
+    this.desktopCaptureRequiresConfirmation = config.desktopCaptureRequiresConfirmation !== false;
     for (const writeRoot of this.allowedWriteRoots) {
       if (!this.allowedReadRoots.some((readRoot) => isWithin(writeRoot, readRoot))) {
         throw new Error(`Allowed write root must be contained by an allowed read root: ${writeRoot}`);
@@ -206,7 +209,7 @@ export class PermissionPolicy {
     ) {
       return denied(action, "UNKNOWN_DISPLAY", `Desktop display is not available: ${action.displayId}`);
     }
-    if (!context.confirmationGranted) {
+    if (!(action.kind === "desktop.capture" && !this.desktopCaptureRequiresConfirmation) && !context.confirmationGranted) {
       return {
         outcome: "confirm",
         reasonCode: "CONFIRMATION_REQUIRED",

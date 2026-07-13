@@ -155,7 +155,7 @@ export class Router {
       return handleDebugCommand(text, this.registry);
     }
 
-    const toolConfirmed = await this.toolLoop.consumeConfirmation(message);
+    const toolConfirmed = await this.toolLoop.consumeConfirmation(message, onArtifact);
     if (toolConfirmed) return toolConfirmed;
     const confirmed = await this.consumeConfirmation(message);
     if (confirmed) return confirmed;

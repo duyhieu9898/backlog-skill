@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { DesktopRegistry } = require("../dist/desktop/registry");
-const { LinuxX11DesktopAdapter, UnavailableDesktopAdapter } = require("../dist/desktop/adapter");
+const { scrotScreenshotArgs, LinuxX11DesktopAdapter, UnavailableDesktopAdapter } = require("../dist/desktop/adapter");
 const { logDesktopEvent } = require("../dist/desktop/events");
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 const { listTraceEvents } = require("../dist/storage/repositories");
@@ -34,13 +34,12 @@ test("desktop registry validates declared app IDs", () => {
   assert.throws(() => new DesktopRegistry([{ id: "Notes App", label: "Notes" }]), /Invalid desktop app ID/);
 });
 
-test("Linux X11 adapter stays unavailable without a session bus instead of guessing capture", () => {
+test("Linux X11 adapter stays unavailable without a display instead of guessing capture", () => {
   const previousType = process.env.XDG_SESSION_TYPE;
   const previousDisplay = process.env.DISPLAY;
   const previousBus = process.env.DBUS_SESSION_BUS_ADDRESS;
   process.env.XDG_SESSION_TYPE = "x11";
-  process.env.DISPLAY = ":99";
-  delete process.env.DBUS_SESSION_BUS_ADDRESS;
+  delete process.env.DISPLAY;
   try {
     const adapter = new LinuxX11DesktopAdapter();
     assert.equal(adapter.getStatus().capabilities.find((entry) => entry.capability === "screen.capture").available, false);
@@ -49,6 +48,10 @@ test("Linux X11 adapter stays unavailable without a session bus instead of guess
     if (previousDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = previousDisplay;
     if (previousBus === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS; else process.env.DBUS_SESSION_BUS_ADDRESS = previousBus;
   }
+});
+
+test("Linux X11 capture command is fixed and contains no user-controlled shell text", () => {
+  assert.deepEqual(scrotScreenshotArgs("/tmp/screen.png"), ["-o", "/tmp/screen.png"]);
 });
 
 test("desktop actions deny unavailable capabilities and require confirmation when granted", () => {
@@ -64,6 +67,15 @@ test("desktop actions deny unavailable capabilities and require confirmation whe
     ).outcome,
     "allow",
   );
+});
+
+test("desktop capture can be explicitly configured without confirmation while launch remains gated", () => {
+  const policyWithoutCaptureConfirm = new PermissionPolicy({
+    workspaceRoot: process.cwd(), allowedReadRoots: [process.cwd()], allowedWriteRoots: [process.cwd()], deniedPaths: [],
+    desktopAppIds: ["org.example.notes"], desktopCaptureRequiresConfirmation: false,
+  });
+  assert.equal(policyWithoutCaptureConfirm.evaluate({ kind: "desktop.capture", displayId: "display-1" }, { desktopStatus: grantedStatus }).outcome, "allow");
+  assert.equal(policyWithoutCaptureConfirm.evaluate({ kind: "desktop.launch", appId: "org.example.notes" }, { desktopStatus: grantedStatus }).outcome, "confirm");
 });
 
 test("desktop events use the shared trace event store", () => {

@@ -29,7 +29,12 @@ export class UnavailableDesktopAdapter implements DesktopAdapter {
 }
 
 function commandAvailable(command: string): boolean {
-  return spawnSync(command, ["--version"], { stdio: "ignore" }).status === 0;
+  const args = command === "gdbus" ? ["help"] : ["--version"];
+  return spawnSync(command, args, { stdio: "ignore" }).status === 0;
+}
+
+export function scrotScreenshotArgs(file: string): string[] {
+  return ["-o", file];
 }
 
 export class LinuxX11DesktopAdapter implements DesktopActionAdapter {
@@ -38,7 +43,7 @@ export class LinuxX11DesktopAdapter implements DesktopActionAdapter {
 
   constructor() {
     const x11 = process.env.XDG_SESSION_TYPE === "x11" && Boolean(process.env.DISPLAY);
-    this.captureAvailable = x11 && commandAvailable("gdbus") && Boolean(process.env.DBUS_SESSION_BUS_ADDRESS);
+    this.captureAvailable = x11 && commandAvailable("scrot");
     this.launchAvailable = x11 && commandAvailable("gtk-launch");
   }
 
@@ -47,7 +52,7 @@ export class LinuxX11DesktopAdapter implements DesktopActionAdapter {
     return {
       platform: process.platform,
       capabilities: [
-        { capability: "screen.capture", available: this.captureAvailable, permission: { state: this.captureAvailable ? "granted" : "unavailable", detail: this.captureAvailable ? "GNOME Shell D-Bus" : "Requires X11, DBUS_SESSION_BUS_ADDRESS, and gdbus." } },
+        { capability: "screen.capture", available: this.captureAvailable, permission: { state: this.captureAvailable ? "granted" : "unavailable", detail: this.captureAvailable ? "scrot X11 backend" : "Requires X11, DISPLAY, and scrot." } },
         { capability: "app.launch", available: this.launchAvailable, permission: { state: this.launchAvailable ? "granted" : "unavailable", detail: this.launchAvailable ? "gtk-launch desktop-file backend" : "Requires X11 and gtk-launch." } },
         { capability: "ui.observe", available: false, permission: { state: "unavailable" } },
         { capability: "ui.act", available: false, permission: { state: "unavailable" } },
@@ -60,8 +65,8 @@ export class LinuxX11DesktopAdapter implements DesktopActionAdapter {
     const display = process.env.DISPLAY || "";
     if (!this.captureAvailable || (displayId && displayId !== display)) throw new Error("Screen capture is unavailable.");
     const file = path.join(os.tmpdir(), `my-agent-screen-${Date.now()}.png`);
-    const result = spawnSync("gdbus", ["call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell/Screenshot", "--method", "org.gnome.Shell.Screenshot.Screenshot", "false", "false", file], { encoding: "utf8" });
-    if (result.status !== 0 || !fs.existsSync(file)) throw new Error(result.stderr.trim() || "GNOME Shell screenshot failed.");
+    const result = spawnSync("scrot", scrotScreenshotArgs(file), { encoding: "utf8" });
+    if (result.status !== 0 || !fs.existsSync(file)) throw new Error(result.stderr.trim() || "X11 screenshot failed.");
     return { path: file, displayId: display };
   }
 

@@ -118,7 +118,7 @@ class Router {
             logger_1.log.info(message.traceId, normalized.startsWith("/debug ") ? "debug.trace.requested" : "system.status.requested", { command: normalized });
             return (0, debugCommands_1.handleDebugCommand)(text, this.registry);
         }
-        const toolConfirmed = await this.toolLoop.consumeConfirmation(message);
+        const toolConfirmed = await this.toolLoop.consumeConfirmation(message, onArtifact);
         if (toolConfirmed)
             return toolConfirmed;
         const confirmed = await this.consumeConfirmation(message);
