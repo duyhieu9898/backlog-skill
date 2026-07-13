@@ -4,6 +4,7 @@ exports.Router = void 0;
 const app_1 = require("../config/app");
 const commands_1 = require("../commands");
 const hydrator_1 = require("../context/hydrator");
+const compactor_1 = require("../context/compactor");
 const logger_1 = require("../logging/logger");
 const repositories_1 = require("../storage/repositories");
 const loop_1 = require("../tools/loop");
@@ -14,6 +15,7 @@ class Router {
     registry;
     toolLoop;
     hydrator;
+    compactor = new compactor_1.Compactor();
     commandTimeoutMs;
     chatLocks = new Map();
     constructor(registry, toolLoop = new loop_1.AgentToolLoop()) {
@@ -62,6 +64,10 @@ class Router {
                 role: "assistant",
                 content: reply,
                 traceId: message.traceId,
+            });
+            // Tóm tắt lịch sử chạy ngầm (background compaction)
+            this.compactor.compactIfNeeded(message.chatId).catch((err) => {
+                logger_1.log.error(message.traceId, "compaction.trigger.failed", { error: err });
             });
             logger_1.log.info(message.traceId, "route.completed", {});
             return reply;

@@ -18,12 +18,14 @@ function isTransientProviderError(error) {
 class AiRouter {
     provider;
     systemPrompt;
+    customSystemPrompt;
     providerName;
     model;
     cacheableHash;
     sleep;
     constructor(options = {}) {
         const config = (0, app_1.loadAgentConfig)();
+        this.customSystemPrompt = options.systemPrompt;
         this.systemPrompt = options.systemPrompt ?? (0, app_1.loadSystemPrompt)();
         this.providerName = options.providerName ?? config.ai.default;
         const providerConfig = config.ai.providers[config.ai.default];
@@ -54,7 +56,7 @@ class AiRouter {
             };
         }
         const started = Date.now();
-        const activePrompt = (0, app_1.loadSystemPrompt)();
+        const activePrompt = this.customSystemPrompt !== undefined ? this.customSystemPrompt : (0, app_1.loadSystemPrompt)();
         const activeHash = node_crypto_1.default.createHash("sha256").update(activePrompt).digest("hex");
         logger_1.log.info(traceId, "ai.request.created", {
             provider: this.providerName,

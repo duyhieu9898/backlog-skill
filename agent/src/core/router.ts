@@ -9,6 +9,7 @@ import {
   type AgentCommand,
 } from "../commands";
 import { ContextHydrator } from "../context/hydrator";
+import { Compactor } from "../context/compactor";
 import { log } from "../logging/logger";
 import {
   deletePendingConfirmation,
@@ -38,6 +39,7 @@ import {
 
 export class Router {
   private readonly hydrator: ContextHydrator;
+  private readonly compactor = new Compactor();
   private readonly commandTimeoutMs: number;
   private readonly chatLocks = new Map<string, Promise<void>>();
 
@@ -90,6 +92,12 @@ export class Router {
         content: reply,
         traceId: message.traceId,
       });
+
+      // Tóm tắt lịch sử chạy ngầm (background compaction)
+      this.compactor.compactIfNeeded(message.chatId).catch((err) => {
+        log.error(message.traceId, "compaction.trigger.failed", { error: err });
+      });
+
       log.info(message.traceId, "route.completed", {});
       return reply;
     } catch (error) {

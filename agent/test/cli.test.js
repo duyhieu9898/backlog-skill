@@ -9,7 +9,12 @@ const {
   LOCAL_CLI_USER_ID,
   toCliMessage,
 } = require("../dist/adapters/cli");
-const { listRecentChat } = require("../dist/storage/repositories");
+const {
+  listRecentChat,
+  resetSession,
+  insertChatMessage,
+  getUncompactedChatMessages,
+} = require("../dist/storage/repositories");
 const {
   commandPreviewDigest,
   previewCommand,
@@ -101,4 +106,48 @@ test("CLI /reset command clears local chat history", () => {
   assert.equal(messages.length, 1);
   assert.match(messages[0].content, /Đã xóa lịch sử cuộc trò chuyện/);
 });
+
+test("Compactor triggers compaction when session messages exceed 15", async () => {
+  const { Compactor } = require("../dist/context/compactor");
+  const compactor = new Compactor();
+  const chatId = `compaction-test-${Date.now()}`;
+  const sessionId = resetSession(chatId);
+
+  // Insert 16 messages
+  for (let i = 1; i <= 8; i++) {
+    insertChatMessage({
+      chatId,
+      userId: "user",
+      role: "user",
+      content: `User message ${i}`,
+      traceId: `tr_user_${i}`,
+      sessionId,
+    });
+    insertChatMessage({
+      chatId,
+      userId: "agent",
+      role: "assistant",
+      content: `Assistant reply ${i}`,
+      traceId: `tr_agent_${i}`,
+      sessionId,
+    });
+  }
+
+  // Trigger compaction
+  await compactor.compactIfNeeded(chatId);
+
+  // The first 10 messages should be compacted (their session_id changed to sessionId:compacted)
+  // There should be 16 - 10 = 6 messages left, plus 1 system summary message = 7 messages
+  const remaining = getUncompactedChatMessages(chatId, sessionId);
+  assert.equal(remaining.length, 7);
+
+  // The first message of the remaining list should be the system summary
+  assert.equal(remaining[0].role, "system");
+  assert.match(remaining[0].content, /Bản tóm tắt lịch sử cuộc trò chuyện cũ:/);
+
+  // The rest of the messages should be the last 6 messages
+  assert.equal(remaining[1].content, "User message 6");
+  assert.equal(remaining[6].content, "Assistant reply 8");
+});
+
 

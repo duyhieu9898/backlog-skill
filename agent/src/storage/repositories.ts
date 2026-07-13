@@ -178,14 +178,16 @@ export function insertChatMessage(input: {
   content: string;
   traceId: string;
   sessionId?: string;
+  createdAt?: string;
 }): void {
   const sessionId = input.sessionId || getActiveSessionId(input.chatId);
+  const createdAt = input.createdAt || nowIso();
   getDb()
     .prepare(
       `INSERT INTO chat_messages (chat_id, session_id, user_id, role, content, trace_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(input.chatId, sessionId, input.userId, input.role, input.content, input.traceId, nowIso());
+    .run(input.chatId, sessionId, input.userId, input.role, input.content, input.traceId, createdAt);
 }
 
 export function listRecentChat(chatId: string, limit = 20): Array<{
@@ -562,7 +564,30 @@ export function listScheduledRuns(jobName: string, limit = 5): ScheduledRunRow[]
     .all(jobName, limit) as ScheduledRunRow[];
 }
 
-export function clearChatHistory(chatId: string): void {
-  getDb().prepare(`DELETE FROM chat_messages WHERE chat_id = ?`).run(chatId);
+export function getUncompactedChatMessages(chatId: string, sessionId: string): Array<{
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+}> {
+  return getDb()
+    .prepare(
+      `SELECT id, role, content, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND session_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(chatId, sessionId) as Array<{ id: number; role: string; content: string; created_at: string }>;
 }
+
+export function markMessagesAsCompacted(messageIds: number[], compactedSessionId: string): void {
+  const db = getDb();
+  const placeholders = messageIds.map(() => "?").join(",");
+  db.prepare(
+    `UPDATE chat_messages
+     SET session_id = ?
+     WHERE id IN (${placeholders})`,
+  ).run(compactedSessionId, ...messageIds);
+}
+
 

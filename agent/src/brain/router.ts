@@ -19,6 +19,7 @@ function isTransientProviderError(error: unknown): boolean {
 export class AiRouter {
   private readonly provider: AiProvider | null;
   private readonly systemPrompt: string;
+  private readonly customSystemPrompt?: string;
   private readonly providerName: string;
   private readonly model: string;
   private readonly cacheableHash: string;
@@ -32,6 +33,7 @@ export class AiRouter {
     sleep?: (milliseconds: number) => Promise<void>;
   } = {}) {
     const config = loadAgentConfig();
+    this.customSystemPrompt = options.systemPrompt;
     this.systemPrompt = options.systemPrompt ?? loadSystemPrompt();
     this.providerName = options.providerName ?? config.ai.default;
     const providerConfig = config.ai.providers[config.ai.default];
@@ -69,7 +71,7 @@ export class AiRouter {
     }
 
     const started = Date.now();
-    const activePrompt = loadSystemPrompt();
+    const activePrompt = this.customSystemPrompt !== undefined ? this.customSystemPrompt : loadSystemPrompt();
     const activeHash = crypto.createHash("sha256").update(activePrompt).digest("hex");
 
     log.info(traceId, "ai.request.created", {

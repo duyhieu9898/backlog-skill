@@ -32,7 +32,8 @@ exports.claimDueScheduledJob = claimDueScheduledJob;
 exports.updateScheduledJobState = updateScheduledJobState;
 exports.recordScheduledRun = recordScheduledRun;
 exports.listScheduledRuns = listScheduledRuns;
-exports.clearChatHistory = clearChatHistory;
+exports.getUncompactedChatMessages = getUncompactedChatMessages;
+exports.markMessagesAsCompacted = markMessagesAsCompacted;
 const node_crypto_1 = require("node:crypto");
 const db_1 = require("./db");
 function insertArtifact(row) {
@@ -103,10 +104,11 @@ function resetSession(chatId) {
 }
 function insertChatMessage(input) {
     const sessionId = input.sessionId || getActiveSessionId(input.chatId);
+    const createdAt = input.createdAt || nowIso();
     (0, db_1.getDb)()
         .prepare(`INSERT INTO chat_messages (chat_id, session_id, user_id, role, content, trace_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .run(input.chatId, sessionId, input.userId, input.role, input.content, input.traceId, nowIso());
+        .run(input.chatId, sessionId, input.userId, input.role, input.content, input.traceId, createdAt);
 }
 function listRecentChat(chatId, limit = 20) {
     const sessionId = getActiveSessionId(chatId);
@@ -300,6 +302,18 @@ function listScheduledRuns(jobName, limit = 5) {
        LIMIT ?`)
         .all(jobName, limit);
 }
-function clearChatHistory(chatId) {
-    (0, db_1.getDb)().prepare(`DELETE FROM chat_messages WHERE chat_id = ?`).run(chatId);
+function getUncompactedChatMessages(chatId, sessionId) {
+    return (0, db_1.getDb)()
+        .prepare(`SELECT id, role, content, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND session_id = ?
+       ORDER BY created_at ASC, id ASC`)
+        .all(chatId, sessionId);
+}
+function markMessagesAsCompacted(messageIds, compactedSessionId) {
+    const db = (0, db_1.getDb)();
+    const placeholders = messageIds.map(() => "?").join(",");
+    db.prepare(`UPDATE chat_messages
+     SET session_id = ?
+     WHERE id IN (${placeholders})`).run(compactedSessionId, ...messageIds);
 }
