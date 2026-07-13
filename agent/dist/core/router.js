@@ -90,7 +90,7 @@ class Router {
         if (normalized === "/reset") {
             const newSessionId = (0, repositories_1.resetSession)(message.chatId);
             logger_1.log.info(message.traceId, "chat.history.reset", { chatId: message.chatId, newSessionId });
-            return "Đã xóa lịch sử cuộc trò chuyện. Phiên mới bắt đầu!";
+            return "Đã bắt đầu phiên trò chuyện mới. Lịch sử cũ đã được lưu trữ!";
         }
         if (normalized === "/schedule") {
             return (0, scheduler_1.formatScheduleList)((0, scheduler_1.loadScheduledChecks)());

@@ -20,10 +20,11 @@ import { logDesktopEvent } from "./computer/events";
 import { PermissionPolicy } from "../security/permissionPolicy";
 import { loadAgentConfig } from "../config/app";
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import type { DesktopToolAction, FileToolAction, ToolResult } from "./contracts";
+import type { DesktopToolAction, FileToolAction, ToolResult, BrowserToolAction } from "./contracts";
+import { browserService } from "../browser/browser-service";
 import { validateJsonSchema, type JsonSchema } from "./schema";
 
 export type PreparedToolCall = {
@@ -35,6 +36,7 @@ export type PreparedToolCall = {
   command?: AgentCommand;
   fileAction?: FileToolAction;
   desktopAction?: DesktopToolAction;
+  browserAction?: BrowserToolAction;
   computerInput?: ComputerInput | ComputerLaunch | { action: "screenshot"; displayId?: string };
   webCapture?: { url: string };
   blocked?: ToolResult;
@@ -147,6 +149,42 @@ const webCaptureDefinition: AiToolDefinition = {
   inputSchema: { type: "object", properties: { url: { type: "string", minLength: 12, maxLength: 2048 } }, required: ["url"], additionalProperties: false },
 };
 
+const browserDefinition: AiToolDefinition = {
+  name: "browser",
+  description: "Interact with the managed Chromium browser. Open URLs, navigate, close tabs, list tabs, focus tabs, and take screenshots.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["status", "start", "stop", "tabs", "open", "focus", "close", "navigate", "snapshot", "act", "screenshot"]
+      },
+      profile: { type: "string" },
+      url: { type: "string" },
+      targetId: { type: "string" },
+      fullPage: { type: "boolean" },
+      ref: { type: "string" },
+      request: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: ["click", "fill", "type", "press", "select", "scroll", "wait"] },
+          ref: { type: "string" },
+          value: { type: "string" },
+          text: { type: "string" },
+          key: { type: "string" },
+          direction: { type: "string", enum: ["up", "down"] },
+          amount: { type: "integer" },
+          milliseconds: { type: "integer" },
+          snapshotId: { type: "string" }
+        },
+        required: ["kind"]
+      }
+    },
+    required: ["action"],
+    additionalProperties: false
+  }
+};
+
 function publicHttpsUrl(value: unknown): string {
   if (typeof value !== "string") throw new Error("web.capture requires arguments.url.");
   let url: URL;
@@ -210,6 +248,18 @@ function computerInput(call: AiToolCall): ComputerInput | ComputerLaunch | { act
   throw new Error(`Unsupported computer action: ${String(input.action)}`);
 }
 
+function resizeImage(filePath: string): void {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    spawnSync("python3", [
+      "-c",
+      `from PIL import Image; im = Image.open("${filePath}"); im.thumbnail((768, 768)); im.save("${filePath}", "PNG")`
+    ]);
+  } catch (error) {
+    console.error("Failed to resize image:", error);
+  }
+}
+
 export class ToolExecutor {
   constructor(
     private readonly files = new FileTools(),
@@ -234,7 +284,7 @@ export class ToolExecutor {
     if (scope?.desktopOnly) return [computerDefinition];
     if (scope?.webOnly) return [webCaptureDefinition];
     const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-    return [...files, ...commandDefinitions, computerDefinition, webCaptureDefinition].sort((a, b) => a.name.localeCompare(b.name));
+    return [...files, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   prepare(call: AiToolCall, traceId: string, definitions = this.definitions(), chatId?: string): PreparedToolCall {
@@ -315,6 +365,38 @@ export class ToolExecutor {
       return { call, key: "web.capture", digest: digest({ url }), preview: `web.capture: ${url}`, requiresConfirmation: false, webCapture: { url } };
     }
 
+    if (call.name === "browser") {
+      const args = call.arguments as Record<string, any>;
+      const action: BrowserToolAction = {
+        kind: `browser.${args.action}`,
+        ...args
+      } as unknown as BrowserToolAction;
+      const config = loadAgentConfig();
+      const decision = new PermissionPolicy(config.permissions).evaluate(action);
+      const actionDigest = digest(action);
+
+      if (decision.outcome === "deny") {
+        return {
+          call,
+          key: "browser",
+          digest: actionDigest,
+          preview: decision.reason,
+          requiresConfirmation: false,
+          blocked: { ok: false, code: decision.reasonCode, summary: decision.reason },
+          browserAction: action,
+        };
+      }
+
+      return {
+        call,
+        key: "browser",
+        digest: actionDigest,
+        preview: `browser.${args.action}: ${JSON.stringify(call.arguments)}`,
+        requiresConfirmation: decision.outcome === "confirm",
+        browserAction: action,
+      };
+    }
+
     const action = fileAction(call);
     const actionDigest = digest(action);
     const requiresConfirmation = ["file.mkdir", "file.write", "file.patch"].includes(call.name);
@@ -384,6 +466,7 @@ export class ToolExecutor {
         if (prepared.computerInput.action === "screenshot") {
           if (!("capture" in adapter) || typeof adapter.capture !== "function") throw new Error("Desktop adapter cannot capture.");
           const captured = adapter.capture(prepared.computerInput.displayId);
+          resizeImage(captured.path);
           const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(captured.path) });
           fs.rmSync(captured.path, { force: true });
           const frame = computerController.observe(input.chatId, captured.displayId);
@@ -399,6 +482,7 @@ export class ToolExecutor {
           if (!app) throw new Error(`Launched app is no longer configured: ${launched.appId}`);
           const focused = await waitForFocusedWindow(actionAdapter, app.label);
           const captured = actionAdapter.capture(prepared.computerInput.displayId);
+          resizeImage(captured.path);
           const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(captured.path) });
           fs.rmSync(captured.path, { force: true });
           const frame = computerController.observe(input.chatId, captured.displayId);
@@ -416,6 +500,7 @@ export class ToolExecutor {
         try {
           if (!("capture" in adapter) || typeof adapter.capture !== "function") throw new Error("Desktop adapter cannot capture.");
           const captured = adapter.capture(computerController.currentDisplay(input.chatId));
+          resizeImage(captured.path);
           const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(captured.path) });
           fs.rmSync(captured.path, { force: true });
           const frame = computerController.observe(input.chatId, captured.displayId);
@@ -431,15 +516,102 @@ export class ToolExecutor {
       }
     }
     if (prepared.webCapture) {
-      const file = path.join(os.tmpdir(), `my-agent-web-${Date.now()}.png`);
       try {
-        const result = spawnSync("google-chrome", ["--headless", "--disable-gpu", "--hide-scrollbars", "--window-size=1440,1080", `--screenshot=${file}`, "--virtual-time-budget=3000", prepared.webCapture.url], { encoding: "utf8", timeout: 30_000 });
-        if (result.status !== 0 || !fs.existsSync(file)) throw new Error(result.stderr.trim() || "Chrome capture failed.");
-        const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(file) });
-        return { ok: true, code: "WEB_CAPTURED", summary: `Captured ${prepared.webCapture.url}.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
+        const child = spawn("google-chrome", [prepared.webCapture.url], { detached: true, stdio: "ignore" });
+        child.unref();
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const adapter = getDesktopAdapter();
+        if (!("capture" in adapter) || typeof adapter.capture !== "function") {
+          throw new Error("Desktop adapter capture is unavailable for interactive mode.");
+        }
+        const captured = adapter.capture();
+        resizeImage(captured.path);
+        const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(captured.path) });
+        fs.rmSync(captured.path, { force: true });
+        return { ok: true, code: "WEB_CAPTURED", summary: `Opened ${prepared.webCapture.url} interactively and captured screen.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
+      } catch (guiError) {
+        const file = path.join(os.tmpdir(), `my-agent-web-${Date.now()}.png`);
+        try {
+          const result = spawnSync("google-chrome", ["--headless", "--disable-gpu", "--hide-scrollbars", "--window-size=1440,1080", `--screenshot=${file}`, "--virtual-time-budget=3000", prepared.webCapture.url], { encoding: "utf8", timeout: 30_000 });
+          if (result.status !== 0 || !fs.existsSync(file)) throw new Error(result.stderr.trim() || "Headless Chrome fallback capture failed.");
+          resizeImage(file);
+          const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(file) });
+          return { ok: true, code: "WEB_CAPTURED", summary: `Captured ${prepared.webCapture.url} via headless fallback.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
+        } catch (error) {
+          return { ok: false, code: "WEB_CAPTURE_FAILED", summary: `Web capture failed (GUI: ${guiError instanceof Error ? guiError.message : String(guiError)}; Headless: ${error instanceof Error ? error.message : String(error)})` };
+        } finally { fs.rmSync(file, { force: true }); }
+      }
+    }
+    if (prepared.browserAction) {
+      const action = prepared.browserAction;
+      const actionArgs = prepared.call.arguments as Record<string, any>;
+      const profile = actionArgs.profile;
+
+      try {
+        switch (action.kind) {
+          case "browser.status": {
+            const res = await browserService.start(profile);
+            return { ok: true, code: "BROWSER_STATUS", summary: `Browser profile "${res.profile}" is running.`, data: { browser: { running: true, profile: res.profile } } };
+          }
+          case "browser.start": {
+            const res = await browserService.start(profile);
+            return { ok: true, code: "BROWSER_STARTED", summary: `Browser started profile "${res.profile}".`, data: { browser: { running: true, profile: res.profile } } };
+          }
+          case "browser.stop": {
+            await browserService.stop(profile);
+            return { ok: true, code: "BROWSER_STOPPED", summary: `Browser stopped profile "${profile || "agent"}".`, data: { browser: { running: false, profile: profile || "agent" } } };
+          }
+          case "browser.tabs": {
+            const tabs = await browserService.listTabs(profile);
+            return { ok: true, code: "BROWSER_TABS", summary: `Found ${tabs.length} open tab(s).`, data: { tabs } };
+          }
+          case "browser.open": {
+            const tab = await browserService.open(profile, actionArgs.url);
+            return { ok: true, code: "BROWSER_OPENED", summary: `Opened ${actionArgs.url} in ${tab.targetId}.`, data: { target: tab } };
+          }
+          case "browser.focus": {
+            const tab = await browserService.focus(profile, actionArgs.targetId);
+            return { ok: true, code: "BROWSER_FOCUSED", summary: `Focused tab ${tab.targetId}.`, data: { target: tab } };
+          }
+          case "browser.close": {
+            await browserService.close(profile, actionArgs.targetId);
+            return { ok: true, code: "BROWSER_CLOSED", summary: `Closed tab ${actionArgs.targetId}.` };
+          }
+          case "browser.navigate": {
+            const tab = await browserService.navigate(profile, actionArgs.targetId, actionArgs.url);
+            return { ok: true, code: "BROWSER_NAVIGATED", summary: `Navigated tab ${tab.targetId} to ${actionArgs.url}.`, data: { target: tab } };
+          }
+          case "browser.screenshot": {
+            const artifact = await browserService.screenshot(profile, actionArgs.targetId, {
+              fullPage: actionArgs.fullPage,
+              chatId: input.chatId,
+              traceId: input.traceId
+            });
+            return {
+              ok: true,
+              code: "BROWSER_SCREENSHOT",
+              summary: "Page screenshot captured.",
+              data: {
+                artifactId: artifact.id,
+                artifact: {
+                  id: artifact.id,
+                  type: "image",
+                  mimeType: "image/png",
+                  path: artifact.path
+                }
+              }
+            };
+          }
+          case "browser.snapshot":
+          case "browser.act": {
+            return { ok: false, code: "NOT_IMPLEMENTED", summary: `${action.kind} is not implemented in US-020 (reserved for US-021).` };
+          }
+          default:
+            return { ok: false, code: "UNKNOWN_BROWSER_ACTION", summary: `Unknown action kind: ${(action as any).kind}` };
+        }
       } catch (error) {
-        return { ok: false, code: "WEB_CAPTURE_FAILED", summary: error instanceof Error ? error.message : String(error) };
-      } finally { fs.rmSync(file, { force: true }); }
+        return { ok: false, code: "BROWSER_ERROR", summary: error instanceof Error ? error.message : String(error) };
+      }
     }
     if (!prepared.fileAction) throw new Error("Prepared tool call has no executable action.");
     return this.files.execute(prepared.fileAction, {

@@ -68,16 +68,35 @@ export type DesktopActAction = {
   operation: "click" | "type" | "key" | "scroll";
 };
 
+import type { BrowserActionRequest } from "../browser/types";
+
+export type BrowserToolAction =
+  | { kind: "browser.status"; profile?: string }
+  | { kind: "browser.start"; profile?: string }
+  | { kind: "browser.stop"; profile?: string }
+  | { kind: "browser.tabs"; profile?: string }
+  | { kind: "browser.open"; profile?: string; url: string }
+  | { kind: "browser.focus"; profile?: string; targetId: string }
+  | { kind: "browser.close"; profile?: string; targetId: string }
+  | { kind: "browser.navigate"; profile?: string; targetId: string; url: string }
+  | { kind: "browser.snapshot"; profile?: string; targetId: string }
+  | { kind: "browser.act"; profile?: string; targetId: string; request: BrowserActionRequest }
+  | { kind: "browser.screenshot"; profile?: string; targetId: string; fullPage?: boolean; ref?: string };
+
 export type DesktopToolAction =
   | DesktopCaptureAction
   | DesktopLaunchAction
   | DesktopObserveAction
   | DesktopActAction;
 
-export type ToolAction = FileToolAction | CommandRunAction | DesktopToolAction;
+export type ToolAction = FileToolAction | CommandRunAction | DesktopToolAction | BrowserToolAction;
 
 export function isDesktopToolAction(action: ToolAction | NormalizedToolAction): action is DesktopToolAction {
   return action.kind.startsWith("desktop.");
+}
+
+export function isBrowserToolAction(action: ToolAction | NormalizedToolAction): action is BrowserToolAction {
+  return action.kind.startsWith("browser.");
 }
 
 export type PolicyReasonCode =
@@ -96,7 +115,8 @@ export type PolicyReasonCode =
 export type NormalizedToolAction =
   | FileToolAction
   | CommandRunAction
-  | DesktopToolAction;
+  | DesktopToolAction
+  | BrowserToolAction;
 
 export type PolicyDecision =
   | {

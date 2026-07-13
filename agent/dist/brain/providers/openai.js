@@ -29,7 +29,7 @@ class OpenAiProvider {
             messages: [
                 { role: "system", content: input.system },
                 ...input.context.history.map((entry) => ({
-                    role: entry.role === "assistant" ? "assistant" : "user",
+                    role: entry.role === "assistant" ? "assistant" : entry.role === "system" ? "system" : "user",
                     content: entry.content,
                 })),
                 {

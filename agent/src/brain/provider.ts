@@ -20,7 +20,7 @@ export type AiToolStep = {
 };
 
 export type AiChatTurn = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
 };
 
@@ -28,6 +28,7 @@ export type AiRuntimeContext = {
   currentTime: string;
   timezone: string;
   locale: string;
+  lastFailureSummary?: string;
 };
 
 export type AiToolScope = {

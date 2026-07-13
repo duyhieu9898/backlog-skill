@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { isDesktopToolAction } from "../tools/contracts";
+import { isDesktopToolAction, isBrowserToolAction } from "../tools/contracts";
 import type {
   DesktopToolAction,
+  BrowserToolAction,
   NormalizedToolAction,
   PolicyDecision,
   ToolAction,
@@ -74,8 +75,8 @@ function normalizeAction(action: ToolAction): NormalizedToolAction {
   if (action.kind === "command.run") {
     return { ...action, cwd: canonicalizePolicyPath(action.cwd) };
   }
-  if (isDesktopToolAction(action)) return action;
-  return { ...action, path: canonicalizePolicyPath(action.path) };
+  if (isDesktopToolAction(action) || isBrowserToolAction(action)) return action;
+  return { ...action, path: canonicalizePolicyPath((action as any).path) };
 }
 
 function desktopCapability(action: DesktopToolAction): DesktopStatus["capabilities"][number]["capability"] {
@@ -136,6 +137,10 @@ export class PermissionPolicy {
 
     if (isDesktopToolAction(normalized)) {
       return this.evaluateDesktop(normalized, context);
+    }
+
+    if (isBrowserToolAction(normalized)) {
+      return this.evaluateBrowser(normalized, context);
     }
 
     const target = normalized.kind === "command.run" ? normalized.cwd : normalized.path;
@@ -221,6 +226,15 @@ export class PermissionPolicy {
       outcome: "allow",
       reasonCode: "ALLOWED",
       reason: `${action.kind} is allowed by policy.`,
+      action,
+    };
+  }
+
+  private evaluateBrowser(action: BrowserToolAction, context: PermissionContext): PolicyDecision {
+    return {
+      outcome: "allow",
+      reasonCode: "ALLOWED",
+      reason: "Browser action is allowed by policy.",
       action,
     };
   }

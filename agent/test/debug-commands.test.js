@@ -37,11 +37,10 @@ test("status, help, command, and skill output include required fields", () => {
   const status = handleDebugCommand("/status", registry);
   assert.match(status, /uptime:/);
   assert.match(status, /current:/);
-  assert.match(status, /last scheduled:/);
+  assert.match(status, /model:/);
   assert.match(status, /pending confirmations:/);
   assert.match(status, /loaded commands: \d+/);
-  assert.match(status, /loaded skills: 3/);
-  assert.match(status, /sqlite:/);
+  assert.match(status, /loaded skills: 4/);
 
   const commands = handleDebugCommand("/commands", registry);
   assert.match(commands, /bemo/);

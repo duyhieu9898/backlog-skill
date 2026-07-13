@@ -7,19 +7,28 @@ const trace_1 = require("../logging/trace");
 const logger_1 = require("../logging/logger");
 class Compactor {
     ai = new router_1.AiRouter();
+    activeCompactions = new Set();
     async compactIfNeeded(chatId) {
+        if (this.activeCompactions.has(chatId)) {
+            logger_1.log.info("compactor", "compaction.skipped.already_running", { chatId });
+            return;
+        }
         const sessionId = (0, repositories_1.getActiveSessionId)(chatId);
         const messages = (0, repositories_1.getUncompactedChatMessages)(chatId, sessionId);
         // Chỉ compaction khi số tin nhắn vượt quá 15
         if (messages.length <= 15) {
             return;
         }
+        this.activeCompactions.add(chatId);
         const traceId = (0, trace_1.generateTraceId)();
         logger_1.log.info(traceId, "compaction.started", { chatId, sessionId, totalMessages: messages.length });
         // Lấy 10 tin nhắn đầu tiên để tóm tắt
         const targetMessages = messages.slice(0, 10);
         const formattedHistory = targetMessages
-            .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
+            .map((m) => {
+            const roleLabel = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
+            return `${roleLabel}: ${m.content}`;
+        })
             .join("\n\n");
         const systemPrompt = [
             "Bạn là trợ lý ảo lưu trữ. Nhiệm vụ của bạn là đọc lịch sử chat dưới đây và tóm tắt nó thành một đoạn tóm tắt cực kỳ ngắn gọn (dưới 500 ký tự).",
@@ -66,6 +75,9 @@ class Compactor {
         catch (err) {
             logger_1.log.error(traceId, "compaction.failed", { error: err });
             throw err;
+        }
+        finally {
+            this.activeCompactions.delete(chatId);
         }
     }
 }

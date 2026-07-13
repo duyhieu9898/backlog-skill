@@ -18,6 +18,7 @@ const node_fs_1 = __importDefault(require("node:fs"));
 const node_child_process_1 = require("node:child_process");
 const node_os_1 = __importDefault(require("node:os"));
 const node_path_1 = __importDefault(require("node:path"));
+const browser_service_1 = require("../browser/browser-service");
 const schema_1 = require("./schema");
 const emptyObjectSchema = {
     type: "object",
@@ -122,6 +123,41 @@ const webCaptureDefinition = {
     description: "Open one public HTTPS URL in local headless Chrome, wait briefly for rendering, and return a PNG screenshot artifact. Use this for a user-supplied website screenshot.",
     inputSchema: { type: "object", properties: { url: { type: "string", minLength: 12, maxLength: 2048 } }, required: ["url"], additionalProperties: false },
 };
+const browserDefinition = {
+    name: "browser",
+    description: "Interact with the managed Chromium browser. Open URLs, navigate, close tabs, list tabs, focus tabs, and take screenshots.",
+    inputSchema: {
+        type: "object",
+        properties: {
+            action: {
+                type: "string",
+                enum: ["status", "start", "stop", "tabs", "open", "focus", "close", "navigate", "snapshot", "act", "screenshot"]
+            },
+            profile: { type: "string" },
+            url: { type: "string" },
+            targetId: { type: "string" },
+            fullPage: { type: "boolean" },
+            ref: { type: "string" },
+            request: {
+                type: "object",
+                properties: {
+                    kind: { type: "string", enum: ["click", "fill", "type", "press", "select", "scroll", "wait"] },
+                    ref: { type: "string" },
+                    value: { type: "string" },
+                    text: { type: "string" },
+                    key: { type: "string" },
+                    direction: { type: "string", enum: ["up", "down"] },
+                    amount: { type: "integer" },
+                    milliseconds: { type: "integer" },
+                    snapshotId: { type: "string" }
+                },
+                required: ["kind"]
+            }
+        },
+        required: ["action"],
+        additionalProperties: false
+    }
+};
 function publicHttpsUrl(value) {
     if (typeof value !== "string")
         throw new Error("web.capture requires arguments.url.");
@@ -186,6 +222,19 @@ function computerInput(call) {
     }
     throw new Error(`Unsupported computer action: ${String(input.action)}`);
 }
+function resizeImage(filePath) {
+    try {
+        if (!node_fs_1.default.existsSync(filePath))
+            return;
+        (0, node_child_process_1.spawnSync)("python3", [
+            "-c",
+            `from PIL import Image; im = Image.open("${filePath}"); im.thumbnail((768, 768)); im.save("${filePath}", "PNG")`
+        ]);
+    }
+    catch (error) {
+        console.error("Failed to resize image:", error);
+    }
+}
 class ToolExecutor {
     files;
     catalogLoader;
@@ -211,7 +260,7 @@ class ToolExecutor {
         if (scope?.webOnly)
             return [webCaptureDefinition];
         const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-        return [...files, ...commandDefinitions, computerDefinition, webCaptureDefinition].sort((a, b) => a.name.localeCompare(b.name));
+        return [...files, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
     }
     prepare(call, traceId, definitions = this.definitions(), chatId) {
         const definition = definitions.find((tool) => tool.name === call.name);
@@ -291,6 +340,35 @@ class ToolExecutor {
             const url = publicHttpsUrl(call.arguments.url);
             return { call, key: "web.capture", digest: digest({ url }), preview: `web.capture: ${url}`, requiresConfirmation: false, webCapture: { url } };
         }
+        if (call.name === "browser") {
+            const args = call.arguments;
+            const action = {
+                kind: `browser.${args.action}`,
+                ...args
+            };
+            const config = (0, app_1.loadAgentConfig)();
+            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(action);
+            const actionDigest = digest(action);
+            if (decision.outcome === "deny") {
+                return {
+                    call,
+                    key: "browser",
+                    digest: actionDigest,
+                    preview: decision.reason,
+                    requiresConfirmation: false,
+                    blocked: { ok: false, code: decision.reasonCode, summary: decision.reason },
+                    browserAction: action,
+                };
+            }
+            return {
+                call,
+                key: "browser",
+                digest: actionDigest,
+                preview: `browser.${args.action}: ${JSON.stringify(call.arguments)}`,
+                requiresConfirmation: decision.outcome === "confirm",
+                browserAction: action,
+            };
+        }
         const action = fileAction(call);
         const actionDigest = digest(action);
         const requiresConfirmation = ["file.mkdir", "file.write", "file.patch"].includes(call.name);
@@ -360,6 +438,7 @@ class ToolExecutor {
                     if (!("capture" in adapter) || typeof adapter.capture !== "function")
                         throw new Error("Desktop adapter cannot capture.");
                     const captured = adapter.capture(prepared.computerInput.displayId);
+                    resizeImage(captured.path);
                     const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
                     node_fs_1.default.rmSync(captured.path, { force: true });
                     const frame = computerController.observe(input.chatId, captured.displayId);
@@ -378,6 +457,7 @@ class ToolExecutor {
                         throw new Error(`Launched app is no longer configured: ${launched.appId}`);
                     const focused = await waitForFocusedWindow(actionAdapter, app.label);
                     const captured = actionAdapter.capture(prepared.computerInput.displayId);
+                    resizeImage(captured.path);
                     const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
                     node_fs_1.default.rmSync(captured.path, { force: true });
                     const frame = computerController.observe(input.chatId, captured.displayId);
@@ -398,6 +478,7 @@ class ToolExecutor {
                     if (!("capture" in adapter) || typeof adapter.capture !== "function")
                         throw new Error("Desktop adapter cannot capture.");
                     const captured = adapter.capture(computerController.currentDisplay(input.chatId));
+                    resizeImage(captured.path);
                     const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
                     node_fs_1.default.rmSync(captured.path, { force: true });
                     const frame = computerController.observe(input.chatId, captured.displayId);
@@ -415,19 +496,107 @@ class ToolExecutor {
             }
         }
         if (prepared.webCapture) {
-            const file = node_path_1.default.join(node_os_1.default.tmpdir(), `my-agent-web-${Date.now()}.png`);
             try {
-                const result = (0, node_child_process_1.spawnSync)("google-chrome", ["--headless", "--disable-gpu", "--hide-scrollbars", "--window-size=1440,1080", `--screenshot=${file}`, "--virtual-time-budget=3000", prepared.webCapture.url], { encoding: "utf8", timeout: 30_000 });
-                if (result.status !== 0 || !node_fs_1.default.existsSync(file))
-                    throw new Error(result.stderr.trim() || "Chrome capture failed.");
-                const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(file) });
-                return { ok: true, code: "WEB_CAPTURED", summary: `Captured ${prepared.webCapture.url}.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
+                const child = (0, node_child_process_1.spawn)("google-chrome", [prepared.webCapture.url], { detached: true, stdio: "ignore" });
+                child.unref();
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+                const adapter = (0, linux_x11_1.getDesktopAdapter)();
+                if (!("capture" in adapter) || typeof adapter.capture !== "function") {
+                    throw new Error("Desktop adapter capture is unavailable for interactive mode.");
+                }
+                const captured = adapter.capture();
+                resizeImage(captured.path);
+                const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
+                node_fs_1.default.rmSync(captured.path, { force: true });
+                return { ok: true, code: "WEB_CAPTURED", summary: `Opened ${prepared.webCapture.url} interactively and captured screen.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
+            }
+            catch (guiError) {
+                const file = node_path_1.default.join(node_os_1.default.tmpdir(), `my-agent-web-${Date.now()}.png`);
+                try {
+                    const result = (0, node_child_process_1.spawnSync)("google-chrome", ["--headless", "--disable-gpu", "--hide-scrollbars", "--window-size=1440,1080", `--screenshot=${file}`, "--virtual-time-budget=3000", prepared.webCapture.url], { encoding: "utf8", timeout: 30_000 });
+                    if (result.status !== 0 || !node_fs_1.default.existsSync(file))
+                        throw new Error(result.stderr.trim() || "Headless Chrome fallback capture failed.");
+                    resizeImage(file);
+                    const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(file) });
+                    return { ok: true, code: "WEB_CAPTURED", summary: `Captured ${prepared.webCapture.url} via headless fallback.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
+                }
+                catch (error) {
+                    return { ok: false, code: "WEB_CAPTURE_FAILED", summary: `Web capture failed (GUI: ${guiError instanceof Error ? guiError.message : String(guiError)}; Headless: ${error instanceof Error ? error.message : String(error)})` };
+                }
+                finally {
+                    node_fs_1.default.rmSync(file, { force: true });
+                }
+            }
+        }
+        if (prepared.browserAction) {
+            const action = prepared.browserAction;
+            const actionArgs = prepared.call.arguments;
+            const profile = actionArgs.profile;
+            try {
+                switch (action.kind) {
+                    case "browser.status": {
+                        const res = await browser_service_1.browserService.start(profile);
+                        return { ok: true, code: "BROWSER_STATUS", summary: `Browser profile "${res.profile}" is running.`, data: { browser: { running: true, profile: res.profile } } };
+                    }
+                    case "browser.start": {
+                        const res = await browser_service_1.browserService.start(profile);
+                        return { ok: true, code: "BROWSER_STARTED", summary: `Browser started profile "${res.profile}".`, data: { browser: { running: true, profile: res.profile } } };
+                    }
+                    case "browser.stop": {
+                        await browser_service_1.browserService.stop(profile);
+                        return { ok: true, code: "BROWSER_STOPPED", summary: `Browser stopped profile "${profile || "agent"}".`, data: { browser: { running: false, profile: profile || "agent" } } };
+                    }
+                    case "browser.tabs": {
+                        const tabs = await browser_service_1.browserService.listTabs(profile);
+                        return { ok: true, code: "BROWSER_TABS", summary: `Found ${tabs.length} open tab(s).`, data: { tabs } };
+                    }
+                    case "browser.open": {
+                        const tab = await browser_service_1.browserService.open(profile, actionArgs.url);
+                        return { ok: true, code: "BROWSER_OPENED", summary: `Opened ${actionArgs.url} in ${tab.targetId}.`, data: { target: tab } };
+                    }
+                    case "browser.focus": {
+                        const tab = await browser_service_1.browserService.focus(profile, actionArgs.targetId);
+                        return { ok: true, code: "BROWSER_FOCUSED", summary: `Focused tab ${tab.targetId}.`, data: { target: tab } };
+                    }
+                    case "browser.close": {
+                        await browser_service_1.browserService.close(profile, actionArgs.targetId);
+                        return { ok: true, code: "BROWSER_CLOSED", summary: `Closed tab ${actionArgs.targetId}.` };
+                    }
+                    case "browser.navigate": {
+                        const tab = await browser_service_1.browserService.navigate(profile, actionArgs.targetId, actionArgs.url);
+                        return { ok: true, code: "BROWSER_NAVIGATED", summary: `Navigated tab ${tab.targetId} to ${actionArgs.url}.`, data: { target: tab } };
+                    }
+                    case "browser.screenshot": {
+                        const artifact = await browser_service_1.browserService.screenshot(profile, actionArgs.targetId, {
+                            fullPage: actionArgs.fullPage,
+                            chatId: input.chatId,
+                            traceId: input.traceId
+                        });
+                        return {
+                            ok: true,
+                            code: "BROWSER_SCREENSHOT",
+                            summary: "Page screenshot captured.",
+                            data: {
+                                artifactId: artifact.id,
+                                artifact: {
+                                    id: artifact.id,
+                                    type: "image",
+                                    mimeType: "image/png",
+                                    path: artifact.path
+                                }
+                            }
+                        };
+                    }
+                    case "browser.snapshot":
+                    case "browser.act": {
+                        return { ok: false, code: "NOT_IMPLEMENTED", summary: `${action.kind} is not implemented in US-020 (reserved for US-021).` };
+                    }
+                    default:
+                        return { ok: false, code: "UNKNOWN_BROWSER_ACTION", summary: `Unknown action kind: ${action.kind}` };
+                }
             }
             catch (error) {
-                return { ok: false, code: "WEB_CAPTURE_FAILED", summary: error instanceof Error ? error.message : String(error) };
-            }
-            finally {
-                node_fs_1.default.rmSync(file, { force: true });
+                return { ok: false, code: "BROWSER_ERROR", summary: error instanceof Error ? error.message : String(error) };
             }
         }
         if (!prepared.fileAction)

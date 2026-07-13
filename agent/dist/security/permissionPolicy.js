@@ -51,7 +51,7 @@ function normalizeAction(action) {
     if (action.kind === "command.run") {
         return { ...action, cwd: canonicalizePolicyPath(action.cwd) };
     }
-    if ((0, contracts_1.isDesktopToolAction)(action))
+    if ((0, contracts_1.isDesktopToolAction)(action) || (0, contracts_1.isBrowserToolAction)(action))
         return action;
     return { ...action, path: canonicalizePolicyPath(action.path) };
 }
@@ -105,6 +105,9 @@ class PermissionPolicy {
         }
         if ((0, contracts_1.isDesktopToolAction)(normalized)) {
             return this.evaluateDesktop(normalized, context);
+        }
+        if ((0, contracts_1.isBrowserToolAction)(normalized)) {
+            return this.evaluateBrowser(normalized, context);
         }
         const target = normalized.kind === "command.run" ? normalized.cwd : normalized.path;
         if (hasDeniedSegment(target) ||
@@ -178,6 +181,14 @@ class PermissionPolicy {
             outcome: "allow",
             reasonCode: "ALLOWED",
             reason: `${action.kind} is allowed by policy.`,
+            action,
+        };
+    }
+    evaluateBrowser(action, context) {
+        return {
+            outcome: "allow",
+            reasonCode: "ALLOWED",
+            reason: "Browser action is allowed by policy.",
             action,
         };
     }

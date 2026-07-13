@@ -35,7 +35,7 @@ function failure(code, summary) {
     return { ok: false, code, summary };
 }
 function actionPath(decision) {
-    if (decision.action.kind === "command.run" || (0, contracts_1.isDesktopToolAction)(decision.action)) {
+    if (decision.action.kind === "command.run" || (0, contracts_1.isDesktopToolAction)(decision.action) || (0, contracts_1.isBrowserToolAction)(decision.action)) {
         throw new Error("File policy returned a non-file action.");
     }
     return decision.action.path;

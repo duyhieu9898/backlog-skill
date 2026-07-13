@@ -29,7 +29,7 @@ export class OpenAiProvider implements AiProvider {
       messages: [
         { role: "system" as const, content: input.system },
         ...input.context.history.map((entry) => ({
-          role: entry.role === "assistant" ? "assistant" as const : "user" as const,
+          role: entry.role === "assistant" ? "assistant" as const : entry.role === "system" ? "system" as const : "user" as const,
           content: entry.content,
         })),
         {

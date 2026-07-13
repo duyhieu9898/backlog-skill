@@ -1,6 +1,6 @@
 import { loadCommandCatalog, type AgentCommand } from "../commands";
 import { loadAgentConfig } from "../config/app";
-import { listRecentChat, listRecentCommandRuns, listTraceEvents } from "../storage/repositories";
+import { listRecentChat, listRecentCommandRuns, listTraceEvents, getLastFailedCommandRun, getLastFailedToolEvent } from "../storage/repositories";
 import type { SkillMetadata, SkillRegistry } from "../skills/registry";
 import type { AiPromptContext, AiToolScope } from "../brain/provider";
 import type { StandardMessage } from "../types/messages";
@@ -31,7 +31,7 @@ function isToolProtocolMessage(role: string, content: string): boolean {
   return /^(Tool completed|Tool failed|computer cần xác nhận|```json\s*\{\s*"toolCall"|Không có confirmation nào đang chờ\.)/is.test(text);
 }
 
-function runtimeContext(timestamp: Date): AiPromptContext["runtime"] {
+function runtimeContext(timestamp: Date, lastFailureSummary?: string): AiPromptContext["runtime"] {
   const runtime = loadAgentConfig().runtime;
   const timezone = runtime?.timezone || "Asia/Ho_Chi_Minh";
   const locale = runtime?.locale || "vi-VN";
@@ -45,12 +45,17 @@ function runtimeContext(timestamp: Date): AiPromptContext["runtime"] {
     second: "2-digit",
     hourCycle: "h23",
   }).format(timestamp).replace(" ", "T");
-  return { currentTime, timezone, locale };
+  return {
+    currentTime,
+    timezone,
+    locale,
+    ...(lastFailureSummary !== undefined ? { lastFailureSummary } : {}),
+  };
 }
 
 function pruneHistory(
-  history: Array<{ role: "assistant" | "user"; content: string }>
-): Array<{ role: "assistant" | "user"; content: string }> {
+  history: Array<{ role: "assistant" | "user" | "system"; content: string }>
+): Array<{ role: "assistant" | "user" | "system"; content: string }> {
   return history.map((entry, index) => {
     if (index >= history.length - 3) {
       return entry;
@@ -86,6 +91,28 @@ export class ContextHydrator {
       : includesFileIntent
         ? { includeFileTools: true }
         : undefined;
+
+    let lastFailureSummary: string | undefined;
+    if (isDebug) {
+      const lastCommand = getLastFailedCommandRun();
+      const lastTool = getLastFailedToolEvent();
+      const parts: string[] = [];
+      if (lastCommand) {
+        parts.push(`Command "${lastCommand.command_name}" failed (exit: ${lastCommand.exit_code ?? "unknown"}). Error: ${lastCommand.error_message || "none"}. Tail: ${(lastCommand.output_tail || "").slice(-400)}`);
+      }
+      if (lastTool) {
+        let details = lastTool.payload_json;
+        try {
+          const parsed = JSON.parse(lastTool.payload_json);
+          details = parsed.payload ? JSON.stringify(parsed.payload) : lastTool.payload_json;
+        } catch {}
+        parts.push(`Tool "${lastTool.event}" failed. Details: ${details.slice(0, 400)}`);
+      }
+      if (parts.length > 0) {
+        lastFailureSummary = parts.join(" | ");
+      }
+    }
+
     // Desktop state is carried by the computer controller and an approved
     // continuation, not by chat transcript. Old previews/frames or a prior
     // task must never steer a fresh request to control a different window.
@@ -96,7 +123,11 @@ export class ContextHydrator {
             .filter((entry) => entry.trace_id !== message.traceId)
             .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
             .map((entry) => ({
-              role: entry.role === "assistant" ? "assistant" as const : "user" as const,
+              role: entry.role === "assistant"
+                ? "assistant" as const
+                : entry.role === "system"
+                  ? "system" as const
+                  : "user" as const,
               content: redactHistory(entry.content),
             }))
             .filter((entry) => entry.content.length > 0)
@@ -114,7 +145,7 @@ export class ContextHydrator {
       message,
       prompt: {
         history,
-        runtime: runtimeContext(message.timestamp),
+        runtime: runtimeContext(message.timestamp, lastFailureSummary),
         selectedSkill,
         toolScope,
       },

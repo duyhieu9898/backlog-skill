@@ -78,10 +78,18 @@ export class GeminiProvider implements AiProvider {
             }),
       },
       contents: [
-        ...input.context.history.map((entry) => ({
-          role: entry.role === "assistant" ? "model" : "user",
-          parts: [{ text: entry.content }],
-        })),
+        ...input.context.history.map((entry) => {
+          if (entry.role === "system") {
+            return {
+              role: "user",
+              parts: [{ text: `[SYSTEM SUMMARY]: ${entry.content}` }],
+            };
+          }
+          return {
+            role: entry.role === "assistant" ? "model" : "user",
+            parts: [{ text: entry.content }],
+          };
+        }),
         {
           role: "user",
           parts: [

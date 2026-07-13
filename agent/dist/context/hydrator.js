@@ -20,7 +20,7 @@ function isToolProtocolMessage(role, content) {
         return /^confirm\b/i.test(text);
     return /^(Tool completed|Tool failed|computer cần xác nhận|```json\s*\{\s*"toolCall"|Không có confirmation nào đang chờ\.)/is.test(text);
 }
-function runtimeContext(timestamp) {
+function runtimeContext(timestamp, lastFailureSummary) {
     const runtime = (0, app_1.loadAgentConfig)().runtime;
     const timezone = runtime?.timezone || "Asia/Ho_Chi_Minh";
     const locale = runtime?.locale || "vi-VN";
@@ -34,7 +34,12 @@ function runtimeContext(timestamp) {
         second: "2-digit",
         hourCycle: "h23",
     }).format(timestamp).replace(" ", "T");
-    return { currentTime, timezone, locale };
+    return {
+        currentTime,
+        timezone,
+        locale,
+        ...(lastFailureSummary !== undefined ? { lastFailureSummary } : {}),
+    };
 }
 function pruneHistory(history) {
     return history.map((entry, index) => {
@@ -73,6 +78,27 @@ class ContextHydrator {
                     : includesFileIntent
                         ? { includeFileTools: true }
                         : undefined;
+        let lastFailureSummary;
+        if (isDebug) {
+            const lastCommand = (0, repositories_1.getLastFailedCommandRun)();
+            const lastTool = (0, repositories_1.getLastFailedToolEvent)();
+            const parts = [];
+            if (lastCommand) {
+                parts.push(`Command "${lastCommand.command_name}" failed (exit: ${lastCommand.exit_code ?? "unknown"}). Error: ${lastCommand.error_message || "none"}. Tail: ${(lastCommand.output_tail || "").slice(-400)}`);
+            }
+            if (lastTool) {
+                let details = lastTool.payload_json;
+                try {
+                    const parsed = JSON.parse(lastTool.payload_json);
+                    details = parsed.payload ? JSON.stringify(parsed.payload) : lastTool.payload_json;
+                }
+                catch { }
+                parts.push(`Tool "${lastTool.event}" failed. Details: ${details.slice(0, 400)}`);
+            }
+            if (parts.length > 0) {
+                lastFailureSummary = parts.join(" | ");
+            }
+        }
         // Desktop state is carried by the computer controller and an approved
         // continuation, not by chat transcript. Old previews/frames or a prior
         // task must never steer a fresh request to control a different window.
@@ -82,7 +108,11 @@ class ContextHydrator {
                 .filter((entry) => entry.trace_id !== message.traceId)
                 .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
                 .map((entry) => ({
-                role: entry.role === "assistant" ? "assistant" : "user",
+                role: entry.role === "assistant"
+                    ? "assistant"
+                    : entry.role === "system"
+                        ? "system"
+                        : "user",
                 content: redactHistory(entry.content),
             }))
                 .filter((entry) => entry.content.length > 0));
@@ -98,7 +128,7 @@ class ContextHydrator {
             message,
             prompt: {
                 history,
-                runtime: runtimeContext(message.timestamp),
+                runtime: runtimeContext(message.timestamp, lastFailureSummary),
                 selectedSkill,
                 toolScope,
             },

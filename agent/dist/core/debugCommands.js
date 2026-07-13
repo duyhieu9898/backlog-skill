@@ -6,7 +6,6 @@ exports.formatToolError = formatToolError;
 exports.isDebugCommand = isDebugCommand;
 exports.handleDebugCommand = handleDebugCommand;
 const commands_1 = require("../commands");
-const paths_1 = require("../config/paths");
 const repositories_1 = require("../storage/repositories");
 const scheduler_1 = require("../scheduler");
 const computer_1 = require("../tools/computer");
@@ -129,18 +128,21 @@ function handleDebugCommand(text, registry) {
     }
     if (normalized === "/status") {
         const currentRun = (0, repositories_1.getJsonState)("runtime_state", "currentRun");
-        const lastScheduledRun = (0, repositories_1.getJsonState)("runtime_state", "lastScheduledRun");
+        const config = (0, app_1.loadAgentConfig)();
+        const providerName = config.ai.default;
+        const activeModel = config.ai.providers[providerName]?.model || "unknown";
         return [
-            "Status",
-            `uptime: ${formatDuration(Date.now() - startedAt)}`,
-            `current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
-            `last scheduled: ${lastScheduledRun ? JSON.stringify(lastScheduledRun) : "none"}`,
-            `pending confirmations: ${(0, repositories_1.countPendingConfirmations)()}`,
-            `loaded commands: ${catalog.allow.length}`,
-            `loaded skills: ${registry.listSkills().length}`,
-            `skill registry errors: ${registry.listErrors().length}`,
-            ...registry.listErrors().map((error) => `- ${error.slug}: ${error.message}`),
-            `sqlite: ${paths_1.sqliteFile}`,
+            "🤖 AI Agent Status 🤖",
+            "━━━━━━━━━━━━━━━━━━━━━",
+            `⏱️ uptime: ${formatDuration(Date.now() - startedAt)}`,
+            `🧠 model: ${activeModel}`,
+            `🔄 current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
+            "",
+            "📋 Operations:",
+            `  ├─ 🗳️ pending confirmations: ${(0, repositories_1.countPendingConfirmations)()}`,
+            `  ├─ ⚙️ loaded commands: ${catalog.allow.length}`,
+            `  ├─ 🧩 loaded skills: ${registry.listSkills().length}`,
+            `  └─ ⚠️ skill registry errors: ${registry.listErrors().length}`,
         ].join("\n");
     }
     if (normalized === "/last") {

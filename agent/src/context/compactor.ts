@@ -5,8 +5,14 @@ import { log } from "../logging/logger";
 
 export class Compactor {
   private readonly ai = new AiRouter();
+  private readonly activeCompactions = new Set<string>();
 
   async compactIfNeeded(chatId: string): Promise<void> {
+    if (this.activeCompactions.has(chatId)) {
+      log.info("compactor", "compaction.skipped.already_running", { chatId });
+      return;
+    }
+
     const sessionId = getActiveSessionId(chatId);
     const messages = getUncompactedChatMessages(chatId, sessionId);
 
@@ -15,13 +21,17 @@ export class Compactor {
       return;
     }
 
+    this.activeCompactions.add(chatId);
     const traceId = generateTraceId();
     log.info(traceId, "compaction.started", { chatId, sessionId, totalMessages: messages.length });
 
     // Lấy 10 tin nhắn đầu tiên để tóm tắt
     const targetMessages = messages.slice(0, 10);
     const formattedHistory = targetMessages
-      .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
+      .map((m) => {
+        const roleLabel = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
+        return `${roleLabel}: ${m.content}`;
+      })
       .join("\n\n");
 
     const systemPrompt = [
@@ -81,6 +91,8 @@ export class Compactor {
     } catch (err) {
       log.error(traceId, "compaction.failed", { error: err });
       throw err;
+    } finally {
+      this.activeCompactions.delete(chatId);
     }
   }
 }

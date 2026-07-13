@@ -100,11 +100,11 @@ test("CLI /reset command clears local chat history", () => {
     { cwd: agentDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
 
-  assert.match(output, /Đã xóa lịch sử cuộc trò chuyện/);
+  assert.match(output, /Đã bắt đầu phiên trò chuyện mới/);
   const messages = listRecentChat(LOCAL_CLI_CHAT_ID, 10);
   // It should only contain 1 message (the assistant confirmation reply)
   assert.equal(messages.length, 1);
-  assert.match(messages[0].content, /Đã xóa lịch sử cuộc trò chuyện/);
+  assert.match(messages[0].content, /Đã bắt đầu phiên trò chuyện mới/);
 });
 
 test("Compactor triggers compaction when session messages exceed 15", async () => {
@@ -148,6 +148,30 @@ test("Compactor triggers compaction when session messages exceed 15", async () =
   // The rest of the messages should be the last 6 messages
   assert.equal(remaining[1].content, "User message 6");
   assert.equal(remaining[6].content, "Assistant reply 8");
+});
+
+test("Compactor prevents concurrent compaction calls for the same chatId", async () => {
+  const { Compactor } = require("../dist/context/compactor");
+  const compactor = new Compactor();
+  const chatId = `compaction-lock-test-${Date.now()}`;
+  const sessionId = resetSession(chatId);
+
+  // Insert 16 messages
+  for (let i = 1; i <= 8; i++) {
+    insertChatMessage({ chatId, userId: "user", role: "user", content: `Msg ${i}`, traceId: `tr_u_${i}`, sessionId });
+    insertChatMessage({ chatId, userId: "agent", role: "assistant", content: `Reply ${i}`, traceId: `tr_a_${i}`, sessionId });
+  }
+
+  // Trigger compaction concurrently
+  const p1 = compactor.compactIfNeeded(chatId);
+  const p2 = compactor.compactIfNeeded(chatId);
+  await Promise.all([p1, p2]);
+
+  // If both compactions ran, we would have two system summary messages.
+  // Since lock is working, only one compaction runs, so we should have exactly 1 system summary message.
+  const remaining = getUncompactedChatMessages(chatId, sessionId);
+  const summaries = remaining.filter((m) => m.role === "system");
+  assert.equal(summaries.length, 1);
 });
 
 

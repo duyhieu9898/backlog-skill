@@ -4,7 +4,7 @@ import path from "node:path";
 import { loadAgentConfig } from "../config/app";
 import { log } from "../logging/logger";
 import { PermissionPolicy } from "../security/permissionPolicy";
-import { isDesktopToolAction } from "./contracts";
+import { isDesktopToolAction, isBrowserToolAction } from "./contracts";
 import type {
   FileMutationAction,
   FilePatchAction,
@@ -62,7 +62,7 @@ function failure<T = never>(code: string, summary: string): ToolResult<T> {
 }
 
 function actionPath(decision: PolicyDecision): string {
-  if (decision.action.kind === "command.run" || isDesktopToolAction(decision.action)) {
+  if (decision.action.kind === "command.run" || isDesktopToolAction(decision.action) || isBrowserToolAction(decision.action)) {
     throw new Error("File policy returned a non-file action.");
   }
   return decision.action.path;

@@ -144,18 +144,21 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
 
   if (normalized === "/status") {
     const currentRun = getJsonState<unknown>("runtime_state", "currentRun");
-    const lastScheduledRun = getJsonState<unknown>("runtime_state", "lastScheduledRun");
+    const config = loadAgentConfig();
+    const providerName = config.ai.default;
+    const activeModel = config.ai.providers[providerName]?.model || "unknown";
     return [
-      "Status",
-      `uptime: ${formatDuration(Date.now() - startedAt)}`,
-      `current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
-      `last scheduled: ${lastScheduledRun ? JSON.stringify(lastScheduledRun) : "none"}`,
-      `pending confirmations: ${countPendingConfirmations()}`,
-      `loaded commands: ${catalog.allow.length}`,
-      `loaded skills: ${registry.listSkills().length}`,
-      `skill registry errors: ${registry.listErrors().length}`,
-      ...registry.listErrors().map((error) => `- ${error.slug}: ${error.message}`),
-      `sqlite: ${sqliteFile}`,
+      "🤖 AI Agent Status 🤖",
+      "━━━━━━━━━━━━━━━━━━━━━",
+      `⏱️ uptime: ${formatDuration(Date.now() - startedAt)}`,
+      `🧠 model: ${activeModel}`,
+      `🔄 current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
+      "",
+      "📋 Operations:",
+      `  ├─ 🗳️ pending confirmations: ${countPendingConfirmations()}`,
+      `  ├─ ⚙️ loaded commands: ${catalog.allow.length}`,
+      `  ├─ 🧩 loaded skills: ${registry.listSkills().length}`,
+      `  └─ ⚠️ skill registry errors: ${registry.listErrors().length}`,
     ].join("\n");
   }
 

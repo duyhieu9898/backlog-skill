@@ -104,16 +104,16 @@ test("daily schedules calculate the next fixed time in the configured timezone",
 test("config seeding replaces an interval schedule with a cron schedule", () => {
   const name = `seed-cron-${Date.now()}`;
   seedScheduledJobsFromConfig([
-    { name, command: "test.read", cron: "*/60 * * * *", enabled: true },
+    { name, command: "test.read", cron: "0 1 * * *", enabled: true },
   ], catalog(__dirname));
   const first = getScheduledJob(name);
 
   seedScheduledJobsFromConfig([
-    { name, command: "test.read", cron: "0 17 * * *", enabled: true },
+    { name, command: "test.read", cron: "0 2 * * *", enabled: true },
   ], catalog(__dirname));
   const updated = getScheduledJob(name);
 
-  assert.equal(updated.cron_expr, "0 17 * * *");
+  assert.equal(updated.cron_expr, "0 2 * * *");
   assert.notEqual(updated.next_run_at, first.next_run_at);
 });
 
