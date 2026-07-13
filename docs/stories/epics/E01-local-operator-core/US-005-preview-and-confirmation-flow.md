@@ -77,6 +77,6 @@ High-risk because it protects external effects and destructive local changes.
 - Gaps:
   - File previews are internal and are not yet shown through a real Telegram
     provider-routed file action.
-  - Bemo skipped dates and structured external action previews are implemented
-    in US-008/US-009 automated proof, but human Telegram preview and confirm
-    proof remains open.
+  - A human Telegram preview followed by confirmation of `bemo.checkout`
+    succeeded on 2026-07-13. Provider-routed file-action preview proof and a
+    confirmed Bemo create proof remain open.

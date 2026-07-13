@@ -30,10 +30,9 @@ function write(level, traceId, event, payload = {}) {
         at: new Date().toISOString(),
     };
     const line = JSON.stringify(entry);
-    if (level === "error")
-        console.error(line);
-    else
-        console.log(line);
+    // Router replies are the CLI's only stdout contract; operational logs belong
+    // on stderr for both local CLI and the background service.
+    console.error(line);
     (0, repositories_1.insertTraceEvent)(traceId, event, entry.payload);
 }
 exports.log = {

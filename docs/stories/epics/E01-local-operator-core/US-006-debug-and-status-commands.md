@@ -2,7 +2,7 @@
 
 ## Status
 
-in_progress
+implemented
 
 ## Lane
 
@@ -70,10 +70,9 @@ None expected.
   - `/last-error` chooses the newest failed command or file-tool event.
   - `/debug` without a trace ID returns explicit usage guidance.
   - `agent/README.md` documents every debug command.
-- Gaps:
-  - Human-authored Telegram smoke proof is recorded for `/status` and
-    `/skills`; `/last`, `/last-error`, `/debug`, `/commands`, and `/help`
-    still need manual smoke evidence before closure.
+- Human Telegram smoke:
+  - The user confirmed successful `/status`, `/skills`, `/commands`, `/last`,
+    `/last-error`, `/debug <traceId>`, and `/help` responses on 2026-07-13.
 - Follow-up resolved by US-007:
   - `/status` now reports the skill-registry error count and details without
     preventing valid skills from loading.

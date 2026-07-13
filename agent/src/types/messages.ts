@@ -1,6 +1,6 @@
 export type StandardMessage = {
   traceId: string;
-  provider: "telegram";
+  provider: "telegram" | "cli";
   chatId: string;
   userId: string;
   text: string;

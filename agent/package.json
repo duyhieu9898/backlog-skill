@@ -7,6 +7,7 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "start": "npm run build && node dist/bot.js",
+    "cli": "npm run build && node dist/cli.js",
     "test": "npm run build && node --test test/*.test.js",
     "verify": "npm run test && git diff --check && git diff --cached --check",
     "test:gemini": "node scripts/test-gemini.js",

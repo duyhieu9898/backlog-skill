@@ -13,6 +13,22 @@ npm start
 `TELEGRAM_POLL_TIMEOUT` is optional and defaults to 25 seconds. Secrets and
 chat identifiers must never have source-code fallbacks.
 
+## Local CLI
+
+Run one message through the same Router used by Telegram, without starting
+Telegram polling or the background scheduler:
+
+```bash
+npm run cli -- "/status"
+printf '%s' '/commands' | npm run cli
+```
+
+The CLI uses the stable local chat ID `local-cli`, so a preview in one
+invocation can be confirmed in the next with the same digest-bound command.
+It is a transport adapter, not a privileged mode: permission policy, command
+allowlisting, confirmations, chat persistence, traces, and AI tool validation
+remain in effect. Router replies go to stdout; operational logs go to stderr.
+
 ## Debug Commands
 
 - `/status` — uptime, current command, pending confirmations, loaded commands,

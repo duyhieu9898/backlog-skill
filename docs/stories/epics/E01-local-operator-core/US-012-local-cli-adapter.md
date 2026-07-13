@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+implemented
 
 ## Lane
 
@@ -85,6 +85,14 @@ requires a real external provider write decision.
 
 ## Evidence
 
-No implementation proof yet. Planned because the remaining E01 proof gaps are
-mostly core operator behavior that can be exercised without a Telegram
-transport round trip.
+- `agent/src/cli.ts` accepts one argv message or stdin, loads the normal local
+  environment, then routes a stable `local-cli` message through `Router`.
+  It does not create a Telegram client or scheduler.
+- `agent/src/adapters/cli.ts` provides the `cli` provider type and stable local
+  chat/user identity. Router logging is written to stderr so stdout remains the
+  CLI reply surface.
+- `agent/test/cli.test.js` proves argv and stdin routing, persisted local chat
+  messages, and digest-bound confirmation of a harmless command across a
+  separate CLI process.
+- `npm run verify` passed 65/65 tests on 2026-07-13. Manual smoke also returned
+  `/status` and a `/bemo_checkout` preview without confirmation or execution.

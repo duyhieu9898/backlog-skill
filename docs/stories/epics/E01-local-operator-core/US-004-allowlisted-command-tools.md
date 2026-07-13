@@ -81,6 +81,7 @@ High-risk because this grants local execution authority.
   - Child processes inherit only a small non-secret environment allowlist.
   - Stale Backlog entries were removed because `skills/backlog` is absent.
 - Remaining proof:
-  - Full human Telegram confirm-and-execute smoke for an allowlisted command.
+  - Human Telegram smoke completed: the user confirmed a `bemo.checkout`
+    allowlisted command on 2026-07-13.
   - Platform proof for cwd and executable resolution under systemd exists for
     preview; execution proof remains open for a harmless command.
