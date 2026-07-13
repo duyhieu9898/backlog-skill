@@ -46,6 +46,8 @@ leave enough trace data to debug what happened.
 | US-010 | Scheduled Local Checks | normal | implemented | Read-only scheduled checks are implemented, enabled hourly for `bemo-late`, and proven through manual plus systemd schedule smoke. |
 | US-011 | Schedule Management Upgrade | high-risk | implemented | SQLite persistence, chat management, history, delivery controls, change-only delivery, and preview-only autonomy are implemented and proven through systemd scheduler smoke. |
 | US-012 | Local CLI Adapter | normal | planned | A local CLI transport should exercise the same Router behavior without requiring Telegram interaction for core smoke tests. |
+| US-018 | Stop Running Commands | normal | in_progress | The authorized chat user can interrupt the one globally tracked command without waiting behind it. |
+| US-019 | Fixed Daily Schedules | normal | in_progress | A read-only schedule can run once at a fixed local time without interval drift. |
 
 ## Recommended Implementation Order
 

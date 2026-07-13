@@ -1,6 +1,7 @@
 export type TelegramConfig = {
   botToken: string;
   allowedChatId: string;
+  allowedUserId: string;
   pollTimeoutSeconds: number;
 };
 
@@ -18,6 +19,7 @@ export function loadTelegramConfig(env: NodeJS.ProcessEnv = process.env): Telegr
   return {
     botToken: requiredEnv(env, "TELEGRAM_BOT_TOKEN"),
     allowedChatId: requiredEnv(env, "TELEGRAM_CHAT_ID"),
+    allowedUserId: env.TELEGRAM_USER_ID?.trim() || requiredEnv(env, "TELEGRAM_CHAT_ID"),
     pollTimeoutSeconds,
   };
 }

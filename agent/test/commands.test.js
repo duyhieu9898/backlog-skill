@@ -9,6 +9,7 @@ const {
   buildCommandCatalog,
   buildCommandEnvironment,
   commandPreviewDigest,
+  getRunningTraceId,
   loadCommands,
   previewCommand,
   resolveCwd,
@@ -488,6 +489,37 @@ test("command runner times out with a stable non-zero result", async () => {
 
   assert.equal(result.exitCode, 124);
   assert.equal(result.timedOut, true);
+});
+
+test("/stop interrupts an active tracked command without waiting for the chat lock", async () => {
+  const chatId = `test-stop-${Date.now()}`;
+  const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
+  const run = runTrackedCommand({
+    traceId: `test-stop-run-${Date.now()}`,
+    chatId,
+    action: {
+      name: "test.stop",
+      label: "Stoppable command",
+      argv: [process.execPath, "-e", 'setInterval(() => {}, 1000)'],
+      requiresConfirmation: false,
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const reply = await router.route({
+    traceId: `test-stop-request-${Date.now()}`,
+    provider: "telegram",
+    chatId,
+    userId: "test-user",
+    text: "/stop",
+    timestamp: new Date(),
+  });
+  const result = await run;
+
+  assert.match(reply, /Đã yêu cầu dừng/);
+  assert.equal(result.stopped, true);
+  assert.equal(result.signal, "SIGTERM");
+  assert.equal(getRunningTraceId(), null);
 });
 
 test("minimal command environment excludes undeclared values", () => {

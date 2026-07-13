@@ -11,8 +11,8 @@
     "test": "npm run build && node --test test/*.test.js",
     "verify": "npm run test && git diff --check && git diff --cached --check",
     "test:gemini": "node scripts/test-gemini.js",
-    "ai-logs": "node scripts/ai-logs.js"
-    ,"smoke:telegram-media": "npm run build && node scripts/telegram-media-smoke.js"
+    "ai-logs": "node scripts/ai-logs.js",
+    "smoke:telegram-media": "npm run build && node scripts/telegram-media-smoke.js"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -25,6 +25,7 @@
   "dependencies": {
     "@google/genai": "^2.6.0",
     "better-sqlite3": "^12.10.0",
+    "croner": "^10.0.1",
     "openai": "^6.39.0"
   }
 }

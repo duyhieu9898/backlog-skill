@@ -18,6 +18,7 @@ exports.scheduleUpdatePreview = scheduleUpdatePreview;
 exports.applyScheduleUpdate = applyScheduleUpdate;
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const app_1 = require("./config/app");
+const cron_1 = require("./cron");
 const commands_1 = require("./commands");
 const trace_1 = require("./logging/trace");
 const logger_1 = require("./logging/logger");
@@ -26,9 +27,6 @@ const utils_1 = require("./utils");
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_TICK_MS = 30_000;
 let configSeeded = false;
-function addMinutes(date, minutes) {
-    return new Date(date.getTime() + minutes * 60 * 1000);
-}
 function hashOutput(value) {
     return node_crypto_1.default.createHash("sha256").update(value).digest("hex");
 }
@@ -44,12 +42,12 @@ function seedScheduledJobsFromConfig(configs = (0, app_1.loadAgentConfig)().sche
             name: check.name,
             label: check.label,
             commandName: check.command.name || check.command.label,
-            intervalMinutes: check.intervalMinutes,
+            cronExpr: check.cron,
             enabled: check.enabled,
             delivery: check.delivery,
             notifyOnChangeOnly: check.notifyOnChangeOnly,
             prepareEffect: check.prepareEffect,
-            nextRunAt: check.enabled ? addMinutes(new Date(), check.intervalMinutes).toISOString() : null,
+            nextRunAt: nextRunAtFor(check),
         });
     }
 }
@@ -76,9 +74,9 @@ function normalizeScheduledCheck(config, catalog) {
     if (!name || !NAME_PATTERN.test(name)) {
         throw new Error(`Scheduled check has invalid name: ${config.name || "(empty)"}`);
     }
-    if (!Number.isFinite(config.intervalMinutes) || config.intervalMinutes < 1) {
-        throw new Error(`Scheduled check ${name} must use intervalMinutes >= 1.`);
-    }
+    const cronError = (0, cron_1.validateCron)(config.cron);
+    if (cronError)
+        throw new Error(`Scheduled check ${name} has invalid cron: ${cronError}`);
     const command = catalog.byAlias[config.command.toLowerCase()];
     if (!command)
         throw new Error(`Scheduled check ${name} references unknown command: ${config.command}`);
@@ -89,7 +87,7 @@ function normalizeScheduledCheck(config, catalog) {
     return {
         name,
         label: config.label?.trim() || command.label,
-        intervalMinutes: config.intervalMinutes,
+        cron: config.cron,
         enabled: config.enabled === true,
         delivery: config.delivery || "telegram",
         notifyOnChangeOnly: config.notifyOnChangeOnly === true,
@@ -117,10 +115,12 @@ function scheduledCheckFromRow(row, catalog) {
     const command = catalog.byAlias[row.command_name.toLowerCase()];
     if (!command)
         throw new Error(`Scheduled check ${row.name} references unknown command: ${row.command_name}`);
+    if (!row.cron_expr)
+        throw new Error(`Scheduled check ${row.name} has no cron expression stored.`);
     return {
         name: row.name,
         label: row.label,
-        intervalMinutes: row.interval_minutes,
+        cron: row.cron_expr,
         enabled: row.enabled === 1,
         delivery: row.delivery === "silent" ? "silent" : "telegram",
         notifyOnChangeOnly: row.notify_on_change_only === 1,
@@ -149,7 +149,7 @@ function formatScheduleList(checks = loadScheduledChecks()) {
         const state = check.enabled ? "enabled" : "disabled";
         const delivery = check.delivery === "silent" ? "silent" : "telegram";
         const changeOnly = check.notifyOnChangeOnly ? ", change-only" : "";
-        return `${check.name} - ${check.label} [${state}, every ${check.intervalMinutes}m, ${delivery}${changeOnly}]`;
+        return `${check.name} - ${check.label} [${state}, cron: ${check.cron}, ${delivery}${changeOnly}]`;
     })
         .join("\n");
 }
@@ -161,7 +161,7 @@ function formatScheduleDetails(name) {
         `${row.name} - ${row.label}`,
         `state: ${row.enabled ? "enabled" : "disabled"}`,
         `command: ${row.command_name}`,
-        `interval: ${row.interval_minutes}m`,
+        `cron: ${row.cron_expr || "(none)"}`,
         `delivery: ${row.delivery}`,
         `change-only: ${row.notify_on_change_only ? "yes" : "no"}`,
         `version: ${row.version}`,
@@ -191,8 +191,10 @@ function formatRunRow(run) {
 function findScheduledCheck(name, checks = loadScheduledChecks()) {
     return checks.find((check) => check.name === name) || null;
 }
-function nextRunAtFor(check, from = new Date()) {
-    return check.enabled ? addMinutes(from, check.intervalMinutes).toISOString() : null;
+function nextRunAtFor(check, from = new Date(), timeZone = (0, app_1.loadAgentConfig)().runtime?.timezone || "UTC") {
+    if (!check.enabled)
+        return null;
+    return (0, cron_1.nextAfter)(check.cron, from, timeZone);
 }
 async function runScheduledCheck(input) {
     if (!(0, repositories_1.getScheduledJob)(input.check.name)) {
@@ -200,7 +202,7 @@ async function runScheduledCheck(input) {
             name: input.check.name,
             label: input.check.label,
             commandName: input.check.command.name || input.check.command.label,
-            intervalMinutes: input.check.intervalMinutes,
+            cronExpr: input.check.cron,
             enabled: input.check.enabled,
             delivery: input.check.delivery,
             notifyOnChangeOnly: input.check.notifyOnChangeOnly,
@@ -365,11 +367,12 @@ function applyScheduleUpdate(input) {
         return `Scheduled check not found: ${input.name}`;
     try {
         if (input.action === "enable") {
+            const check = safeScheduledCheckFromRow(row, (0, commands_1.loadCommandCatalog)());
             (0, repositories_1.updateScheduledJobState)({
                 name: input.name,
                 enabled: true,
                 expectedVersion: input.expectedVersion,
-                nextRunAt: addMinutes(new Date(), row.interval_minutes).toISOString(),
+                nextRunAt: check ? nextRunAtFor({ ...check, enabled: true }) : null,
             });
             return `Enabled ${input.name}.`;
         }
@@ -382,17 +385,20 @@ function applyScheduleUpdate(input) {
             });
             return `Disabled ${input.name}.`;
         }
-        if (input.action === "interval") {
-            const minutes = Number(input.value);
-            if (!Number.isFinite(minutes) || minutes < 1)
-                return "Interval must be at least 1 minute.";
+        if (input.action === "cron") {
+            const expr = String(input.value);
+            const cronError = (0, cron_1.validateCron)(expr);
+            if (cronError)
+                return `Invalid cron expression: ${cronError}`;
+            const timeZone = (0, app_1.loadAgentConfig)().runtime?.timezone || "UTC";
+            const nextRunAt = row.enabled ? (0, cron_1.nextAfter)(expr, new Date(), timeZone) : null;
             (0, repositories_1.updateScheduledJobState)({
                 name: input.name,
-                intervalMinutes: minutes,
+                cronExpr: expr,
                 expectedVersion: input.expectedVersion,
-                nextRunAt: row.enabled ? addMinutes(new Date(), minutes).toISOString() : null,
+                nextRunAt,
             });
-            return `Updated ${input.name} interval to ${minutes}m.`;
+            return `Updated ${input.name} cron to: ${expr}`;
         }
         if (input.action === "delivery") {
             const delivery = String(input.value);

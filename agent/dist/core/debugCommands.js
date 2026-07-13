@@ -79,6 +79,7 @@ function handleDebugCommand(text, registry) {
             "/status - runtime status",
             "/last - last command result",
             "/last-error - latest failed command",
+            "/stop - stop the currently running command",
             "/debug <traceId> - raw trace events",
             "/commands - command aliases grouped by skill",
             "/schedule - configured scheduled checks",

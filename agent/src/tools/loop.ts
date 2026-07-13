@@ -14,7 +14,7 @@ import { ArtifactStore } from "../artifacts/store";
 import { createModelImage } from "./media/image-context";
 import fs from "node:fs";
 
-const MAX_TOOL_STEPS = 4;
+const MAX_TOOL_STEPS = 8;
 const MAX_IDENTICAL_FAILURES = 2;
 
 type PendingAiTool = {
@@ -210,7 +210,10 @@ export class AgentToolLoop {
       }
     }
 
-    return `Đã dừng sau ${MAX_TOOL_STEPS} bước tool để tránh vòng lặp tự động. Hãy thu hẹp yêu cầu hoặc thử lại.`;
+    return [
+    `Đã dừng sau ${MAX_TOOL_STEPS} bước tool.`,
+    "Nếu task chưa hoàn thành, hãy gõ \"tiếp tục\" để tiếp tục hoặc thu hẹp yêu cầu thành các bước nhỏ hơn.",
+  ].join("\n");
   }
 
   async consumeConfirmation(

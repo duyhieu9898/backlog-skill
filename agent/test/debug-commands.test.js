@@ -63,6 +63,7 @@ test("status, help, command, and skill output include required fields", () => {
 
   const help = handleDebugCommand("/help", registry);
   assert.match(help, /\/last-error/);
+  assert.match(help, /\/stop/);
   assert.match(help, /\/schedule/);
   assert.match(help, /\/desktop/);
   assert.match(help, /Command aliases:/);

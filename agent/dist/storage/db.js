@@ -105,6 +105,8 @@ function initializeSchema(database = getDb()) {
       label TEXT NOT NULL,
       command_name TEXT NOT NULL,
       interval_minutes INTEGER NOT NULL,
+      daily_at TEXT,
+      cron_expr TEXT,
       enabled INTEGER NOT NULL,
       delivery TEXT NOT NULL,
       notify_on_change_only INTEGER NOT NULL,
@@ -152,6 +154,12 @@ function migrateScheduledJobs() {
     }
     if (!columns.has("lease_until")) {
         db.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN lease_until TEXT`).run();
+    }
+    if (!columns.has("daily_at")) {
+        db.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN daily_at TEXT`).run();
+    }
+    if (!columns.has("cron_expr")) {
+        db.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN cron_expr TEXT`).run();
     }
 }
 function closeDb() {

@@ -18,6 +18,7 @@ const {
   formatScheduleList,
   formatScheduleHistory,
   normalizeScheduledCheck,
+  nextRunAtFor,
   runScheduledCheck,
   scheduleUpdatePreview,
   seedScheduledJobsFromConfig,
@@ -60,7 +61,7 @@ test("scheduled checks must reference read-only allowlisted commands", (t) => {
       name: "daily-read",
       label: "Daily read",
       command: "test.read",
-      intervalMinutes: 15,
+      cron: "*/15 * * * *",
       enabled: true,
     },
     commands,
@@ -69,11 +70,11 @@ test("scheduled checks must reference read-only allowlisted commands", (t) => {
   assert.equal(check.name, "daily-read");
   assert.equal(check.label, "Daily read");
   assert.equal(check.enabled, true);
-  assert.match(formatScheduleList([check]), /daily-read - Daily read \[enabled, every 15m, telegram\]/);
+  assert.match(formatScheduleList([check]), /daily-read - Daily read \[enabled, cron: \*\/15 \* \* \* \*, telegram\]/);
   assert.throws(
     () =>
       normalizeScheduledCheck(
-        { name: "bad-write", command: "test.write", intervalMinutes: 15 },
+        { name: "bad-write", command: "test.write", cron: "*/15 * * * *" },
         commands,
       ),
     /read-only command/,
@@ -81,17 +82,45 @@ test("scheduled checks must reference read-only allowlisted commands", (t) => {
   assert.throws(
     () =>
       normalizeScheduledCheck(
-        { name: "missing", command: "test.missing", intervalMinutes: 15 },
+        { name: "missing", command: "test.missing", cron: "*/15 * * * *" },
         commands,
       ),
     /unknown command/,
   );
 });
 
+test("daily schedules calculate the next fixed time in the configured timezone", (t) => {
+  const check = normalizeScheduledCheck(
+    { name: "daily-fixed", command: "test.read", cron: "0 17 * * *", enabled: true },
+    catalog(workspace(t)),
+  );
+
+  assert.equal(check.cron, "0 17 * * *");
+  assert.equal(nextRunAtFor(check, new Date("2026-07-13T09:59:59.000Z"), "Asia/Ho_Chi_Minh"), "2026-07-13T10:00:00.000Z");
+  assert.equal(nextRunAtFor(check, new Date("2026-07-13T10:00:00.000Z"), "Asia/Ho_Chi_Minh"), "2026-07-14T10:00:00.000Z");
+  assert.match(formatScheduleList([check]), /daily-fixed - Read-only check \[enabled, cron: 0 17 \* \* \*, telegram\]/);
+});
+
+test("config seeding replaces an interval schedule with a cron schedule", () => {
+  const name = `seed-cron-${Date.now()}`;
+  seedScheduledJobsFromConfig([
+    { name, command: "test.read", cron: "*/60 * * * *", enabled: true },
+  ], catalog(__dirname));
+  const first = getScheduledJob(name);
+
+  seedScheduledJobsFromConfig([
+    { name, command: "test.read", cron: "0 17 * * *", enabled: true },
+  ], catalog(__dirname));
+  const updated = getScheduledJob(name);
+
+  assert.equal(updated.cron_expr, "0 17 * * *");
+  assert.notEqual(updated.next_run_at, first.next_run_at);
+});
+
 test("scheduled run records traceable command result and last scheduled state", async (t) => {
   const root = workspace(t);
   const check = normalizeScheduledCheck(
-    { name: "manual-read", command: "test.read", intervalMinutes: 5 },
+    { name: "manual-read", command: "test.read", cron: "*/5 * * * *" },
     catalog(root),
   );
   const result = await runScheduledCheck({
@@ -112,7 +141,7 @@ test("scheduled run records traceable command result and last scheduled state", 
 test("findScheduledCheck resolves named checks from supplied list", (t) => {
   const root = workspace(t);
   const check = normalizeScheduledCheck(
-    { name: "named-read", command: "test.read", intervalMinutes: 5 },
+    { name: "named-read", command: "test.read", cron: "*/5 * * * *" },
     catalog(root),
   );
 
@@ -131,7 +160,7 @@ test("Router exposes configured schedule listing", async () => {
     timestamp: new Date(),
   });
 
-  assert.match(reply, /bemo-late - Bemo late-day read-only check \[enabled, every 60m, telegram, change-only\]/);
+  assert.match(reply, /bemo-late - Bemo late-day read-only check \[enabled, cron: 0 17 \* \* 1-5, telegram, change-only\]/);
 });
 
 test("schedule update preview requires exact digest before applying", () => {
@@ -139,16 +168,16 @@ test("schedule update preview requires exact digest before applying", () => {
     {
       name: "digest-read",
       command: "test.read",
-      intervalMinutes: 5,
+      cron: "*/5 * * * *",
       enabled: false,
     },
   ], catalog(__dirname));
-  const update = { action: "interval", name: "digest-read", value: 12 };
+  const update = { action: "cron", name: "digest-read", value: "0 9 * * *" };
   const first = scheduleUpdatePreview(update);
   const second = scheduleUpdatePreview(update);
 
   assert.equal(first.digest, second.digest);
-  assert.equal(applyScheduleUpdate(update), "Updated digest-read interval to 12m.");
+  assert.equal(applyScheduleUpdate(update), "Updated digest-read cron to: 0 9 * * *");
 });
 
 test("config seeding preserves runtime schedule controls", () => {
@@ -158,7 +187,7 @@ test("config seeding preserves runtime schedule controls", () => {
       name,
       label: "Initial label",
       command: "test.read",
-      intervalMinutes: 5,
+      cron: "*/5 * * * *",
       enabled: true,
       delivery: "telegram",
       notifyOnChangeOnly: true,
@@ -168,7 +197,6 @@ test("config seeding preserves runtime schedule controls", () => {
   updateScheduledJobState({
     name,
     enabled: false,
-    intervalMinutes: 17,
     delivery: "silent",
     nextRunAt: null,
   });
@@ -177,7 +205,7 @@ test("config seeding preserves runtime schedule controls", () => {
       name,
       label: "Updated label",
       command: "test.read",
-      intervalMinutes: 60,
+      cron: "0 10 * * *",
       enabled: true,
       delivery: "telegram",
       notifyOnChangeOnly: false,
@@ -186,7 +214,7 @@ test("config seeding preserves runtime schedule controls", () => {
 
   const row = getScheduledJob(name);
   assert.equal(row.label, "Updated label");
-  assert.equal(row.interval_minutes, 17);
+  assert.equal(row.cron_expr, "0 10 * * *");
   assert.equal(row.enabled, 0);
   assert.equal(row.delivery, "silent");
   assert.equal(row.notify_on_change_only, 1);
@@ -199,7 +227,7 @@ test("config seeding does not bump version when metadata is unchanged", () => {
     name,
     label: "Stable label",
     command: "test.read",
-    intervalMinutes: 5,
+    cron: "*/5 * * * *",
     enabled: true,
     delivery: "telegram",
     notifyOnChangeOnly: true,
@@ -222,7 +250,7 @@ test("due job claim uses a lease to prevent duplicate runners", () => {
     {
       name,
       command: "test.read",
-      intervalMinutes: 5,
+      cron: "*/5 * * * *",
       enabled: true,
     },
   ], catalog(__dirname));
@@ -253,13 +281,13 @@ test("schedule updates reject stale expected versions", () => {
     {
       name,
       command: "test.read",
-      intervalMinutes: 5,
+      cron: "*/5 * * * *",
       enabled: true,
     },
   ], catalog(__dirname));
   const initial = getScheduledJob(name);
 
-  assert.equal(applyScheduleUpdate({ action: "interval", name, value: 8, expectedVersion: initial.version }), `Updated ${name} interval to 8m.`);
+  assert.equal(applyScheduleUpdate({ action: "cron", name, value: "0 8 * * *", expectedVersion: initial.version }), `Updated ${name} cron to: 0 8 * * *`);
   assert.match(
     applyScheduleUpdate({ action: "delivery", name, value: "silent", expectedVersion: initial.version }),
     /Scheduled job changed/,
@@ -272,7 +300,7 @@ test("change-only delivery suppresses duplicate successful notification", async 
   const name = `change-only-${Date.now()}`;
   const check = {
     ...normalizeScheduledCheck(
-      { name, command: "test.read", intervalMinutes: 5, notifyOnChangeOnly: true },
+      { name, command: "test.read", cron: "*/5 * * * *", notifyOnChangeOnly: true },
       catalog(root),
     ),
     notifyOnChangeOnly: true,

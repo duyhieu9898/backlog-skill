@@ -15,6 +15,7 @@ function loadTelegramConfig(env = process.env) {
     return {
         botToken: requiredEnv(env, "TELEGRAM_BOT_TOKEN"),
         allowedChatId: requiredEnv(env, "TELEGRAM_CHAT_ID"),
+        allowedUserId: env.TELEGRAM_USER_ID?.trim() || requiredEnv(env, "TELEGRAM_CHAT_ID"),
         pollTimeoutSeconds,
     };
 }

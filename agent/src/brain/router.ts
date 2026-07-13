@@ -7,7 +7,7 @@ import type { AiPromptContext, AiProvider, AiResponse, AiToolDefinition, AiToolS
 import { GeminiProvider } from "./providers/gemini";
 import { OpenAiProvider } from "./providers/openai";
 
-const PROVIDER_RETRY_DELAYS_MS = [250, 500];
+const PROVIDER_RETRY_DELAYS_MS = [500, 1000, 2000];
 
 function isTransientProviderError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);

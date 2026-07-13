@@ -10,7 +10,7 @@ const aiInteractions_1 = require("../logging/aiInteractions");
 const logger_1 = require("../logging/logger");
 const gemini_1 = require("./providers/gemini");
 const openai_1 = require("./providers/openai");
-const PROVIDER_RETRY_DELAYS_MS = [250, 500];
+const PROVIDER_RETRY_DELAYS_MS = [500, 1000, 2000];
 function isTransientProviderError(error) {
     const message = error instanceof Error ? error.message : String(error);
     return /\b(429|500|502|503|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i.test(message);

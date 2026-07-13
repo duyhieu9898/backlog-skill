@@ -168,19 +168,26 @@ function upsertScheduledJob(input) {
     const now = nowIso();
     (0, db_1.getDb)()
         .prepare(`INSERT INTO scheduled_jobs
-       (name, label, command_name, interval_minutes, enabled, delivery,
+       (name, label, command_name, interval_minutes, daily_at, cron_expr, enabled, delivery,
         notify_on_change_only, prepare_effect_json, next_run_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(name) DO UPDATE SET
          label = excluded.label,
          command_name = excluded.command_name,
+         cron_expr = excluded.cron_expr,
          prepare_effect_json = excluded.prepare_effect_json,
+         next_run_at = CASE
+           WHEN scheduled_jobs.cron_expr IS NOT excluded.cron_expr
+             THEN excluded.next_run_at
+           ELSE scheduled_jobs.next_run_at
+         END,
          version = scheduled_jobs.version + 1,
          updated_at = excluded.updated_at
        WHERE scheduled_jobs.label IS NOT excluded.label
           OR scheduled_jobs.command_name IS NOT excluded.command_name
+          OR scheduled_jobs.cron_expr IS NOT excluded.cron_expr
           OR scheduled_jobs.prepare_effect_json IS NOT excluded.prepare_effect_json`)
-        .run(input.name, input.label, input.commandName, input.intervalMinutes, input.enabled ? 1 : 0, input.delivery, input.notifyOnChangeOnly ? 1 : 0, input.prepareEffect === undefined ? null : JSON.stringify(input.prepareEffect), input.nextRunAt ?? null, now, now);
+        .run(input.name, input.label, input.commandName, input.cronExpr, input.enabled ? 1 : 0, input.delivery, input.notifyOnChangeOnly ? 1 : 0, input.prepareEffect === undefined ? null : JSON.stringify(input.prepareEffect), input.nextRunAt ?? null, now, now);
 }
 function listScheduledJobs() {
     return (0, db_1.getDb)()
@@ -237,10 +244,10 @@ function updateScheduledJobState(input) {
     }
     const result = (0, db_1.getDb)()
         .prepare(`UPDATE scheduled_jobs
-       SET enabled = ?, interval_minutes = ?, delivery = ?, next_run_at = ?,
+       SET enabled = ?, cron_expr = ?, delivery = ?, next_run_at = ?,
            version = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?
        WHERE name = ?`)
-        .run(input.enabled === undefined ? current.enabled : input.enabled ? 1 : 0, input.intervalMinutes ?? current.interval_minutes, input.delivery ?? current.delivery, input.nextRunAt === undefined ? current.next_run_at : input.nextRunAt, current.version + 1, nowIso(), input.name);
+        .run(input.enabled === undefined ? current.enabled : input.enabled ? 1 : 0, input.cronExpr === undefined ? current.cron_expr : input.cronExpr, input.delivery ?? current.delivery, input.nextRunAt === undefined ? current.next_run_at : input.nextRunAt, current.version + 1, nowIso(), input.name);
     if (result.changes !== 1)
         throw new Error(`Scheduled job update failed: ${input.name}`);
     return getScheduledJob(input.name);

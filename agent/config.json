@@ -29,7 +29,7 @@
       "name": "bemo-late",
       "label": "Bemo late-day read-only check",
       "command": "bemo.late-list",
-      "intervalMinutes": 60,
+      "cron": "0 17 * * 1-5",
       "enabled": true,
       "delivery": "telegram",
       "notifyOnChangeOnly": true,

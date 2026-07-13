@@ -48,6 +48,7 @@ export type CommandResult = {
   signal?: NodeJS.Signals;
   output: string;
   timedOut: boolean;
+  stopped: boolean;
 };
 
 export type CommandPreview = {
@@ -77,7 +78,14 @@ const SAFE_ENV_KEYS = [
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
 ] as const;
-let runningTraceId: string | null = null;
+type RunningCommand = {
+  traceId: string;
+  child: ReturnType<typeof spawn>;
+  stopRequested: boolean;
+  killTimer: NodeJS.Timeout | null;
+};
+
+let runningCommand: RunningCommand | null = null;
 
 function normalizeCommand(action: AgentCommand): AgentCommand {
   if (!action.name?.trim()) throw new Error("Allowlisted command is missing a name.");
@@ -187,11 +195,27 @@ export function evaluateCommandPermission(
 }
 
 export function isCommandRunning(): boolean {
-  return runningTraceId !== null;
+  return runningCommand !== null;
 }
 
 export function getRunningTraceId(): string | null {
-  return runningTraceId;
+  return runningCommand?.traceId || null;
+}
+
+/** Request a graceful stop for the one globally tracked allowlisted command. */
+export function stopRunningCommand(): { stopped: boolean; traceId?: string } {
+  const running = runningCommand;
+  if (!running) return { stopped: false };
+  if (running.stopRequested) return { stopped: true, traceId: running.traceId };
+
+  const signalled = running.child.kill("SIGTERM");
+  if (!signalled) return { stopped: false };
+
+  running.stopRequested = true;
+  running.killTimer = setTimeout(() => {
+    if (runningCommand === running) running.child.kill("SIGKILL");
+  }, 5_000);
+  return { stopped: true, traceId: running.traceId };
 }
 
 export function buildCommandEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -237,7 +261,7 @@ export function commandPreviewDigest(preview: CommandPreview): string {
   return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
-function runCommand(action: AgentCommand, defaultTimeoutMs: number): Promise<CommandResult> {
+function runCommand(action: AgentCommand, defaultTimeoutMs: number, traceId: string): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const preview = previewCommand(action, defaultTimeoutMs);
     const child = spawn(preview.executable, preview.args, {
@@ -246,6 +270,8 @@ function runCommand(action: AgentCommand, defaultTimeoutMs: number): Promise<Com
       shell: false,
       stdio: [action.invocationInput === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    const running: RunningCommand = { traceId, child, stopRequested: false, killTimer: null };
+    runningCommand = running;
     const chunks: Buffer[] = [];
     let outputBytes = 0;
     let outputLimited = false;
@@ -281,17 +307,20 @@ function runCommand(action: AgentCommand, defaultTimeoutMs: number): Promise<Com
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (running.killTimer) clearTimeout(running.killTimer);
       reject(error);
     });
     child.once("close", (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (running.killTimer) clearTimeout(running.killTimer);
       resolve({
         exitCode: timedOut ? 124 : code ?? (signal ? 1 : 0),
         signal: signal || undefined,
         output: Buffer.concat(chunks).toString("utf8"),
         timedOut,
+        stopped: running.stopRequested,
       });
     });
   });
@@ -304,8 +333,8 @@ export async function runTrackedCommand(input: {
   defaultTimeoutMs?: number;
   confirmationGranted?: boolean;
 }): Promise<CommandResult> {
-  if (runningTraceId) {
-    throw new Error(`Command already running for trace ${runningTraceId}`);
+  if (runningCommand) {
+    throw new Error(`Command already running for trace ${runningCommand.traceId}`);
   }
 
   const action = normalizeCommand(input.action);
@@ -325,7 +354,6 @@ export async function runTrackedCommand(input: {
     ...(preview.inputDigest ? [`<json-stdin:${preview.inputDigest}>`] : []),
   ]);
   const startedAt = nowIso();
-  runningTraceId = input.traceId;
   setJsonState("runtime_state", "currentRun", {
     traceId: input.traceId,
     chatId: input.chatId,
@@ -350,7 +378,7 @@ export async function runTrackedCommand(input: {
   });
 
   try {
-    const result = await runCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS);
+    const result = await runCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS, input.traceId);
     const ok = result.exitCode === 0 && !result.signal;
     const finishedAt = nowIso();
     const outputTail = tailLines(result.output, 80).slice(-4096);
@@ -360,7 +388,7 @@ export async function runTrackedCommand(input: {
       finishedAt,
       exitCode: result.exitCode,
       outputTail,
-      errorMessage: ok ? undefined : `Exit ${result.exitCode || result.signal || "unknown"}`,
+      errorMessage: ok ? undefined : result.stopped ? "Stopped by user." : `Exit ${result.exitCode || result.signal || "unknown"}`,
     });
     setJsonState("runtime_state", "lastRun", {
       traceId: input.traceId,
@@ -372,11 +400,11 @@ export async function runTrackedCommand(input: {
     if (!ok) {
       setJsonState("runtime_state", "lastError", {
         traceId: input.traceId,
-        message: `Command failed: ${action.label}`,
+        message: result.stopped ? `Command stopped: ${action.label}` : `Command failed: ${action.label}`,
         at: finishedAt,
       });
     }
-    log.info(input.traceId, ok ? "command.completed" : "command.failed", {
+    log.info(input.traceId, ok ? "command.completed" : result.stopped ? "command.stopped" : "command.failed", {
       exitCode: result.exitCode,
       signal: result.signal,
       timedOut: result.timedOut,
@@ -403,7 +431,7 @@ export async function runTrackedCommand(input: {
     log.error(input.traceId, "command.failed", { error });
     throw error;
   } finally {
-    runningTraceId = null;
+    runningCommand = null;
     setJsonState("runtime_state", "currentRun", null);
   }
 }

@@ -72,8 +72,8 @@ None expected.
     initialized.
   - `agent/src/core/router.ts` exposes `/schedule` and
     `/schedule run <name>`.
-  - `agent/config.json` includes an enabled hourly `bemo-late` read-only
-    schedule.
+  - `agent/config.json` includes an enabled `bemo-late` read-only schedule;
+    US-019 now configures it for 17:00 Asia/Ho_Chi_Minh each day.
 - Validation:
   - `cd agent && npm test` passed 46/46 on 2026-07-07.
   - Tests cover read-only schedule validation, risky command refusal,
@@ -89,6 +89,7 @@ None expected.
     the timer and ran the read-only check successfully twice:
     `tr_mrbfrc0c_5996c668` at 09:05:31 +07 and
     `tr_mrbfsmb0_1e76d34e` at 09:06:30 +07. The schedule was then left enabled
-    at a 60-minute interval.
+    at a 60-minute interval; US-019 later replaced that interval with a fixed
+    daily 17:00 Asia/Ho_Chi_Minh schedule.
 - Remaining proof:
   - None for the US-010 contract.

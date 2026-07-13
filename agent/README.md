@@ -35,6 +35,8 @@ remain in effect. Router replies go to stdout; operational logs go to stderr.
   loaded skills, skill-registry errors, and SQLite path.
 - `/last` — latest command result and output tail.
 - `/last-error` — latest command or tool failure with trace ID.
+- `/stop` — immediately request termination of the one command currently
+  executing; it does not wait behind that command's chat queue.
 - `/debug <traceId>` — trace events for one execution.
 - `/commands` — allowlisted commands grouped by skill.
 - `/schedule` — configured scheduled checks and delivery mode.
@@ -198,7 +200,7 @@ Configure read-only scheduled checks in `config.json`:
       "name": "bemo-late",
       "label": "Bemo late-day read-only check",
       "command": "bemo.late-list",
-      "intervalMinutes": 60,
+      "dailyAt": "17:00",
       "enabled": true,
       "delivery": "telegram",
       "notifyOnChangeOnly": true,
@@ -212,7 +214,10 @@ Configure read-only scheduled checks in `config.json`:
 }
 ```
 
-Scheduled checks may reference only allowlisted commands that do not require
+Each schedule uses exactly one timing field: `intervalMinutes` for a repeating
+interval, or `dailyAt` for one fixed 24-hour local time. `dailyAt` is evaluated
+in the configured runtime timezone, so a service restart does not shift its
+next execution. Scheduled checks may reference only allowlisted commands that do not require
 confirmation and do not declare `externalSideEffect`. Configured checks
 bootstrap a durable SQLite job registry keyed by stable schedule `name`. After
 a job exists, SQLite is the source of truth for runtime controls such as

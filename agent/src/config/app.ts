@@ -44,7 +44,8 @@ export type ScheduledCheckConfig = {
   name: string;
   label?: string;
   command: string;
-  intervalMinutes: number;
+  /** Standard 5-field cron expression, e.g. "0 17 * * 1-5" (Mon–Fri at 17:00). */
+  cron: string;
   enabled?: boolean;
   delivery?: "telegram" | "silent";
   notifyOnChangeOnly?: boolean;
@@ -54,6 +55,7 @@ export type ScheduledCheckConfig = {
     effectCommand: string;
   };
 };
+
 
 const defaultConfig: AgentConfig = {
   ai: {

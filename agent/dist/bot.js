@@ -57,9 +57,8 @@ async function poll() {
                 const standard = (0, telegram_1.toStandardMessage)(update);
                 if (!standard)
                     continue;
-                if (standard.chatId !== telegramConfig.allowedChatId) {
-                    logger_1.log.warn(standard.traceId, "message.rejected", { chatId: standard.chatId });
-                    await telegram.sendMessage(standard.chatId, "không có quyền");
+                if (standard.userId !== telegramConfig.allowedUserId || standard.chatId !== telegramConfig.allowedChatId) {
+                    logger_1.log.warn(standard.traceId, "message.rejected", { userId: standard.userId, chatId: standard.chatId });
                     continue;
                 }
                 if (update.callback_query) {

@@ -5,6 +5,7 @@ import {
   evaluateCommandPermission,
   previewCommand,
   runTrackedCommand,
+  stopRunningCommand,
   type AgentCommand,
 } from "../commands";
 import { ContextHydrator } from "../context/hydrator";
@@ -48,6 +49,10 @@ export class Router {
   }
 
   async route(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void): Promise<string> {
+    // A stop must not wait behind the command it is meant to interrupt.
+    if (message.text.trim().toLowerCase() === "/stop") {
+      return this.routeSerialized(message, onReplyMarkup, onArtifact);
+    }
     const previous = this.chatLocks.get(message.chatId) || Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => { release = resolve; });
@@ -95,6 +100,13 @@ export class Router {
   private async routeInner(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void): Promise<string> {
     const text = message.text.trim();
     const normalized = text.toLowerCase();
+
+    if (normalized === "/stop") {
+      const result = stopRunningCommand();
+      if (!result.stopped) return "Không có lệnh nào đang chạy.";
+      log.info(message.traceId, "command.stop.requested", { runningTraceId: result.traceId });
+      return `Đã yêu cầu dừng lệnh đang chạy (traceId: ${result.traceId}).`;
+    }
 
     if (normalized === "/schedule") {
       return formatScheduleList(loadScheduledChecks());
@@ -330,14 +342,15 @@ export class Router {
 
   private parseScheduleUpdate(
     normalized: string,
-  ): { action: "enable" | "disable" | "interval" | "delivery"; name: string; value?: string | number } | null {
+  ): { action: "enable" | "disable" | "cron" | "delivery"; name: string; value?: string } | null {
     const parts = normalized.split(/\s+/);
     if (parts[0] !== "/schedule") return null;
     if ((parts[1] === "enable" || parts[1] === "disable") && parts[2]) {
       return { action: parts[1], name: parts[2] };
     }
-    if (parts[1] === "interval" && parts[2] && parts[3]) {
-      return { action: "interval", name: parts[2], value: Number(parts[3]) };
+    // /schedule cron <name> <5-field cron expr>
+    if (parts[1] === "cron" && parts[2] && parts.length >= 8) {
+      return { action: "cron", name: parts[2], value: parts.slice(3).join(" ") };
     }
     if (parts[1] === "delivery" && parts[2] && parts[3]) {
       return { action: "delivery", name: parts[2], value: parts[3] };

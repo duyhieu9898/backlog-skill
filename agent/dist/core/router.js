@@ -23,6 +23,10 @@ class Router {
         this.commandTimeoutMs = (0, app_1.loadAgentConfig)().runtime?.commandTimeoutMs || 10 * 60 * 1000;
     }
     async route(message, onReplyMarkup, onArtifact) {
+        // A stop must not wait behind the command it is meant to interrupt.
+        if (message.text.trim().toLowerCase() === "/stop") {
+            return this.routeSerialized(message, onReplyMarkup, onArtifact);
+        }
         const previous = this.chatLocks.get(message.chatId) || Promise.resolve();
         let release;
         const current = new Promise((resolve) => { release = resolve; });
@@ -70,6 +74,13 @@ class Router {
     async routeInner(message, onReplyMarkup, onArtifact) {
         const text = message.text.trim();
         const normalized = text.toLowerCase();
+        if (normalized === "/stop") {
+            const result = (0, commands_1.stopRunningCommand)();
+            if (!result.stopped)
+                return "Không có lệnh nào đang chạy.";
+            logger_1.log.info(message.traceId, "command.stop.requested", { runningTraceId: result.traceId });
+            return `Đã yêu cầu dừng lệnh đang chạy (traceId: ${result.traceId}).`;
+        }
         if (normalized === "/schedule") {
             return (0, scheduler_1.formatScheduleList)((0, scheduler_1.loadScheduledChecks)());
         }
@@ -276,8 +287,9 @@ class Router {
         if ((parts[1] === "enable" || parts[1] === "disable") && parts[2]) {
             return { action: parts[1], name: parts[2] };
         }
-        if (parts[1] === "interval" && parts[2] && parts[3]) {
-            return { action: "interval", name: parts[2], value: Number(parts[3]) };
+        // /schedule cron <name> <5-field cron expr>
+        if (parts[1] === "cron" && parts[2] && parts.length >= 8) {
+            return { action: "cron", name: parts[2], value: parts.slice(3).join(" ") };
         }
         if (parts[1] === "delivery" && parts[2] && parts[3]) {
             return { action: "delivery", name: parts[2], value: parts[3] };

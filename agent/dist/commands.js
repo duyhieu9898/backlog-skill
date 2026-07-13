@@ -12,6 +12,7 @@ exports.resolveCwd = resolveCwd;
 exports.evaluateCommandPermission = evaluateCommandPermission;
 exports.isCommandRunning = isCommandRunning;
 exports.getRunningTraceId = getRunningTraceId;
+exports.stopRunningCommand = stopRunningCommand;
 exports.buildCommandEnvironment = buildCommandEnvironment;
 exports.previewCommand = previewCommand;
 exports.commandPreviewDigest = commandPreviewDigest;
@@ -42,7 +43,7 @@ const SAFE_ENV_KEYS = [
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
 ];
-let runningTraceId = null;
+let runningCommand = null;
 function normalizeCommand(action) {
     if (!action.name?.trim())
         throw new Error("Allowlisted command is missing a name.");
@@ -140,10 +141,27 @@ function evaluateCommandPermission(action, confirmationGranted = false) {
     }, { confirmationGranted });
 }
 function isCommandRunning() {
-    return runningTraceId !== null;
+    return runningCommand !== null;
 }
 function getRunningTraceId() {
-    return runningTraceId;
+    return runningCommand?.traceId || null;
+}
+/** Request a graceful stop for the one globally tracked allowlisted command. */
+function stopRunningCommand() {
+    const running = runningCommand;
+    if (!running)
+        return { stopped: false };
+    if (running.stopRequested)
+        return { stopped: true, traceId: running.traceId };
+    const signalled = running.child.kill("SIGTERM");
+    if (!signalled)
+        return { stopped: false };
+    running.stopRequested = true;
+    running.killTimer = setTimeout(() => {
+        if (runningCommand === running)
+            running.child.kill("SIGKILL");
+    }, 5_000);
+    return { stopped: true, traceId: running.traceId };
 }
 function buildCommandEnvironment(source = process.env) {
     const env = {};
@@ -182,7 +200,7 @@ function commandPreviewDigest(preview) {
     });
     return node_crypto_1.default.createHash("sha256").update(canonical).digest("hex");
 }
-function runCommand(action, defaultTimeoutMs) {
+function runCommand(action, defaultTimeoutMs, traceId) {
     return new Promise((resolve, reject) => {
         const preview = previewCommand(action, defaultTimeoutMs);
         const child = (0, node_child_process_1.spawn)(preview.executable, preview.args, {
@@ -191,6 +209,8 @@ function runCommand(action, defaultTimeoutMs) {
             shell: false,
             stdio: [action.invocationInput === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         });
+        const running = { traceId, child, stopRequested: false, killTimer: null };
+        runningCommand = running;
         const chunks = [];
         let outputBytes = 0;
         let outputLimited = false;
@@ -225,6 +245,8 @@ function runCommand(action, defaultTimeoutMs) {
                 return;
             settled = true;
             clearTimeout(timer);
+            if (running.killTimer)
+                clearTimeout(running.killTimer);
             reject(error);
         });
         child.once("close", (code, signal) => {
@@ -232,18 +254,21 @@ function runCommand(action, defaultTimeoutMs) {
                 return;
             settled = true;
             clearTimeout(timer);
+            if (running.killTimer)
+                clearTimeout(running.killTimer);
             resolve({
                 exitCode: timedOut ? 124 : code ?? (signal ? 1 : 0),
                 signal: signal || undefined,
                 output: Buffer.concat(chunks).toString("utf8"),
                 timedOut,
+                stopped: running.stopRequested,
             });
         });
     });
 }
 async function runTrackedCommand(input) {
-    if (runningTraceId) {
-        throw new Error(`Command already running for trace ${runningTraceId}`);
+    if (runningCommand) {
+        throw new Error(`Command already running for trace ${runningCommand.traceId}`);
     }
     const action = normalizeCommand(input.action);
     const policyDecision = evaluateCommandPermission(action, input.confirmationGranted);
@@ -262,7 +287,6 @@ async function runTrackedCommand(input) {
         ...(preview.inputDigest ? [`<json-stdin:${preview.inputDigest}>`] : []),
     ]);
     const startedAt = (0, repositories_1.nowIso)();
-    runningTraceId = input.traceId;
     (0, repositories_1.setJsonState)("runtime_state", "currentRun", {
         traceId: input.traceId,
         chatId: input.chatId,
@@ -286,7 +310,7 @@ async function runTrackedCommand(input) {
         cwd,
     });
     try {
-        const result = await runCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS);
+        const result = await runCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS, input.traceId);
         const ok = result.exitCode === 0 && !result.signal;
         const finishedAt = (0, repositories_1.nowIso)();
         const outputTail = (0, utils_1.tailLines)(result.output, 80).slice(-4096);
@@ -296,7 +320,7 @@ async function runTrackedCommand(input) {
             finishedAt,
             exitCode: result.exitCode,
             outputTail,
-            errorMessage: ok ? undefined : `Exit ${result.exitCode || result.signal || "unknown"}`,
+            errorMessage: ok ? undefined : result.stopped ? "Stopped by user." : `Exit ${result.exitCode || result.signal || "unknown"}`,
         });
         (0, repositories_1.setJsonState)("runtime_state", "lastRun", {
             traceId: input.traceId,
@@ -308,11 +332,11 @@ async function runTrackedCommand(input) {
         if (!ok) {
             (0, repositories_1.setJsonState)("runtime_state", "lastError", {
                 traceId: input.traceId,
-                message: `Command failed: ${action.label}`,
+                message: result.stopped ? `Command stopped: ${action.label}` : `Command failed: ${action.label}`,
                 at: finishedAt,
             });
         }
-        logger_1.log.info(input.traceId, ok ? "command.completed" : "command.failed", {
+        logger_1.log.info(input.traceId, ok ? "command.completed" : result.stopped ? "command.stopped" : "command.failed", {
             exitCode: result.exitCode,
             signal: result.signal,
             timedOut: result.timedOut,
@@ -341,7 +365,7 @@ async function runTrackedCommand(input) {
         throw error;
     }
     finally {
-        runningTraceId = null;
+        runningCommand = null;
         (0, repositories_1.setJsonState)("runtime_state", "currentRun", null);
     }
 }
