@@ -59,7 +59,7 @@ test("status, help, command, and skill output include required fields", () => {
   const desktop = handleDebugCommand("/desktop", registry);
   assert.match(desktop, /platform:/);
   assert.match(desktop, /screen\.capture: (available|unavailable) \((granted|unavailable)\)/);
-  assert.match(desktop, /declared apps: 0/);
+  assert.match(desktop, /declared apps: \d+/);
 
   const help = handleDebugCommand("/help", registry);
   assert.match(help, /\/last-error/);

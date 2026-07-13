@@ -1,10 +1,16 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentToolLoop = void 0;
 const router_1 = require("../brain/router");
 const logger_1 = require("../logging/logger");
 const repositories_1 = require("../storage/repositories");
 const executor_1 = require("./executor");
+const store_1 = require("../artifacts/store");
+const image_context_1 = require("./media/image-context");
+const node_fs_1 = __importDefault(require("node:fs"));
 const MAX_TOOL_STEPS = 4;
 const MAX_IDENTICAL_FAILURES = 2;
 function formatResult(result) {
@@ -26,6 +32,23 @@ function stableJson(value) {
 function failureKey(call, result) {
     return `${call.name}:${stableJson(call.arguments)}:${result.code}`;
 }
+function modelImageForResult(result, chatId) {
+    const artifactId = result.data?.artifactId;
+    if (typeof artifactId !== "string")
+        return undefined;
+    try {
+        const artifact = new store_1.ArtifactStore().claim(artifactId, chatId);
+        return (0, image_context_1.createModelImage)(node_fs_1.default.readFileSync(artifact.local_path), artifact.mime_type);
+    }
+    catch {
+        return undefined;
+    }
+}
+function persistentSteps(steps) {
+    // Screenshots are re-read from their artifact when the loop resumes. Never
+    // put base64 pixels in the pending-confirmation database row.
+    return steps.map(({ call, result }) => ({ call, result }));
+}
 function repeatedFailureMessage(call, result) {
     return [
         `Đã dừng sau ${MAX_IDENTICAL_FAILURES} lần lỗi lặp lại cho ${call.name} [${result.code}] để tránh hao token.`,
@@ -40,12 +63,12 @@ class AgentToolLoop {
         this.ai = ai;
         this.executor = executor;
     }
-    async run(message, context, onReplyMarkup, onArtifact) {
-        const steps = [];
+    async run(message, context, onReplyMarkup, onArtifact, initialSteps = [], userMessage = message.text) {
+        const steps = [...initialSteps];
         const failures = new Map();
         const tools = this.executor.definitions(context.toolScope);
         for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
-            const response = await this.ai.complete(message.traceId, context, message.text, tools, steps);
+            const response = await this.ai.complete(message.traceId, context, userMessage, tools, steps);
             if (response.clarification) {
                 logger_1.log.info(message.traceId, "ai.clarification.requested", { step: index });
                 return response.clarification;
@@ -59,7 +82,7 @@ class AgentToolLoop {
                 toolName: response.toolCall.name,
             });
             try {
-                const prepared = this.executor.prepare(response.toolCall, message.traceId, tools);
+                const prepared = this.executor.prepare(response.toolCall, message.traceId, tools, message.chatId);
                 if (prepared.requiresConfirmation) {
                     const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
                     const pending = {
@@ -67,6 +90,11 @@ class AgentToolLoop {
                         call: prepared.call,
                         digest: prepared.digest,
                         preview: prepared.preview,
+                        continuation: {
+                            userMessage,
+                            context,
+                            steps: persistentSteps(steps),
+                        },
                     };
                     (0, repositories_1.upsertPendingConfirmation)({
                         chatId: message.chatId,
@@ -100,10 +128,10 @@ class AgentToolLoop {
                     traceId: message.traceId,
                     chatId: message.chatId,
                 });
-                if (result.code === "DESKTOP_CAPTURED" && typeof result.data?.artifactId === "string") {
+                if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof result.data?.artifactId === "string") {
                     onArtifact?.(result.data.artifactId);
                 }
-                steps.push({ call: response.toolCall, result });
+                steps.push({ call: response.toolCall, result, image: modelImageForResult(result, message.chatId) });
                 logger_1.log.info(message.traceId, "ai.tool.completed", {
                     step: index,
                     toolName: response.toolCall.name,
@@ -153,7 +181,7 @@ class AgentToolLoop {
         }
         return `Đã dừng sau ${MAX_TOOL_STEPS} bước tool để tránh vòng lặp tự động. Hãy thu hẹp yêu cầu hoặc thử lại.`;
     }
-    async consumeConfirmation(message, onArtifact) {
+    async consumeConfirmation(message, onArtifact, onReplyMarkup) {
         const text = message.text.trim().toLowerCase();
         if (!text.startsWith("confirm"))
             return null;
@@ -178,7 +206,7 @@ class AgentToolLoop {
         }
         let prepared;
         try {
-            prepared = this.executor.prepare(payload.call, message.traceId);
+            prepared = this.executor.prepare(payload.call, message.traceId, undefined, message.chatId);
         }
         catch (error) {
             (0, repositories_1.deletePendingConfirmation)(message.chatId);
@@ -195,7 +223,7 @@ class AgentToolLoop {
             chatId: message.chatId,
             confirmationGranted: true,
         });
-        if (result.code === "DESKTOP_CAPTURED" && typeof result.data?.artifactId === "string") {
+        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof result.data?.artifactId === "string") {
             onArtifact?.(result.data.artifactId);
         }
         logger_1.log.info(message.traceId, "ai.tool.confirmed", {
@@ -203,7 +231,22 @@ class AgentToolLoop {
             ok: result.ok,
             code: result.code,
         });
-        return formatResult(result);
+        if (!payload.continuation)
+            return formatResult(result);
+        const resumedSteps = payload.continuation.steps.map((step) => ({
+            ...step,
+            image: modelImageForResult(step.result, message.chatId),
+        }));
+        resumedSteps.push({
+            call: payload.call,
+            result,
+            image: modelImageForResult(result, message.chatId),
+        });
+        logger_1.log.info(message.traceId, "ai.tool.continuing_after_confirmation", {
+            toolName: prepared.call.name,
+            priorSteps: payload.continuation.steps.length,
+        });
+        return this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, resumedSteps, payload.continuation.userMessage);
     }
 }
 exports.AgentToolLoop = AgentToolLoop;

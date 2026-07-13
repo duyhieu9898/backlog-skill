@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { agentDir, configFile, repoDir, skillsDir, systemPromptFile } from "./paths";
-import type { DesktopAppDefinition } from "../desktop/contracts";
-import { DesktopRegistry } from "../desktop/registry";
+import type { DesktopAppDefinition } from "../tools/computer/contracts";
+import { DesktopRegistry } from "../tools/computer/apps";
 
 export type AiProviderConfig = {
   default: "openai" | "gemini";
@@ -124,6 +124,7 @@ export function loadAgentConfig(): AgentConfig {
       apps: desktopApps,
     },
     permissions: {
+      ...merged.permissions,
       workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
       allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
       allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),

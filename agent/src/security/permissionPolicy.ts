@@ -8,7 +8,7 @@ import type {
   PolicyDecision,
   ToolAction,
 } from "../tools/contracts";
-import type { DesktopStatus } from "../desktop/contracts";
+import type { DesktopStatus } from "../tools/computer/contracts";
 
 export type PermissionPolicyConfig = {
   workspaceRoot: string;

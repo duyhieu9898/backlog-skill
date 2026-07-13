@@ -592,3 +592,16 @@ test("ContextHydrator builds a minimal, redacted prompt for general conversation
   assert.match(prompt.history[0].content, /Tác vụ cần xác nhận/);
   assert.doesNotMatch(prompt.history[0].content, /Executable|Args|Cwd|Approval|secret-token/);
 });
+
+test("ContextHydrator isolates desktop requests from stale chat tool protocol", () => {
+  const registry = new SkillRegistry(path.join(__dirname, "..", "..", "skills"));
+  const chatId = `desktop-context-${Date.now()}`;
+  insertChatMessage({ chatId, userId: "user", role: "user", content: "confirm computer deadbeef1234", traceId: "old-confirm" });
+  insertChatMessage({ chatId, userId: "agent", role: "assistant", content: '```json\n{"toolCall":{"name":"computer","arguments":{"action":"left_click"}}}\n```', traceId: "old-raw" });
+  insertChatMessage({ chatId, userId: "user", role: "user", content: "tạo file cũ", traceId: "old-task" });
+  const prompt = new ContextHydrator(registry).hydrate({
+    provider: "telegram", chatId, userId: "user", text: "Mở VS Code", traceId: "desktop-now", timestamp: new Date(),
+  }).prompt;
+  assert.deepEqual(prompt.history, []);
+  assert.deepEqual(prompt.toolScope, { includeFileTools: false, desktopOnly: true });
+});

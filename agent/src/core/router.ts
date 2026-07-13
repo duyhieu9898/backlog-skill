@@ -37,6 +37,7 @@ import {
 export class Router {
   private readonly hydrator: ContextHydrator;
   private readonly commandTimeoutMs: number;
+  private readonly chatLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly registry: SkillRegistry,
@@ -47,6 +48,20 @@ export class Router {
   }
 
   async route(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void): Promise<string> {
+    const previous = this.chatLocks.get(message.chatId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.chatLocks.set(message.chatId, current);
+    await previous;
+    try {
+      return await this.routeSerialized(message, onReplyMarkup, onArtifact);
+    } finally {
+      release();
+      if (this.chatLocks.get(message.chatId) === current) this.chatLocks.delete(message.chatId);
+    }
+  }
+
+  private async routeSerialized(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void): Promise<string> {
     log.info(message.traceId, "route.started", {
       provider: message.provider,
       chatId: message.chatId,
@@ -155,7 +170,7 @@ export class Router {
       return handleDebugCommand(text, this.registry);
     }
 
-    const toolConfirmed = await this.toolLoop.consumeConfirmation(message, onArtifact);
+    const toolConfirmed = await this.toolLoop.consumeConfirmation(message, onArtifact, onReplyMarkup);
     if (toolConfirmed) return toolConfirmed;
     const confirmed = await this.consumeConfirmation(message);
     if (confirmed) return confirmed;

@@ -65,7 +65,7 @@ export type DesktopObserveAction = {
 export type DesktopActAction = {
   kind: "desktop.act";
   targetId: string;
-  operation: "click" | "type" | "scroll";
+  operation: "click" | "type" | "key" | "scroll";
 };
 
 export type DesktopToolAction =

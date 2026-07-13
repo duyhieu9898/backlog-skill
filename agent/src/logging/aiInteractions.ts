@@ -12,8 +12,18 @@ type AiInteractionRecord = {
 };
 
 function serialize(value: unknown): string {
+  const redact = (candidate: unknown): unknown => {
+    if (Array.isArray(candidate)) return candidate.map(redact);
+    if (!candidate || typeof candidate !== "object") return candidate;
+    const object = candidate as Record<string, unknown>;
+    if (object.inlineData && typeof object.inlineData === "object") {
+      const inline = object.inlineData as Record<string, unknown>;
+      return { ...object, inlineData: { ...inline, data: "[redacted inline image]" } };
+    }
+    return Object.fromEntries(Object.entries(object).map(([key, entry]) => [key, redact(entry)]));
+  };
   const seen = new WeakSet<object>();
-  return JSON.stringify(value, (_key, candidate) => {
+  return JSON.stringify(redact(value), (_key, candidate) => {
     if (typeof candidate === "bigint") return candidate.toString();
     if (candidate instanceof Error) {
       return { name: candidate.name, message: candidate.message, stack: candidate.stack };

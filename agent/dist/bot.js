@@ -66,6 +66,12 @@ async function poll() {
                     telegram.answerCallbackQuery(update.callback_query.id, "Đang xử lý...").catch((e) => {
                         logger_1.log.error(standard.traceId, "telegram.answerCallbackQuery.failed", { error: e });
                     });
+                    const callbackMessage = update.callback_query.message;
+                    if (callbackMessage?.chat?.id !== undefined && typeof callbackMessage.message_id === "number") {
+                        telegram.clearInlineKeyboard(String(callbackMessage.chat.id), callbackMessage.message_id).catch((e) => {
+                            logger_1.log.error(standard.traceId, "telegram.clearInlineKeyboard.failed", { error: e });
+                        });
+                    }
                 }
                 const typingInterval = setInterval(() => {
                     telegram.sendChatAction(standard.chatId, "typing").catch(() => { });

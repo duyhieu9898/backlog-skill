@@ -15,6 +15,7 @@ class Router {
     toolLoop;
     hydrator;
     commandTimeoutMs;
+    chatLocks = new Map();
     constructor(registry, toolLoop = new loop_1.AgentToolLoop()) {
         this.registry = registry;
         this.toolLoop = toolLoop;
@@ -22,6 +23,21 @@ class Router {
         this.commandTimeoutMs = (0, app_1.loadAgentConfig)().runtime?.commandTimeoutMs || 10 * 60 * 1000;
     }
     async route(message, onReplyMarkup, onArtifact) {
+        const previous = this.chatLocks.get(message.chatId) || Promise.resolve();
+        let release;
+        const current = new Promise((resolve) => { release = resolve; });
+        this.chatLocks.set(message.chatId, current);
+        await previous;
+        try {
+            return await this.routeSerialized(message, onReplyMarkup, onArtifact);
+        }
+        finally {
+            release();
+            if (this.chatLocks.get(message.chatId) === current)
+                this.chatLocks.delete(message.chatId);
+        }
+    }
+    async routeSerialized(message, onReplyMarkup, onArtifact) {
         logger_1.log.info(message.traceId, "route.started", {
             provider: message.provider,
             chatId: message.chatId,
@@ -118,7 +134,7 @@ class Router {
             logger_1.log.info(message.traceId, normalized.startsWith("/debug ") ? "debug.trace.requested" : "system.status.requested", { command: normalized });
             return (0, debugCommands_1.handleDebugCommand)(text, this.registry);
         }
-        const toolConfirmed = await this.toolLoop.consumeConfirmation(message, onArtifact);
+        const toolConfirmed = await this.toolLoop.consumeConfirmation(message, onArtifact, onReplyMarkup);
         if (toolConfirmed)
             return toolConfirmed;
         const confirmed = await this.consumeConfirmation(message);

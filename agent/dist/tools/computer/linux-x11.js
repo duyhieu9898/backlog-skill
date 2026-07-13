@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LinuxX11DesktopAdapter = exports.UnavailableDesktopAdapter = void 0;
 exports.scrotScreenshotArgs = scrotScreenshotArgs;
+exports.xdotoolWindowSearchArgs = xdotoolWindowSearchArgs;
 exports.getDesktopAdapter = getDesktopAdapter;
 const contracts_1 = require("./contracts");
 const node_child_process_1 = require("node:child_process");
@@ -35,13 +36,19 @@ function commandAvailable(command) {
 function scrotScreenshotArgs(file) {
     return ["-o", file];
 }
+function xdotoolWindowSearchArgs(title) {
+    const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return ["search", "--onlyvisible", "--name", `^${escaped}$`];
+}
 class LinuxX11DesktopAdapter {
     captureAvailable;
     launchAvailable;
+    controlAvailable;
     constructor() {
         const x11 = process.env.XDG_SESSION_TYPE === "x11" && Boolean(process.env.DISPLAY);
         this.captureAvailable = x11 && commandAvailable("scrot");
         this.launchAvailable = x11 && commandAvailable("gtk-launch");
+        this.controlAvailable = x11 && commandAvailable("xdotool");
     }
     getStatus() {
         const display = process.env.DISPLAY || "";
@@ -51,7 +58,7 @@ class LinuxX11DesktopAdapter {
                 { capability: "screen.capture", available: this.captureAvailable, permission: { state: this.captureAvailable ? "granted" : "unavailable", detail: this.captureAvailable ? "scrot X11 backend" : "Requires X11, DISPLAY, and scrot." } },
                 { capability: "app.launch", available: this.launchAvailable, permission: { state: this.launchAvailable ? "granted" : "unavailable", detail: this.launchAvailable ? "gtk-launch desktop-file backend" : "Requires X11 and gtk-launch." } },
                 { capability: "ui.observe", available: false, permission: { state: "unavailable" } },
-                { capability: "ui.act", available: false, permission: { state: "unavailable" } },
+                { capability: "ui.act", available: this.controlAvailable, permission: { state: this.controlAvailable ? "granted" : "unavailable", detail: this.controlAvailable ? "xdotool X11 backend" : "Requires X11, DISPLAY, and xdotool." } },
             ],
             displays: this.captureAvailable ? [{ id: display, width: 0, height: 0, scaleFactor: 1 }] : [],
         };
@@ -72,6 +79,22 @@ class LinuxX11DesktopAdapter {
         const child = (0, node_child_process_1.spawn)("gtk-launch", [appId], { detached: true, stdio: "ignore" });
         child.unref();
         return { appId };
+    }
+    focusWindow(title) {
+        if (!this.controlAvailable || !title.trim())
+            return undefined;
+        const search = (0, node_child_process_1.spawnSync)("xdotool", xdotoolWindowSearchArgs(title), { encoding: "utf8" });
+        if (search.status !== 0)
+            return undefined;
+        const windowId = search.stdout.trim().split(/\s+/).at(-1);
+        if (!windowId || !/^\d+$/.test(windowId))
+            return undefined;
+        const activate = (0, node_child_process_1.spawnSync)("xdotool", ["windowactivate", "--sync", windowId], { encoding: "utf8" });
+        if (activate.status !== 0)
+            return undefined;
+        const name = (0, node_child_process_1.spawnSync)("xdotool", ["getwindowname", windowId], { encoding: "utf8" });
+        const focusedTitle = name.status === 0 ? name.stdout.trim() : title;
+        return { windowId, title: focusedTitle || title };
     }
 }
 exports.LinuxX11DesktopAdapter = LinuxX11DesktopAdapter;

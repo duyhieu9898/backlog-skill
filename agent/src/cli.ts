@@ -5,6 +5,7 @@ import { agentDir } from "./config/paths";
 import { loadEnv } from "./config/env";
 import { Router } from "./core/router";
 import { SkillRegistry } from "./skills/registry";
+import { getArtifact } from "./storage/repositories";
 
 function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -20,15 +21,27 @@ function readStdin(): Promise<string> {
 
 export async function runCli(args = process.argv.slice(2)): Promise<number> {
   loadEnv(path.join(agentDir, ".env"));
-  const text = inputFromArgs(args) || (process.stdin.isTTY ? "" : await readStdin());
+  const json = args.includes("--json");
+  const text = inputFromArgs(args.filter((arg) => arg !== "--json")) || (process.stdin.isTTY ? "" : await readStdin());
   if (!text) {
     process.stderr.write('Usage: npm run cli -- "<message>"\n');
     return 2;
   }
 
   const router = new Router(new SkillRegistry());
-  const reply = await router.route(toCliMessage(text));
-  process.stdout.write(`${reply}\n`);
+  const message = toCliMessage(text);
+  let artifactId: string | undefined;
+  const reply = await router.route(message, undefined, (id) => { artifactId = id; });
+  const artifact = artifactId ? getArtifact(artifactId) : null;
+  if (json) {
+    process.stdout.write(`${JSON.stringify({
+      traceId: message.traceId,
+      reply,
+      artifact: artifact && { id: artifact.id, mimeType: artifact.mime_type, byteSize: artifact.byte_size, path: artifact.local_path },
+    })}\n`);
+  } else {
+    process.stdout.write(`${reply}${artifact ? `\nArtifact: ${artifact.local_path}` : ""}\n`);
+  }
   return 0;
 }
 

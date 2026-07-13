@@ -56,6 +56,19 @@ Install the `my-agent` CLI and systemd user service:
 ./scripts/my-agent install
 ```
 
+On Debian/Ubuntu Linux, `install` also installs the desktop-automation
+prerequisites used by the X11 adapter: `scrot`, `libgtk-3-bin`, `xdotool`,
+`wmctrl`, and `python3-pyatspi`. It will ask for the local administrator
+password through `sudo`. Re-run only that prerequisite step with:
+
+```bash
+./scripts/my-agent desktop-deps
+```
+
+The adapter stays unavailable outside an X11 session or if the dependencies
+cannot be installed. `MY_AGENT_SKIP_DESKTOP_DEPS=1` skips this explicit setup
+step for non-desktop or CI installations.
+
 Make sure `~/.local/bin` is in your `PATH`, then control the background service:
 
 ```bash

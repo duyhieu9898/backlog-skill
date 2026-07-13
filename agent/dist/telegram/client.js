@@ -53,6 +53,14 @@ class TelegramClient {
             text,
         });
     }
+    /** Remove a consumed inline keyboard so its confirmation cannot be clicked again. */
+    async clearInlineKeyboard(chatId, messageId) {
+        await this.request("editMessageReplyMarkup", {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: { inline_keyboard: [] },
+        });
+    }
     async sendChatAction(chatId, action = "typing") {
         await this.request("sendChatAction", {
             chat_id: chatId,

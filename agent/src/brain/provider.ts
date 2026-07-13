@@ -1,4 +1,5 @@
 import type { JsonSchema } from "../tools/schema";
+import type { ModelImage } from "../tools/media/image-context";
 
 export type AiToolDefinition = {
   name: string;
@@ -14,6 +15,8 @@ export type AiToolCall = {
 export type AiToolStep = {
   call: AiToolCall;
   result: unknown;
+  /** Ephemeral media for the next model turn; never serialize into tool text. */
+  image?: ModelImage;
 };
 
 export type AiChatTurn = {
@@ -30,6 +33,8 @@ export type AiRuntimeContext = {
 export type AiToolScope = {
   skillSlug?: string;
   includeFileTools: boolean;
+  desktopOnly?: boolean;
+  webOnly?: boolean;
 };
 
 export type AiPromptContext = {

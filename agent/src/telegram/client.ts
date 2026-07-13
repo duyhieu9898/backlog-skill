@@ -5,6 +5,7 @@ import type { Artifact } from "../artifacts/store";
 
 export type TelegramMessage = {
   chat?: { id?: number | string };
+  message_id?: number;
   from?: { id?: number | string };
   text?: string;
   date?: number;
@@ -76,6 +77,15 @@ export class TelegramClient {
     await this.request("answerCallbackQuery", {
       callback_query_id: callbackQueryId,
       text,
+    });
+  }
+
+  /** Remove a consumed inline keyboard so its confirmation cannot be clicked again. */
+  async clearInlineKeyboard(chatId: string, messageId: number): Promise<void> {
+    await this.request("editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [] },
     });
   }
 

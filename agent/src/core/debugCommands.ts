@@ -12,8 +12,7 @@ import {
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
 import { formatScheduleList, loadScheduledChecks } from "../scheduler";
-import { getDesktopAdapter } from "../desktop/adapter";
-import { DesktopRegistry } from "../desktop/registry";
+import { getDesktopAdapter, DesktopRegistry } from "../tools/computer";
 import { loadAgentConfig } from "../config/app";
 
 const startedAt = Date.now();

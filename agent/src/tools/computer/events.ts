@@ -1,4 +1,4 @@
-import { log } from "../logging/logger";
+import { log } from "../../logging/logger";
 import type { DesktopEventEnvelope } from "./contracts";
 
 export function logDesktopEvent(traceId: string, envelope: DesktopEventEnvelope): void {

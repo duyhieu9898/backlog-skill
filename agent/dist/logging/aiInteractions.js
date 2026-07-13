@@ -8,8 +8,20 @@ const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const paths_1 = require("../config/paths");
 function serialize(value) {
+    const redact = (candidate) => {
+        if (Array.isArray(candidate))
+            return candidate.map(redact);
+        if (!candidate || typeof candidate !== "object")
+            return candidate;
+        const object = candidate;
+        if (object.inlineData && typeof object.inlineData === "object") {
+            const inline = object.inlineData;
+            return { ...object, inlineData: { ...inline, data: "[redacted inline image]" } };
+        }
+        return Object.fromEntries(Object.entries(object).map(([key, entry]) => [key, redact(entry)]));
+    };
     const seen = new WeakSet();
-    return JSON.stringify(value, (_key, candidate) => {
+    return JSON.stringify(redact(value), (_key, candidate) => {
         if (typeof candidate === "bigint")
             return candidate.toString();
         if (candidate instanceof Error) {

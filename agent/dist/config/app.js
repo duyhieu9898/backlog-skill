@@ -8,7 +8,7 @@ exports.loadSystemPrompt = loadSystemPrompt;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const paths_1 = require("./paths");
-const registry_1 = require("../desktop/registry");
+const apps_1 = require("../tools/computer/apps");
 const defaultConfig = {
     ai: {
         default: "gemini",
@@ -69,7 +69,7 @@ function loadAgentConfig() {
         },
     };
     const resolveFromAgent = (candidate) => node_path_1.default.isAbsolute(candidate) ? candidate : node_path_1.default.resolve(paths_1.agentDir, candidate);
-    const desktopApps = new registry_1.DesktopRegistry(merged.desktop.apps || []).list();
+    const desktopApps = new apps_1.DesktopRegistry(merged.desktop.apps || []).list();
     return {
         ...merged,
         desktop: {
@@ -77,6 +77,7 @@ function loadAgentConfig() {
             apps: desktopApps,
         },
         permissions: {
+            ...merged.permissions,
             workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
             allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
             allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),

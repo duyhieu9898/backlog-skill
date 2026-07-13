@@ -43,10 +43,13 @@ export interface DesktopAdapter {
 
 export type CapturedScreen = { path: string; displayId: string };
 export type LaunchedApp = { appId: string };
+export type FocusedWindow = { windowId: string; title: string };
 
 export interface DesktopActionAdapter extends DesktopAdapter {
   capture(displayId?: string): CapturedScreen;
   launch(appId: string): LaunchedApp;
+  /** Focus an already allowlisted app window; undefined means it is not ready. */
+  focusWindow(title: string): FocusedWindow | undefined;
 }
 
 export type DesktopEventOutcome = "available" | "unavailable" | "denied" | "confirmed" | "completed" | "failed";

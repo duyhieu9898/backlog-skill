@@ -19,6 +19,11 @@
     "timezone": "Asia/Ho_Chi_Minh",
     "locale": "vi-VN"
   },
+  "desktop": {
+    "apps": [
+      { "id": "code.desktop", "label": "Visual Studio Code" }
+    ]
+  },
   "schedules": [
     {
       "name": "bemo-late",

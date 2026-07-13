@@ -151,6 +151,63 @@ test("GeminiProvider sends system instructions, role history, and structured out
   assert.equal(records[1].payload.text, '{"text":"ok"}');
 });
 
+test("GeminiProvider uses native function calls when tools are available", async () => {
+  const provider = new GeminiProvider("test-key", "test-model");
+  let request;
+  provider.client.models.generateContent = async (input) => {
+    request = input;
+    return { functionCalls: [{ name: "default_api:computer", args: { action: "screenshot" } }] };
+  };
+
+  const response = await provider.complete({
+    traceId: "gemini-native-tool",
+    system: "system policy",
+    userMessage: "capture screen",
+    context: { history: [], runtime: { currentTime: "2026-07-13T10:00:00", timezone: "Asia/Ho_Chi_Minh", locale: "vi-VN" } },
+    tools: [{
+      name: "computer",
+      description: "Capture or control the desktop.",
+      inputSchema: { type: "object", properties: { action: { type: "string", enum: ["screenshot"] } }, required: ["action"], additionalProperties: false },
+    }],
+    steps: [],
+  });
+
+  assert.deepEqual(response.toolCall, { name: "computer", arguments: { action: "screenshot" } });
+  assert.equal(request.config.responseMimeType, undefined);
+  assert.equal(request.config.tools[0].functionDeclarations[0].name, "computer");
+  assert.deepEqual(request.config.tools[0].functionDeclarations[0].parametersJsonSchema.required, ["action"]);
+  assert.doesNotMatch(request.config.systemInstruction, /Return strict JSON/);
+  assert.match(request.config.systemInstruction, /native function directly/);
+  assert.doesNotMatch(request.contents.at(-1).parts[0].text, /availableTools/);
+});
+
+test("GeminiProvider recovers a mistakenly printed tool envelope instead of sending it to the user", async () => {
+  const provider = new GeminiProvider("test-key", "test-model");
+  provider.client.models.generateContent = async () => ({
+    text: '```json\n{"toolCall":{"name":"default_api:computer","arguments":{"action":"screenshot"}}}\n```',
+  });
+  const response = await provider.complete({
+    traceId: "gemini-raw-tool", system: "system", userMessage: "capture",
+    context: { history: [], runtime: { currentTime: "2026-07-13T10:00:00", timezone: "Asia/Ho_Chi_Minh", locale: "vi-VN" } },
+    tools: [{ name: "computer", description: "computer", inputSchema: { type: "object", properties: {}, additionalProperties: false } }], steps: [],
+  });
+  assert.deepEqual(response.toolCall, { name: "computer", arguments: { action: "screenshot" } });
+});
+
+test("GeminiProvider injects only the latest tool screenshot as inline media", async () => {
+  const provider = new GeminiProvider("test-key", "test-model");
+  let request;
+  provider.client.models.generateContent = async (input) => { request = input; return { text: "done" }; };
+  await provider.complete({
+    traceId: "gemini-image-context", system: "system", userMessage: "continue",
+    context: { history: [], runtime: { currentTime: "2026-07-13T10:00:00", timezone: "Asia/Ho_Chi_Minh", locale: "vi-VN" } },
+    tools: [{ name: "computer", description: "computer", inputSchema: { type: "object", properties: {}, additionalProperties: false } }],
+    steps: [{ call: { name: "computer", arguments: { action: "screenshot" } }, result: { ok: true }, image: { mimeType: "image/png", base64: "aGVsbG8=", identity: "hash", byteSize: 5 } }],
+  });
+  assert.equal(request.contents.at(-1).parts[1].inlineData.data, "aGVsbG8=");
+  assert.doesNotMatch(request.contents.at(-1).parts[0].text, /aGVsbG8=/);
+});
+
 test("AiRouter retries transient provider failures at most twice", async () => {
   let calls = 0;
   const delays = [];
@@ -233,7 +290,10 @@ test("AgentToolLoop composes a read-only command then pauses at one confirmed ef
         };
       }
       const plan = JSON.parse(input.steps[0].result.data.output);
-      return { toolCall: { name: "command.test.create", arguments: plan } };
+      if (input.steps.length === 1) return { toolCall: { name: "command.test.create", arguments: plan } };
+      assert.equal(input.userMessage, "prepare then create");
+      assert.equal(input.steps[1].result.code, "COMMAND_COMPLETED");
+      return { text: "continued after confirmation" };
     },
   };
   const loop = new AgentToolLoop(
@@ -261,7 +321,7 @@ test("AgentToolLoop composes a read-only command then pauses at one confirmed ef
     traceId: `${input.traceId}-confirm`,
   });
 
-  assert.match(confirmed, /Tool completed/);
+  assert.equal(confirmed, "continued after confirmation");
   assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), {
     skipDates: ["2026-07-01"],
   });

@@ -10,6 +10,9 @@ import {
 import type { StandardMessage } from "../types/messages";
 import { ToolExecutor } from "./executor";
 import type { ToolResult } from "./contracts";
+import { ArtifactStore } from "../artifacts/store";
+import { createModelImage } from "./media/image-context";
+import fs from "node:fs";
 
 const MAX_TOOL_STEPS = 4;
 const MAX_IDENTICAL_FAILURES = 2;
@@ -19,6 +22,16 @@ type PendingAiTool = {
   call: AiToolCall;
   digest: string;
   preview: string;
+  /**
+   * The confirmation message is not the user's task. Keep the original model
+   * context so approving one action can resume the same tool loop instead of
+   * turning confirmation into a terminal one-shot command.
+   */
+  continuation?: {
+    userMessage: string;
+    context: AiPromptContext;
+    steps: Array<Omit<AiToolStep, "image">>;
+  };
 };
 
 function formatResult(result: ToolResult): string {
@@ -42,6 +55,23 @@ function failureKey(call: AiToolCall, result: ToolResult): string {
   return `${call.name}:${stableJson(call.arguments)}:${result.code}`;
 }
 
+function modelImageForResult(result: ToolResult, chatId: string) {
+  const artifactId = (result.data as { artifactId?: unknown } | undefined)?.artifactId;
+  if (typeof artifactId !== "string") return undefined;
+  try {
+    const artifact = new ArtifactStore().claim(artifactId, chatId);
+    return createModelImage(fs.readFileSync(artifact.local_path), artifact.mime_type);
+  } catch {
+    return undefined;
+  }
+}
+
+function persistentSteps(steps: AiToolStep[]): Array<Omit<AiToolStep, "image">> {
+  // Screenshots are re-read from their artifact when the loop resumes. Never
+  // put base64 pixels in the pending-confirmation database row.
+  return steps.map(({ call, result }) => ({ call, result }));
+}
+
 function repeatedFailureMessage(call: AiToolCall, result: ToolResult): string {
   return [
     `Đã dừng sau ${MAX_IDENTICAL_FAILURES} lần lỗi lặp lại cho ${call.name} [${result.code}] để tránh hao token.`,
@@ -61,13 +91,15 @@ export class AgentToolLoop {
     context: AiPromptContext,
     onReplyMarkup?: (markup: unknown) => void,
     onArtifact?: (artifactId: string) => void,
+    initialSteps: AiToolStep[] = [],
+    userMessage = message.text,
   ): Promise<string> {
-    const steps: AiToolStep[] = [];
+    const steps: AiToolStep[] = [...initialSteps];
     const failures = new Map<string, number>();
     const tools = this.executor.definitions(context.toolScope);
 
     for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
-      const response = await this.ai.complete(message.traceId, context, message.text, tools, steps);
+      const response = await this.ai.complete(message.traceId, context, userMessage, tools, steps);
       if (response.clarification) {
         log.info(message.traceId, "ai.clarification.requested", { step: index });
         return response.clarification;
@@ -80,7 +112,7 @@ export class AgentToolLoop {
         toolName: response.toolCall.name,
       });
       try {
-        const prepared = this.executor.prepare(response.toolCall, message.traceId, tools);
+        const prepared = this.executor.prepare(response.toolCall, message.traceId, tools, message.chatId);
         if (prepared.requiresConfirmation) {
           const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
           const pending: PendingAiTool = {
@@ -88,6 +120,11 @@ export class AgentToolLoop {
             call: prepared.call,
             digest: prepared.digest,
             preview: prepared.preview,
+            continuation: {
+              userMessage,
+              context,
+              steps: persistentSteps(steps),
+            },
           };
           upsertPendingConfirmation({
             chatId: message.chatId,
@@ -122,10 +159,10 @@ export class AgentToolLoop {
           traceId: message.traceId,
           chatId: message.chatId,
         });
-        if (result.code === "DESKTOP_CAPTURED" && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
+        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
           onArtifact?.((result.data as { artifactId: string }).artifactId);
         }
-        steps.push({ call: response.toolCall, result });
+        steps.push({ call: response.toolCall, result, image: modelImageForResult(result, message.chatId) });
         log.info(message.traceId, "ai.tool.completed", {
           step: index,
           toolName: response.toolCall.name,
@@ -176,7 +213,11 @@ export class AgentToolLoop {
     return `Đã dừng sau ${MAX_TOOL_STEPS} bước tool để tránh vòng lặp tự động. Hãy thu hẹp yêu cầu hoặc thử lại.`;
   }
 
-  async consumeConfirmation(message: StandardMessage, onArtifact?: (artifactId: string) => void): Promise<string | null> {
+  async consumeConfirmation(
+    message: StandardMessage,
+    onArtifact?: (artifactId: string) => void,
+    onReplyMarkup?: (markup: unknown) => void,
+  ): Promise<string | null> {
     const text = message.text.trim().toLowerCase();
     if (!text.startsWith("confirm")) return null;
     const pending = getPendingConfirmation(message.chatId);
@@ -199,7 +240,7 @@ export class AgentToolLoop {
 
     let prepared;
     try {
-      prepared = this.executor.prepare(payload.call, message.traceId);
+      prepared = this.executor.prepare(payload.call, message.traceId, undefined, message.chatId);
     } catch (error) {
       deletePendingConfirmation(message.chatId);
       return `Confirmation không còn hợp lệ: ${error instanceof Error ? error.message : String(error)}`;
@@ -218,7 +259,7 @@ export class AgentToolLoop {
       chatId: message.chatId,
       confirmationGranted: true,
     });
-    if (result.code === "DESKTOP_CAPTURED" && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
+    if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
       onArtifact?.((result.data as { artifactId: string }).artifactId);
     }
     log.info(message.traceId, "ai.tool.confirmed", {
@@ -226,6 +267,28 @@ export class AgentToolLoop {
       ok: result.ok,
       code: result.code,
     });
-    return formatResult(result);
+    if (!payload.continuation) return formatResult(result);
+
+    const resumedSteps: AiToolStep[] = payload.continuation.steps.map((step) => ({
+      ...step,
+      image: modelImageForResult(step.result as ToolResult, message.chatId),
+    }));
+    resumedSteps.push({
+      call: payload.call,
+      result,
+      image: modelImageForResult(result, message.chatId),
+    });
+    log.info(message.traceId, "ai.tool.continuing_after_confirmation", {
+      toolName: prepared.call.name,
+      priorSteps: payload.continuation.steps.length,
+    });
+    return this.run(
+      message,
+      payload.continuation.context,
+      onReplyMarkup,
+      onArtifact,
+      resumedSteps,
+      payload.continuation.userMessage,
+    );
   }
 }

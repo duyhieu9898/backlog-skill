@@ -9,8 +9,7 @@ const commands_1 = require("../commands");
 const paths_1 = require("../config/paths");
 const repositories_1 = require("../storage/repositories");
 const scheduler_1 = require("../scheduler");
-const adapter_1 = require("../desktop/adapter");
-const registry_1 = require("../desktop/registry");
+const computer_1 = require("../tools/computer");
 const app_1 = require("../config/app");
 const startedAt = Date.now();
 function formatLastRun(run) {
@@ -118,8 +117,8 @@ function handleDebugCommand(text, registry) {
         ].join("\n\n");
     }
     if (normalized === "/desktop") {
-        const status = (0, adapter_1.getDesktopAdapter)().getStatus();
-        const registry = new registry_1.DesktopRegistry((0, app_1.loadAgentConfig)().desktop?.apps || []);
+        const status = (0, computer_1.getDesktopAdapter)().getStatus();
+        const registry = new computer_1.DesktopRegistry((0, app_1.loadAgentConfig)().desktop?.apps || []);
         return [
             `platform: ${status.platform}`,
             ...status.capabilities.map((entry) => `${entry.capability}: ${entry.available ? "available" : "unavailable"} (${entry.permission.state})`),
