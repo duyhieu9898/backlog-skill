@@ -1,4 +1,7 @@
+import fs from "node:fs";
+
 import type { TelegramConfig } from "./config";
+import type { Artifact } from "../artifacts/store";
 
 export type TelegramMessage = {
   chat?: { id?: number | string };
@@ -44,6 +47,19 @@ export class TelegramClient {
         reply_markup: isLast ? replyMarkup : undefined,
       });
     }
+  }
+
+  async sendArtifact(chatId: string, artifact: Artifact, caption?: string): Promise<void> {
+    const method = artifact.mime_type.startsWith("image/") ? "sendPhoto" : "sendDocument";
+    const field = method === "sendPhoto" ? "photo" : "document";
+    const form = new FormData();
+    form.set("chat_id", chatId);
+    if (caption) form.set("caption", caption);
+    const extension = artifact.mime_type === "image/png" ? ".png" : artifact.mime_type === "image/jpeg" ? ".jpg" : artifact.mime_type === "application/pdf" ? ".pdf" : ".txt";
+    form.set(field, new Blob([fs.readFileSync(artifact.local_path)], { type: artifact.mime_type }), `${artifact.id}${extension}`);
+    const response = await fetch(`https://api.telegram.org/bot${this.config.botToken}/${method}`, { method: "POST", body: form });
+    const body = (await response.json()) as TelegramResponse<unknown>;
+    if (!response.ok || !body.ok) throw new Error(`Telegram ${method} failed: ${response.status} ${body.description || ""}`.trim());
   }
 
   async getUpdates(offset: number | null, timeout: number): Promise<TelegramUpdate[]> {

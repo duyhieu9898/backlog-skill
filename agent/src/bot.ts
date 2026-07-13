@@ -4,6 +4,7 @@ import { toStandardMessage } from "./adapters/telegram";
 import { loadEnv } from "./config/env";
 import { agentDir } from "./config/paths";
 import { Router } from "./core/router";
+import { deliverResponse } from "./core/presenter";
 import { log } from "./logging/logger";
 import { generateTraceId } from "./logging/trace";
 import { SkillRegistry } from "./skills/registry";
@@ -92,7 +93,7 @@ async function poll(): Promise<void> {
               hasReplyMarkup: replyMarkup !== undefined,
               replyMarkup: replyMarkup ?? null,
             });
-            await telegram.sendMessage(standard.chatId, reply, replyMarkup);
+            await deliverResponse(telegram, standard.chatId, { text: reply }, replyMarkup);
             log.info(standard.traceId, "telegram.reply.completed", {});
           })
           .catch(async (error: unknown) => {

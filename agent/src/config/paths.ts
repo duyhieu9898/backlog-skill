@@ -4,6 +4,7 @@ export const agentDir = path.resolve(__dirname, "..", "..");
 export const repoDir = path.resolve(agentDir, "..");
 export const skillsDir = path.join(repoDir, "skills");
 export const dataDir = path.join(agentDir, "data");
+export const artifactDir = path.join(dataDir, "artifacts");
 export const logDir = path.join(agentDir, "logs");
 export const stateFile = path.join(logDir, "telegram-state.json");
 export const botLog = path.join(logDir, "agent.log");

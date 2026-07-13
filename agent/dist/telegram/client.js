@@ -1,6 +1,10 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TelegramClient = void 0;
+const node_fs_1 = __importDefault(require("node:fs"));
 class TelegramClient {
     config;
     constructor(config) {
@@ -20,6 +24,20 @@ class TelegramClient {
                 reply_markup: isLast ? replyMarkup : undefined,
             });
         }
+    }
+    async sendArtifact(chatId, artifact, caption) {
+        const method = artifact.mime_type.startsWith("image/") ? "sendPhoto" : "sendDocument";
+        const field = method === "sendPhoto" ? "photo" : "document";
+        const form = new FormData();
+        form.set("chat_id", chatId);
+        if (caption)
+            form.set("caption", caption);
+        const extension = artifact.mime_type === "image/png" ? ".png" : artifact.mime_type === "image/jpeg" ? ".jpg" : artifact.mime_type === "application/pdf" ? ".pdf" : ".txt";
+        form.set(field, new Blob([node_fs_1.default.readFileSync(artifact.local_path)], { type: artifact.mime_type }), `${artifact.id}${extension}`);
+        const response = await fetch(`https://api.telegram.org/bot${this.config.botToken}/${method}`, { method: "POST", body: form });
+        const body = (await response.json());
+        if (!response.ok || !body.ok)
+            throw new Error(`Telegram ${method} failed: ${response.status} ${body.description || ""}`.trim());
     }
     async getUpdates(offset, timeout) {
         const result = await this.request("getUpdates", {

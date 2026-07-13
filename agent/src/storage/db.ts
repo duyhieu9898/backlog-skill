@@ -38,6 +38,21 @@ export function initializeSchema(database = getDb()): void {
     CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_created
       ON chat_messages(chat_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      owner_chat_id TEXT NOT NULL,
+      source_trace_id TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      local_path TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      delivered_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_artifacts_expiry ON artifacts(expires_at);
+
     CREATE TABLE IF NOT EXISTS trace_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       trace_id TEXT NOT NULL,

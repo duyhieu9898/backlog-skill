@@ -7,6 +7,39 @@ export type TraceEventRow = {
   created_at: string;
 };
 
+export type ArtifactRow = {
+  id: string;
+  owner_chat_id: string;
+  source_trace_id: string;
+  mime_type: string;
+  byte_size: number;
+  sha256: string;
+  local_path: string;
+  expires_at: string;
+  delivered_at: string | null;
+  created_at: string;
+};
+
+export function insertArtifact(row: ArtifactRow): void {
+  getDb().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at)`).run(row);
+}
+
+export function getArtifact(id: string): ArtifactRow | null {
+  return (getDb().prepare(`SELECT * FROM artifacts WHERE id = ?`).get(id) as ArtifactRow | undefined) || null;
+}
+
+export function markArtifactDelivered(id: string): void {
+  getDb().prepare(`UPDATE artifacts SET delivered_at = ? WHERE id = ?`).run(nowIso(), id);
+}
+
+export function deleteArtifact(id: string): void {
+  getDb().prepare(`DELETE FROM artifacts WHERE id = ?`).run(id);
+}
+
+export function listExpiredArtifacts(now = nowIso()): ArtifactRow[] {
+  return getDb().prepare(`SELECT * FROM artifacts WHERE expires_at <= ?`).all(now) as ArtifactRow[];
+}
+
 export type CommandRunRow = {
   id: number;
   trace_id: string;

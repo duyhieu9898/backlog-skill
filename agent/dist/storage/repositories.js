@@ -1,5 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.insertArtifact = insertArtifact;
+exports.getArtifact = getArtifact;
+exports.markArtifactDelivered = markArtifactDelivered;
+exports.deleteArtifact = deleteArtifact;
+exports.listExpiredArtifacts = listExpiredArtifacts;
 exports.nowIso = nowIso;
 exports.setJsonState = setJsonState;
 exports.getJsonState = getJsonState;
@@ -26,6 +31,21 @@ exports.updateScheduledJobState = updateScheduledJobState;
 exports.recordScheduledRun = recordScheduledRun;
 exports.listScheduledRuns = listScheduledRuns;
 const db_1 = require("./db");
+function insertArtifact(row) {
+    (0, db_1.getDb)().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at)`).run(row);
+}
+function getArtifact(id) {
+    return (0, db_1.getDb)().prepare(`SELECT * FROM artifacts WHERE id = ?`).get(id) || null;
+}
+function markArtifactDelivered(id) {
+    (0, db_1.getDb)().prepare(`UPDATE artifacts SET delivered_at = ? WHERE id = ?`).run(nowIso(), id);
+}
+function deleteArtifact(id) {
+    (0, db_1.getDb)().prepare(`DELETE FROM artifacts WHERE id = ?`).run(id);
+}
+function listExpiredArtifacts(now = nowIso()) {
+    return (0, db_1.getDb)().prepare(`SELECT * FROM artifacts WHERE expires_at <= ?`).all(now);
+}
 function nowIso() {
     return new Date().toISOString();
 }

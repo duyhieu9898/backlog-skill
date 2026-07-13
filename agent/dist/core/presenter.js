@@ -1,7 +1,23 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.presentArtifact = presentArtifact;
+exports.deliverResponse = deliverResponse;
 exports.presentCommandResult = presentCommandResult;
 const utils_1 = require("../utils");
+const store_1 = require("../artifacts/store");
+function presentArtifact(text, artifact) {
+    return { text, artifact };
+}
+async function deliverResponse(channel, chatId, response, replyMarkup, artifacts = new store_1.ArtifactStore()) {
+    if (response.artifact) {
+        const artifact = artifacts.claim(response.artifact.id, chatId);
+        await channel.sendMessage(chatId, response.text, replyMarkup);
+        await channel.sendArtifact(chatId, artifact);
+        artifacts.markDelivered(artifact.id);
+        return;
+    }
+    await channel.sendMessage(chatId, response.text, replyMarkup);
+}
 function cleanOutput(output) {
     return output
         .split("\n")
