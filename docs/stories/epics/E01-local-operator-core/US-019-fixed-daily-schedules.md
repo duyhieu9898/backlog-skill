@@ -2,7 +2,7 @@
 
 ## Status
 
-in_progress
+implemented
 
 ## Lane
 
@@ -11,7 +11,7 @@ normal
 ## Product Contract
 
 The Bemo late-day read-only check runs once each day at 17:00 in the configured
-runtime timezone (`Asia/Ho_Chi_Minh`), rather than at a drifting interval.
+runtime timezone (`Asia/Ho_Chi_Minh`), using the standard cron expression `0 17 * * 1-5`.
 
 ## Relevant Product Docs
 
@@ -21,10 +21,10 @@ runtime timezone (`Asia/Ho_Chi_Minh`), rather than at a drifting interval.
 
 ## Acceptance Criteria
 
-- A schedule accepts exactly one of `intervalMinutes` or 24-hour `dailyAt`.
-- `dailyAt: "17:00"` computes the next 17:00 in the configured timezone.
-- Restarting the service does not shift an unchanged fixed daily schedule.
-- Schedule output identifies a daily fixed time rather than an interval.
+- A schedule accepts a standard 5-field cron expression in `cron` (managed via `croner`).
+- `cron: "0 17 * * 1-5"` (evaluated in configured timezone) replaces old `dailyAt`/`intervalMinutes` fields.
+- Restarting the service does not shift an unchanged fixed schedule.
+- Schedule output identifies cron parameters rather than drifting intervals.
 
 ## Design Notes
 

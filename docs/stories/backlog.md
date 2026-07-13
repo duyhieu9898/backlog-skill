@@ -10,4 +10,5 @@ the work is selected or when a product decision needs a durable place to land.
 
 | Epic | Description | Status |
 | --- | --- | --- |
-| TBD | Add candidate epics after spec intake | unsliced |
+| E03 | Browser Capability (OpenClaw-like multi-step browser orchestration) | sliced |
+
