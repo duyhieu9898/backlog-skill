@@ -353,6 +353,8 @@ export function upsertScheduledJob(input: {
          cron_expr = excluded.cron_expr,
          prepare_effect_json = excluded.prepare_effect_json,
          next_run_at = CASE
+           WHEN scheduled_jobs.enabled = 0
+             THEN NULL
            WHEN scheduled_jobs.cron_expr IS NOT excluded.cron_expr
              THEN excluded.next_run_at
            ELSE scheduled_jobs.next_run_at
@@ -535,3 +537,8 @@ export function listScheduledRuns(jobName: string, limit = 5): ScheduledRunRow[]
     )
     .all(jobName, limit) as ScheduledRunRow[];
 }
+
+export function clearChatHistory(chatId: string): void {
+  getDb().prepare(`DELETE FROM chat_messages WHERE chat_id = ?`).run(chatId);
+}
+

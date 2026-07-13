@@ -87,3 +87,18 @@ test("CLI confirms a digest-bound harmless command from a prior local invocation
     deletePendingConfirmation(LOCAL_CLI_CHAT_ID);
   }
 });
+
+test("CLI /reset command clears local chat history", () => {
+  const output = execFileSync(
+    process.execPath,
+    [cliPath, "/reset"],
+    { cwd: agentDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+
+  assert.match(output, /Đã xóa lịch sử cuộc trò chuyện/);
+  const messages = listRecentChat(LOCAL_CLI_CHAT_ID, 10);
+  // It should only contain 1 message (the assistant confirmation reply)
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].content, /Đã xóa lịch sử cuộc trò chuyện/);
+});
+

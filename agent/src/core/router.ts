@@ -17,6 +17,7 @@ import {
   insertChatMessage,
   nowIso,
   upsertPendingConfirmation,
+  clearChatHistory,
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
 import type { StandardMessage } from "../types/messages";
@@ -106,6 +107,12 @@ export class Router {
       if (!result.stopped) return "Không có lệnh nào đang chạy.";
       log.info(message.traceId, "command.stop.requested", { runningTraceId: result.traceId });
       return `Đã yêu cầu dừng lệnh đang chạy (traceId: ${result.traceId}).`;
+    }
+
+    if (normalized === "/reset") {
+      clearChatHistory(message.chatId);
+      log.info(message.traceId, "chat.history.reset", { chatId: message.chatId });
+      return "Đã xóa lịch sử cuộc trò chuyện. Phiên mới bắt đầu!";
     }
 
     if (normalized === "/schedule") {

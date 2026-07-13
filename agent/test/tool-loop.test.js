@@ -230,7 +230,7 @@ test("AiRouter retries transient provider failures at most twice", async () => {
 
   assert.equal(response.text, "recovered");
   assert.equal(calls, 3);
-  assert.deepEqual(delays, [250, 500]);
+  assert.deepEqual(delays, [500, 1000]);
 });
 
 test("AiRouter does not retry permanent provider failures", async () => {

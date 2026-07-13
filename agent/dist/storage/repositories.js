@@ -30,6 +30,7 @@ exports.claimDueScheduledJob = claimDueScheduledJob;
 exports.updateScheduledJobState = updateScheduledJobState;
 exports.recordScheduledRun = recordScheduledRun;
 exports.listScheduledRuns = listScheduledRuns;
+exports.clearChatHistory = clearChatHistory;
 const db_1 = require("./db");
 function insertArtifact(row) {
     (0, db_1.getDb)().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at)`).run(row);
@@ -177,6 +178,8 @@ function upsertScheduledJob(input) {
          cron_expr = excluded.cron_expr,
          prepare_effect_json = excluded.prepare_effect_json,
          next_run_at = CASE
+           WHEN scheduled_jobs.enabled = 0
+             THEN NULL
            WHEN scheduled_jobs.cron_expr IS NOT excluded.cron_expr
              THEN excluded.next_run_at
            ELSE scheduled_jobs.next_run_at
@@ -273,4 +276,7 @@ function listScheduledRuns(jobName, limit = 5) {
        ORDER BY finished_at DESC, id DESC
        LIMIT ?`)
         .all(jobName, limit);
+}
+function clearChatHistory(chatId) {
+    (0, db_1.getDb)().prepare(`DELETE FROM chat_messages WHERE chat_id = ?`).run(chatId);
 }

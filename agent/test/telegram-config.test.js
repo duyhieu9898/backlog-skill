@@ -21,6 +21,7 @@ test("Telegram config validates and returns explicit environment values", () => 
     {
       botToken: "token",
       allowedChatId: "1234",
+      allowedUserId: "1234",
       pollTimeoutSeconds: 30,
     },
   );

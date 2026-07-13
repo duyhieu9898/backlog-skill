@@ -81,6 +81,11 @@ class Router {
             logger_1.log.info(message.traceId, "command.stop.requested", { runningTraceId: result.traceId });
             return `Đã yêu cầu dừng lệnh đang chạy (traceId: ${result.traceId}).`;
         }
+        if (normalized === "/reset") {
+            (0, repositories_1.clearChatHistory)(message.chatId);
+            logger_1.log.info(message.traceId, "chat.history.reset", { chatId: message.chatId });
+            return "Đã xóa lịch sử cuộc trò chuyện. Phiên mới bắt đầu!";
+        }
         if (normalized === "/schedule") {
             return (0, scheduler_1.formatScheduleList)((0, scheduler_1.loadScheduledChecks)());
         }
