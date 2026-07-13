@@ -46,7 +46,7 @@ export class Router {
     this.commandTimeoutMs = loadAgentConfig().runtime?.commandTimeoutMs || 10 * 60 * 1000;
   }
 
-  async route(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void): Promise<string> {
+  async route(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void): Promise<string> {
     log.info(message.traceId, "route.started", {
       provider: message.provider,
       chatId: message.chatId,
@@ -61,7 +61,7 @@ export class Router {
 
     let reply: string;
     try {
-      reply = await this.routeInner(message, onReplyMarkup);
+      reply = await this.routeInner(message, onReplyMarkup, onArtifact);
       insertChatMessage({
         chatId: message.chatId,
         userId: "agent",
@@ -77,7 +77,7 @@ export class Router {
     }
   }
 
-  private async routeInner(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void): Promise<string> {
+  private async routeInner(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void): Promise<string> {
     const text = message.text.trim();
     const normalized = text.toLowerCase();
 
@@ -172,7 +172,7 @@ export class Router {
     }
 
     const context = this.hydrator.hydrate(message);
-    return this.toolLoop.run(message, context.prompt, onReplyMarkup);
+    return this.toolLoop.run(message, context.prompt, onReplyMarkup, onArtifact);
   }
 
   private async prepareOrRun(

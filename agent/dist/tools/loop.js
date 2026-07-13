@@ -40,7 +40,7 @@ class AgentToolLoop {
         this.ai = ai;
         this.executor = executor;
     }
-    async run(message, context, onReplyMarkup) {
+    async run(message, context, onReplyMarkup, onArtifact) {
         const steps = [];
         const failures = new Map();
         const tools = this.executor.definitions(context.toolScope);
@@ -100,6 +100,9 @@ class AgentToolLoop {
                     traceId: message.traceId,
                     chatId: message.chatId,
                 });
+                if (result.code === "DESKTOP_CAPTURED" && typeof result.data?.artifactId === "string") {
+                    onArtifact?.(result.data.artifactId);
+                }
                 steps.push({ call: response.toolCall, result });
                 logger_1.log.info(message.traceId, "ai.tool.completed", {
                     step: index,

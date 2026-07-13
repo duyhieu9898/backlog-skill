@@ -21,7 +21,7 @@ class Router {
         this.hydrator = new hydrator_1.ContextHydrator(registry);
         this.commandTimeoutMs = (0, app_1.loadAgentConfig)().runtime?.commandTimeoutMs || 10 * 60 * 1000;
     }
-    async route(message, onReplyMarkup) {
+    async route(message, onReplyMarkup, onArtifact) {
         logger_1.log.info(message.traceId, "route.started", {
             provider: message.provider,
             chatId: message.chatId,
@@ -35,7 +35,7 @@ class Router {
         });
         let reply;
         try {
-            reply = await this.routeInner(message, onReplyMarkup);
+            reply = await this.routeInner(message, onReplyMarkup, onArtifact);
             (0, repositories_1.insertChatMessage)({
                 chatId: message.chatId,
                 userId: "agent",
@@ -51,7 +51,7 @@ class Router {
             throw error;
         }
     }
-    async routeInner(message, onReplyMarkup) {
+    async routeInner(message, onReplyMarkup, onArtifact) {
         const text = message.text.trim();
         const normalized = text.toLowerCase();
         if (normalized === "/schedule") {
@@ -134,7 +134,7 @@ class Router {
             return `Lệnh không tồn tại. Danh sách lệnh hỗ trợ:\n\n${(0, debugCommands_1.handleDebugCommand)("/commands", this.registry)}`;
         }
         const context = this.hydrator.hydrate(message);
-        return this.toolLoop.run(message, context.prompt, onReplyMarkup);
+        return this.toolLoop.run(message, context.prompt, onReplyMarkup, onArtifact);
     }
     async prepareOrRun(message, action, onReplyMarkup) {
         const decision = (0, commands_1.evaluateCommandPermission)(action);

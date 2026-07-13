@@ -60,6 +60,7 @@ export class AgentToolLoop {
     message: StandardMessage,
     context: AiPromptContext,
     onReplyMarkup?: (markup: unknown) => void,
+    onArtifact?: (artifactId: string) => void,
   ): Promise<string> {
     const steps: AiToolStep[] = [];
     const failures = new Map<string, number>();
@@ -121,6 +122,9 @@ export class AgentToolLoop {
           traceId: message.traceId,
           chatId: message.chatId,
         });
+        if (result.code === "DESKTOP_CAPTURED" && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
+          onArtifact?.((result.data as { artifactId: string }).artifactId);
+        }
         steps.push({ call: response.toolCall, result });
         log.info(message.traceId, "ai.tool.completed", {
           step: index,

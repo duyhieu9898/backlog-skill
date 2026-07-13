@@ -9,6 +9,7 @@ const env_1 = require("./config/env");
 const paths_1 = require("./config/paths");
 const router_1 = require("./core/router");
 const presenter_1 = require("./core/presenter");
+const repositories_1 = require("./storage/repositories");
 const logger_1 = require("./logging/logger");
 const trace_1 = require("./logging/trace");
 const registry_1 = require("./skills/registry");
@@ -71,17 +72,19 @@ async function poll() {
                 }, 4000);
                 telegram.sendChatAction(standard.chatId, "typing").catch(() => { });
                 let replyMarkup;
+                let artifactId;
                 router
                     .route(standard, (markup) => {
                     replyMarkup = markup;
-                })
+                }, (id) => { artifactId = id; })
                     .then(async (reply) => {
                     clearInterval(typingInterval);
                     logger_1.log.info(standard.traceId, "telegram.reply.started", {
                         hasReplyMarkup: replyMarkup !== undefined,
                         replyMarkup: replyMarkup ?? null,
                     });
-                    await (0, presenter_1.deliverResponse)(telegram, standard.chatId, { text: reply }, replyMarkup);
+                    const artifact = artifactId ? (0, repositories_1.getArtifact)(artifactId) : null;
+                    await (0, presenter_1.deliverResponse)(telegram, standard.chatId, artifact ? { text: reply, artifact } : { text: reply }, replyMarkup);
                     logger_1.log.info(standard.traceId, "telegram.reply.completed", {});
                 })
                     .catch(async (error) => {

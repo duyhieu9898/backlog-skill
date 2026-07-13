@@ -11,7 +11,13 @@ import {
 } from "../commands";
 import type { AiToolCall, AiToolDefinition, AiToolScope } from "../brain/provider";
 import { FileTools } from "./files";
-import type { FileToolAction, ToolResult } from "./contracts";
+import { getDesktopAdapter } from "../desktop/adapter";
+import { ArtifactStore } from "../artifacts/store";
+import { logDesktopEvent } from "../desktop/events";
+import { PermissionPolicy } from "../security/permissionPolicy";
+import { loadAgentConfig } from "../config/app";
+import fs from "node:fs";
+import type { DesktopToolAction, FileToolAction, ToolResult } from "./contracts";
 import { validateJsonSchema, type JsonSchema } from "./schema";
 
 export type PreparedToolCall = {
@@ -22,6 +28,7 @@ export type PreparedToolCall = {
   requiresConfirmation: boolean;
   command?: AgentCommand;
   fileAction?: FileToolAction;
+  desktopAction?: DesktopToolAction;
   blocked?: ToolResult;
 };
 
@@ -107,6 +114,11 @@ const fileDefinitions: AiToolDefinition[] = [
   },
 ];
 
+const desktopDefinitions: AiToolDefinition[] = [
+  { name: "desktop.capture", description: "Capture one approved display after explicit confirmation.", inputSchema: { type: "object", properties: { displayId: { type: "string", minLength: 1, maxLength: 128 } }, additionalProperties: false } },
+  { name: "desktop.launch", description: "Launch one reviewed desktop app ID after explicit confirmation.", inputSchema: { type: "object", properties: { appId: { type: "string", minLength: 1, maxLength: 256 } }, required: ["appId"], additionalProperties: false } },
+];
+
 function digest(value: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -117,6 +129,10 @@ function truncate(value: string, max = 4000): string {
 
 function fileAction(call: AiToolCall): FileToolAction {
   return { kind: call.name, ...call.arguments } as FileToolAction;
+}
+
+function desktopAction(call: AiToolCall): DesktopToolAction {
+  return { kind: call.name, ...call.arguments } as DesktopToolAction;
 }
 
 export class ToolExecutor {
@@ -141,7 +157,7 @@ export class ToolExecutor {
       inputSchema: command.inputSchema || emptyObjectSchema,
     }));
     const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-    return [...files, ...commandDefinitions].sort((a, b) => a.name.localeCompare(b.name));
+    return [...files, ...commandDefinitions, ...desktopDefinitions].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   prepare(call: AiToolCall, traceId: string, definitions = this.definitions()): PreparedToolCall {
@@ -187,6 +203,16 @@ export class ToolExecutor {
           `Timeout: ${preview.timeoutMs} ms`,
         ].join("\n"),
       };
+    }
+
+    if (call.name.startsWith("desktop.")) {
+      const action = desktopAction(call);
+      const adapter = getDesktopAdapter();
+      const config = loadAgentConfig();
+      const decision = new PermissionPolicy(config.permissions).evaluate(action, { desktopStatus: adapter.getStatus() });
+      const actionDigest = digest(action);
+      if (decision.outcome === "deny") return { call, key: call.name, digest: actionDigest, preview: decision.reason, requiresConfirmation: false, desktopAction: action, blocked: { ok: false, code: decision.reasonCode, summary: decision.reason } };
+      return { call, key: call.name, digest: actionDigest, preview: `${call.name}: ${JSON.stringify(call.arguments)}`, requiresConfirmation: decision.outcome === "confirm", desktopAction: action };
     }
 
     const action = fileAction(call);
@@ -245,6 +271,31 @@ export class ToolExecutor {
         };
       } catch (error) {
         return { ok: false, code: "COMMAND_ERROR", summary: error instanceof Error ? error.message : String(error) };
+      }
+    }
+    if (prepared.desktopAction) {
+      const adapter = getDesktopAdapter();
+      const config = loadAgentConfig();
+      const decision = new PermissionPolicy(config.permissions).evaluate(prepared.desktopAction, { desktopStatus: adapter.getStatus(), confirmationGranted: input.confirmationGranted });
+      if (decision.outcome !== "allow") return { ok: false, code: decision.reasonCode, summary: decision.reason };
+      try {
+        if (prepared.desktopAction.kind === "desktop.capture") {
+          if (!("capture" in adapter) || typeof adapter.capture !== "function") throw new Error("Desktop adapter cannot capture.");
+          const captured = adapter.capture(prepared.desktopAction.displayId);
+          const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(captured.path) });
+          fs.rmSync(captured.path, { force: true });
+          logDesktopEvent(input.traceId, { component: "desktop", action: "screen.capture", outcome: "completed", artifactId: artifact.id });
+          return { ok: true, code: "DESKTOP_CAPTURED", summary: "Screen captured.", data: { artifactId: artifact.id } };
+        }
+        if (prepared.desktopAction.kind === "desktop.launch") {
+          if (!("launch" in adapter) || typeof adapter.launch !== "function") throw new Error("Desktop adapter cannot launch apps.");
+          const launched = adapter.launch(prepared.desktopAction.appId);
+          logDesktopEvent(input.traceId, { component: "desktop", action: "app.launch", outcome: "completed" });
+          return { ok: true, code: "DESKTOP_LAUNCHED", summary: `Launched ${launched.appId}.`, data: launched };
+        }
+      } catch (error) {
+        logDesktopEvent(input.traceId, { component: "desktop", action: prepared.desktopAction.kind, outcome: "failed", reasonCode: "DESKTOP_ACTION_FAILED" });
+        return { ok: false, code: "DESKTOP_ACTION_FAILED", summary: error instanceof Error ? error.message : String(error) };
       }
     }
     if (!prepared.fileAction) throw new Error("Prepared tool call has no executable action.");

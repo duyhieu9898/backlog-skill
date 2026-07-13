@@ -41,6 +41,14 @@ export interface DesktopAdapter {
   getStatus(): DesktopStatus;
 }
 
+export type CapturedScreen = { path: string; displayId: string };
+export type LaunchedApp = { appId: string };
+
+export interface DesktopActionAdapter extends DesktopAdapter {
+  capture(displayId?: string): CapturedScreen;
+  launch(appId: string): LaunchedApp;
+}
+
 export type DesktopEventOutcome = "available" | "unavailable" | "denied" | "confirmed" | "completed" | "failed";
 
 export type DesktopEventEnvelope = {

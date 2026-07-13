@@ -5,6 +5,7 @@ import { loadEnv } from "./config/env";
 import { agentDir } from "./config/paths";
 import { Router } from "./core/router";
 import { deliverResponse } from "./core/presenter";
+import { getArtifact } from "./storage/repositories";
 import { log } from "./logging/logger";
 import { generateTraceId } from "./logging/trace";
 import { SkillRegistry } from "./skills/registry";
@@ -83,17 +84,19 @@ async function poll(): Promise<void> {
         telegram.sendChatAction(standard.chatId, "typing").catch(() => {});
 
         let replyMarkup: unknown;
+        let artifactId: string | undefined;
         router
           .route(standard, (markup) => {
             replyMarkup = markup;
-          })
+          }, (id) => { artifactId = id; })
           .then(async (reply) => {
             clearInterval(typingInterval);
             log.info(standard.traceId, "telegram.reply.started", {
               hasReplyMarkup: replyMarkup !== undefined,
               replyMarkup: replyMarkup ?? null,
             });
-            await deliverResponse(telegram, standard.chatId, { text: reply }, replyMarkup);
+            const artifact = artifactId ? getArtifact(artifactId) : null;
+            await deliverResponse(telegram, standard.chatId, artifact ? { text: reply, artifact } : { text: reply }, replyMarkup);
             log.info(standard.traceId, "telegram.reply.completed", {});
           })
           .catch(async (error: unknown) => {

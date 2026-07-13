@@ -7,6 +7,12 @@ exports.ToolExecutor = void 0;
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const commands_1 = require("../commands");
 const files_1 = require("./files");
+const adapter_1 = require("../desktop/adapter");
+const store_1 = require("../artifacts/store");
+const events_1 = require("../desktop/events");
+const permissionPolicy_1 = require("../security/permissionPolicy");
+const app_1 = require("../config/app");
+const node_fs_1 = __importDefault(require("node:fs"));
 const schema_1 = require("./schema");
 const emptyObjectSchema = {
     type: "object",
@@ -88,6 +94,10 @@ const fileDefinitions = [
         },
     },
 ];
+const desktopDefinitions = [
+    { name: "desktop.capture", description: "Capture one approved display after explicit confirmation.", inputSchema: { type: "object", properties: { displayId: { type: "string", minLength: 1, maxLength: 128 } }, additionalProperties: false } },
+    { name: "desktop.launch", description: "Launch one reviewed desktop app ID after explicit confirmation.", inputSchema: { type: "object", properties: { appId: { type: "string", minLength: 1, maxLength: 256 } }, required: ["appId"], additionalProperties: false } },
+];
 function digest(value) {
     return node_crypto_1.default.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -95,6 +105,9 @@ function truncate(value, max = 4000) {
     return value.length <= max ? value : `${value.slice(0, max)}\n[truncated]`;
 }
 function fileAction(call) {
+    return { kind: call.name, ...call.arguments };
+}
+function desktopAction(call) {
     return { kind: call.name, ...call.arguments };
 }
 class ToolExecutor {
@@ -118,7 +131,7 @@ class ToolExecutor {
             inputSchema: command.inputSchema || emptyObjectSchema,
         }));
         const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-        return [...files, ...commandDefinitions].sort((a, b) => a.name.localeCompare(b.name));
+        return [...files, ...commandDefinitions, ...desktopDefinitions].sort((a, b) => a.name.localeCompare(b.name));
     }
     prepare(call, traceId, definitions = this.definitions()) {
         const definition = definitions.find((tool) => tool.name === call.name);
@@ -165,6 +178,16 @@ class ToolExecutor {
                     `Timeout: ${preview.timeoutMs} ms`,
                 ].join("\n"),
             };
+        }
+        if (call.name.startsWith("desktop.")) {
+            const action = desktopAction(call);
+            const adapter = (0, adapter_1.getDesktopAdapter)();
+            const config = (0, app_1.loadAgentConfig)();
+            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(action, { desktopStatus: adapter.getStatus() });
+            const actionDigest = digest(action);
+            if (decision.outcome === "deny")
+                return { call, key: call.name, digest: actionDigest, preview: decision.reason, requiresConfirmation: false, desktopAction: action, blocked: { ok: false, code: decision.reasonCode, summary: decision.reason } };
+            return { call, key: call.name, digest: actionDigest, preview: `${call.name}: ${JSON.stringify(call.arguments)}`, requiresConfirmation: decision.outcome === "confirm", desktopAction: action };
         }
         const action = fileAction(call);
         const actionDigest = digest(action);
@@ -220,6 +243,35 @@ class ToolExecutor {
             }
             catch (error) {
                 return { ok: false, code: "COMMAND_ERROR", summary: error instanceof Error ? error.message : String(error) };
+            }
+        }
+        if (prepared.desktopAction) {
+            const adapter = (0, adapter_1.getDesktopAdapter)();
+            const config = (0, app_1.loadAgentConfig)();
+            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(prepared.desktopAction, { desktopStatus: adapter.getStatus(), confirmationGranted: input.confirmationGranted });
+            if (decision.outcome !== "allow")
+                return { ok: false, code: decision.reasonCode, summary: decision.reason };
+            try {
+                if (prepared.desktopAction.kind === "desktop.capture") {
+                    if (!("capture" in adapter) || typeof adapter.capture !== "function")
+                        throw new Error("Desktop adapter cannot capture.");
+                    const captured = adapter.capture(prepared.desktopAction.displayId);
+                    const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
+                    node_fs_1.default.rmSync(captured.path, { force: true });
+                    (0, events_1.logDesktopEvent)(input.traceId, { component: "desktop", action: "screen.capture", outcome: "completed", artifactId: artifact.id });
+                    return { ok: true, code: "DESKTOP_CAPTURED", summary: "Screen captured.", data: { artifactId: artifact.id } };
+                }
+                if (prepared.desktopAction.kind === "desktop.launch") {
+                    if (!("launch" in adapter) || typeof adapter.launch !== "function")
+                        throw new Error("Desktop adapter cannot launch apps.");
+                    const launched = adapter.launch(prepared.desktopAction.appId);
+                    (0, events_1.logDesktopEvent)(input.traceId, { component: "desktop", action: "app.launch", outcome: "completed" });
+                    return { ok: true, code: "DESKTOP_LAUNCHED", summary: `Launched ${launched.appId}.`, data: launched };
+                }
+            }
+            catch (error) {
+                (0, events_1.logDesktopEvent)(input.traceId, { component: "desktop", action: prepared.desktopAction.kind, outcome: "failed", reasonCode: "DESKTOP_ACTION_FAILED" });
+                return { ok: false, code: "DESKTOP_ACTION_FAILED", summary: error instanceof Error ? error.message : String(error) };
             }
         }
         if (!prepared.fileAction)

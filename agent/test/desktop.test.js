@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { DesktopRegistry } = require("../dist/desktop/registry");
-const { UnavailableDesktopAdapter } = require("../dist/desktop/adapter");
+const { LinuxX11DesktopAdapter, UnavailableDesktopAdapter } = require("../dist/desktop/adapter");
 const { logDesktopEvent } = require("../dist/desktop/events");
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 const { listTraceEvents } = require("../dist/storage/repositories");
@@ -32,6 +32,23 @@ test("desktop registry validates declared app IDs", () => {
   const registry = new DesktopRegistry([{ id: "org.example.notes", label: "Notes" }]);
   assert.equal(registry.get("org.example.notes").label, "Notes");
   assert.throws(() => new DesktopRegistry([{ id: "Notes App", label: "Notes" }]), /Invalid desktop app ID/);
+});
+
+test("Linux X11 adapter stays unavailable without a session bus instead of guessing capture", () => {
+  const previousType = process.env.XDG_SESSION_TYPE;
+  const previousDisplay = process.env.DISPLAY;
+  const previousBus = process.env.DBUS_SESSION_BUS_ADDRESS;
+  process.env.XDG_SESSION_TYPE = "x11";
+  process.env.DISPLAY = ":99";
+  delete process.env.DBUS_SESSION_BUS_ADDRESS;
+  try {
+    const adapter = new LinuxX11DesktopAdapter();
+    assert.equal(adapter.getStatus().capabilities.find((entry) => entry.capability === "screen.capture").available, false);
+  } finally {
+    if (previousType === undefined) delete process.env.XDG_SESSION_TYPE; else process.env.XDG_SESSION_TYPE = previousType;
+    if (previousDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = previousDisplay;
+    if (previousBus === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS; else process.env.DBUS_SESSION_BUS_ADDRESS = previousBus;
+  }
 });
 
 test("desktop actions deny unavailable capabilities and require confirmation when granted", () => {
