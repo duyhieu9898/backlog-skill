@@ -36,6 +36,20 @@ function runtimeContext(timestamp) {
     }).format(timestamp).replace(" ", "T");
     return { currentTime, timezone, locale };
 }
+function pruneHistory(history) {
+    return history.map((entry, index) => {
+        if (index >= history.length - 3) {
+            return entry;
+        }
+        if (entry.content.length > 1000) {
+            return {
+                role: entry.role,
+                content: `${entry.content.slice(0, 1000)}\n\n[...Nội dung cũ dài ${entry.content.length} ký tự đã được lược bỏ để tiết kiệm token...]`,
+            };
+        }
+        return entry;
+    });
+}
 class ContextHydrator {
     registry;
     constructor(registry) {
@@ -64,14 +78,14 @@ class ContextHydrator {
         // task must never steer a fresh request to control a different window.
         const history = includesDesktopIntent
             ? []
-            : (0, repositories_1.listRecentChat)(message.chatId, 20)
+            : pruneHistory((0, repositories_1.listRecentChat)(message.chatId, 20)
                 .filter((entry) => entry.trace_id !== message.traceId)
                 .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
                 .map((entry) => ({
                 role: entry.role === "assistant" ? "assistant" : "user",
                 content: redactHistory(entry.content),
             }))
-                .filter((entry) => entry.content.length > 0);
+                .filter((entry) => entry.content.length > 0));
         const selectedSkill = likelySkill
             ? {
                 slug: likelySkill.slug,

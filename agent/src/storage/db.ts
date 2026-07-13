@@ -138,6 +138,7 @@ export function initializeSchema(database = getDb()): void {
       ON scheduled_runs(job_name, finished_at DESC);
   `);
   migrateScheduledJobs();
+  migrateChatMessages();
 }
 
 function migrateScheduledJobs(): void {
@@ -161,6 +162,19 @@ function migrateScheduledJobs(): void {
   }
   if (!columns.has("cron_expr")) {
     db!.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN cron_expr TEXT`).run();
+  }
+}
+
+function migrateChatMessages(): void {
+  const columns = new Set(
+    db!
+      .prepare(`PRAGMA table_info(chat_messages)`)
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+  if (!columns.has("session_id")) {
+    db!.prepare(`ALTER TABLE chat_messages ADD COLUMN session_id TEXT`).run();
+    db!.prepare(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)`).run();
   }
 }
 

@@ -87,12 +87,22 @@ function loadAgentConfig() {
     };
 }
 function loadSystemPrompt() {
+    let basePrompt = "";
     if (!node_fs_1.default.existsSync(paths_1.systemPromptFile)) {
-        return [
+        basePrompt = [
             "You are a local Telegram agent orchestrator.",
             "Choose only allowed commands when command execution is needed.",
             "Reply concisely in the user's language.",
         ].join("\n");
     }
-    return node_fs_1.default.readFileSync(paths_1.systemPromptFile, "utf8");
+    else {
+        basePrompt = node_fs_1.default.readFileSync(paths_1.systemPromptFile, "utf8");
+    }
+    if (node_fs_1.default.existsSync(paths_1.memoryFile)) {
+        const memory = node_fs_1.default.readFileSync(paths_1.memoryFile, "utf8").trim();
+        if (memory) {
+            basePrompt += `\n\n# LONG-TERM MEMORY (Ký ức dài hạn)\nBên dưới là các thông tin dài hạn quan trọng về Preferences, Rules đặc thù được lưu trữ từ các phiên trò chuyện trước. Hãy luôn tuân thủ các thông tin này:\n\n${memory}`;
+        }
+    }
+    return basePrompt;
 }

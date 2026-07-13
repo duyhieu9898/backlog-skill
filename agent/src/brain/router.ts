@@ -69,16 +69,19 @@ export class AiRouter {
     }
 
     const started = Date.now();
+    const activePrompt = loadSystemPrompt();
+    const activeHash = crypto.createHash("sha256").update(activePrompt).digest("hex");
+
     log.info(traceId, "ai.request.created", {
       provider: this.providerName,
       model: this.model,
-      cacheablePrefixHash: this.cacheableHash,
+      cacheablePrefixHash: activeHash,
     });
     for (let attempt = 0; attempt <= PROVIDER_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
         const response = await this.provider.complete({
           traceId,
-          system: this.systemPrompt,
+          system: activePrompt,
           context,
           userMessage,
           tools,

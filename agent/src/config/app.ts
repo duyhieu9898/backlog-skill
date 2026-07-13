@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { agentDir, configFile, repoDir, skillsDir, systemPromptFile } from "./paths";
+import { agentDir, configFile, memoryFile, repoDir, skillsDir, systemPromptFile } from "./paths";
 import type { DesktopAppDefinition } from "../tools/computer/contracts";
 import { DesktopRegistry } from "../tools/computer/apps";
 
@@ -137,12 +137,23 @@ export function loadAgentConfig(): AgentConfig {
 }
 
 export function loadSystemPrompt(): string {
+  let basePrompt = "";
   if (!fs.existsSync(systemPromptFile)) {
-    return [
+    basePrompt = [
       "You are a local Telegram agent orchestrator.",
       "Choose only allowed commands when command execution is needed.",
       "Reply concisely in the user's language.",
     ].join("\n");
+  } else {
+    basePrompt = fs.readFileSync(systemPromptFile, "utf8");
   }
-  return fs.readFileSync(systemPromptFile, "utf8");
+
+  if (fs.existsSync(memoryFile)) {
+    const memory = fs.readFileSync(memoryFile, "utf8").trim();
+    if (memory) {
+      basePrompt += `\n\n# LONG-TERM MEMORY (Ký ức dài hạn)\nBên dưới là các thông tin dài hạn quan trọng về Preferences, Rules đặc thù được lưu trữ từ các phiên trò chuyện trước. Hãy luôn tuân thủ các thông tin này:\n\n${memory}`;
+    }
+  }
+
+  return basePrompt;
 }

@@ -48,6 +48,23 @@ function runtimeContext(timestamp: Date): AiPromptContext["runtime"] {
   return { currentTime, timezone, locale };
 }
 
+function pruneHistory(
+  history: Array<{ role: "assistant" | "user"; content: string }>
+): Array<{ role: "assistant" | "user"; content: string }> {
+  return history.map((entry, index) => {
+    if (index >= history.length - 3) {
+      return entry;
+    }
+    if (entry.content.length > 1000) {
+      return {
+        role: entry.role,
+        content: `${entry.content.slice(0, 1000)}\n\n[...Nội dung cũ dài ${entry.content.length} ký tự đã được lược bỏ để tiết kiệm token...]`,
+      };
+    }
+    return entry;
+  });
+}
+
 export class ContextHydrator {
   constructor(private readonly registry: SkillRegistry) {}
 
@@ -74,14 +91,16 @@ export class ContextHydrator {
     // task must never steer a fresh request to control a different window.
     const history = includesDesktopIntent
       ? []
-      : listRecentChat(message.chatId, 20)
-        .filter((entry) => entry.trace_id !== message.traceId)
-        .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
-        .map((entry) => ({
-          role: entry.role === "assistant" ? "assistant" as const : "user" as const,
-          content: redactHistory(entry.content),
-        }))
-        .filter((entry) => entry.content.length > 0);
+      : pruneHistory(
+          listRecentChat(message.chatId, 20)
+            .filter((entry) => entry.trace_id !== message.traceId)
+            .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
+            .map((entry) => ({
+              role: entry.role === "assistant" ? "assistant" as const : "user" as const,
+              content: redactHistory(entry.content),
+            }))
+            .filter((entry) => entry.content.length > 0)
+        );
     const selectedSkill = likelySkill
       ? {
           slug: likelySkill.slug,

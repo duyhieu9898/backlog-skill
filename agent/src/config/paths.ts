@@ -13,4 +13,5 @@ export const aiInteractionIndex = path.join(aiInteractionDir, "index.jsonl");
 export const commandsFile = path.join(agentDir, "commands.json");
 export const configFile = path.join(agentDir, "config.json");
 export const systemPromptFile = path.join(agentDir, "prompts", "system.md");
+export const memoryFile = path.join(agentDir, "prompts", "MEMORY.md");
 export const sqliteFile = path.join(dataDir, "agent.sqlite");

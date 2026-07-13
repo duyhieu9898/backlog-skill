@@ -17,7 +17,7 @@ import {
   insertChatMessage,
   nowIso,
   upsertPendingConfirmation,
-  clearChatHistory,
+  resetSession,
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
 import type { StandardMessage } from "../types/messages";
@@ -110,8 +110,8 @@ export class Router {
     }
 
     if (normalized === "/reset") {
-      clearChatHistory(message.chatId);
-      log.info(message.traceId, "chat.history.reset", { chatId: message.chatId });
+      const newSessionId = resetSession(message.chatId);
+      log.info(message.traceId, "chat.history.reset", { chatId: message.chatId, newSessionId });
       return "Đã xóa lịch sử cuộc trò chuyện. Phiên mới bắt đầu!";
     }
 

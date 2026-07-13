@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
 
 export type TraceEventRow = {
@@ -157,19 +158,34 @@ export function getLastFailedToolEvent(): TraceEventRow | null {
   );
 }
 
+export function getActiveSessionId(chatId: string): string {
+  const key = `active_session:${chatId}`;
+  const sessionId = getJsonState<string>("runtime_state", key);
+  return sessionId || "default";
+}
+
+export function resetSession(chatId: string): string {
+  const key = `active_session:${chatId}`;
+  const sessionId = randomUUID();
+  setJsonState("runtime_state", key, sessionId);
+  return sessionId;
+}
+
 export function insertChatMessage(input: {
   chatId: string;
   userId: string;
   role: string;
   content: string;
   traceId: string;
+  sessionId?: string;
 }): void {
+  const sessionId = input.sessionId || getActiveSessionId(input.chatId);
   getDb()
     .prepare(
-      `INSERT INTO chat_messages (chat_id, user_id, role, content, trace_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO chat_messages (chat_id, session_id, user_id, role, content, trace_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(input.chatId, input.userId, input.role, input.content, input.traceId, nowIso());
+    .run(input.chatId, sessionId, input.userId, input.role, input.content, input.traceId, nowIso());
 }
 
 export function listRecentChat(chatId: string, limit = 20): Array<{
@@ -180,16 +196,24 @@ export function listRecentChat(chatId: string, limit = 20): Array<{
   trace_id: string;
   created_at: string;
 }> {
-  return getDb()
-    .prepare(
-      `SELECT chat_id, user_id, role, content, trace_id, created_at
+  const sessionId = getActiveSessionId(chatId);
+  const isDefault = sessionId === "default";
+  const sql = isDefault
+    ? `SELECT chat_id, user_id, role, content, trace_id, created_at
        FROM chat_messages
-       WHERE chat_id = ?
+       WHERE chat_id = ? AND (session_id = 'default' OR session_id IS NULL)
        ORDER BY created_at DESC, id DESC
-       LIMIT ?`,
-    )
-    .all(chatId, limit)
-    .reverse() as Array<{
+       LIMIT ?`
+    : `SELECT chat_id, user_id, role, content, trace_id, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND session_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`;
+
+  const stmt = getDb().prepare(sql);
+  const rows = isDefault ? stmt.all(chatId, limit) : stmt.all(chatId, sessionId, limit);
+
+  return rows.reverse() as Array<{
     chat_id: string;
     user_id: string;
     role: string;

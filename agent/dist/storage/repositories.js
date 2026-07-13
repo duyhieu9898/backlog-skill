@@ -11,6 +11,8 @@ exports.getJsonState = getJsonState;
 exports.insertTraceEvent = insertTraceEvent;
 exports.listTraceEvents = listTraceEvents;
 exports.getLastFailedToolEvent = getLastFailedToolEvent;
+exports.getActiveSessionId = getActiveSessionId;
+exports.resetSession = resetSession;
 exports.insertChatMessage = insertChatMessage;
 exports.listRecentChat = listRecentChat;
 exports.insertCommandRun = insertCommandRun;
@@ -31,6 +33,7 @@ exports.updateScheduledJobState = updateScheduledJobState;
 exports.recordScheduledRun = recordScheduledRun;
 exports.listScheduledRuns = listScheduledRuns;
 exports.clearChatHistory = clearChatHistory;
+const node_crypto_1 = require("node:crypto");
 const db_1 = require("./db");
 function insertArtifact(row) {
     (0, db_1.getDb)().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at)`).run(row);
@@ -87,21 +90,41 @@ function getLastFailedToolEvent() {
          LIMIT 1`)
         .get() || null);
 }
+function getActiveSessionId(chatId) {
+    const key = `active_session:${chatId}`;
+    const sessionId = getJsonState("runtime_state", key);
+    return sessionId || "default";
+}
+function resetSession(chatId) {
+    const key = `active_session:${chatId}`;
+    const sessionId = (0, node_crypto_1.randomUUID)();
+    setJsonState("runtime_state", key, sessionId);
+    return sessionId;
+}
 function insertChatMessage(input) {
+    const sessionId = input.sessionId || getActiveSessionId(input.chatId);
     (0, db_1.getDb)()
-        .prepare(`INSERT INTO chat_messages (chat_id, user_id, role, content, trace_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(input.chatId, input.userId, input.role, input.content, input.traceId, nowIso());
+        .prepare(`INSERT INTO chat_messages (chat_id, session_id, user_id, role, content, trace_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.chatId, sessionId, input.userId, input.role, input.content, input.traceId, nowIso());
 }
 function listRecentChat(chatId, limit = 20) {
-    return (0, db_1.getDb)()
-        .prepare(`SELECT chat_id, user_id, role, content, trace_id, created_at
+    const sessionId = getActiveSessionId(chatId);
+    const isDefault = sessionId === "default";
+    const sql = isDefault
+        ? `SELECT chat_id, user_id, role, content, trace_id, created_at
        FROM chat_messages
-       WHERE chat_id = ?
+       WHERE chat_id = ? AND (session_id = 'default' OR session_id IS NULL)
        ORDER BY created_at DESC, id DESC
-       LIMIT ?`)
-        .all(chatId, limit)
-        .reverse();
+       LIMIT ?`
+        : `SELECT chat_id, user_id, role, content, trace_id, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND session_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`;
+    const stmt = (0, db_1.getDb)().prepare(sql);
+    const rows = isDefault ? stmt.all(chatId, limit) : stmt.all(chatId, sessionId, limit);
+    return rows.reverse();
 }
 function insertCommandRun(input) {
     (0, db_1.getDb)()
