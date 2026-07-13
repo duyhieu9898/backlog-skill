@@ -1,4 +1,4 @@
-import type { BrowserTab, BrowserArtifact } from "./types";
+import type { BrowserTab, BrowserArtifact, BrowserSnapshot, BrowserActionRequest } from "./types";
 import { ManagedPlaywrightBrowserService } from "./managed-playwright-service";
 
 export interface BrowserService {
@@ -9,6 +9,8 @@ export interface BrowserService {
   focus(profile: string | undefined, targetId: string): Promise<BrowserTab>;
   close(profile: string | undefined, targetId: string): Promise<void>;
   navigate(profile: string | undefined, targetId: string, url: string): Promise<BrowserTab>;
+  snapshot(profile: string | undefined, targetId: string): Promise<BrowserSnapshot>;
+  act(profile: string | undefined, targetId: string, request: BrowserActionRequest): Promise<BrowserTab>;
   screenshot(
     profile: string | undefined,
     targetId: string,

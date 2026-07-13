@@ -602,9 +602,13 @@ export class ToolExecutor {
               }
             };
           }
-          case "browser.snapshot":
+          case "browser.snapshot": {
+            const snapshot = await browserService.snapshot(profile, actionArgs.targetId);
+            return { ok: true, code: "BROWSER_SNAPSHOT", summary: "Accessibility tree snapshot captured.", data: { snapshot } };
+          }
           case "browser.act": {
-            return { ok: false, code: "NOT_IMPLEMENTED", summary: `${action.kind} is not implemented in US-020 (reserved for US-021).` };
+            const tab = await browserService.act(profile, actionArgs.targetId, actionArgs.request);
+            return { ok: true, code: "BROWSER_ACTION_COMPLETED", summary: `Action ${actionArgs.request.kind} completed.`, data: { target: tab } };
           }
           default:
             return { ok: false, code: "UNKNOWN_BROWSER_ACTION", summary: `Unknown action kind: ${(action as any).kind}` };

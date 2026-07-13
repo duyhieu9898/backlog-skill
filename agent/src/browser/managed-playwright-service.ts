@@ -1,15 +1,19 @@
 import fs from "node:fs";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import type { BrowserService } from "./browser-service";
-import type { BrowserTab, BrowserArtifact } from "./types";
+import type { BrowserTab, BrowserArtifact, BrowserSnapshot, BrowserActionRequest } from "./types";
 import { TabRegistry } from "./tab-registry";
 import { ProfileManager } from "./profile-manager";
 import { ArtifactStore } from "../artifacts/store";
+import { SnapshotService } from "./snapshot-service";
+import { ActionExecutor } from "./action-executor";
 
 export class ManagedPlaywrightBrowserService implements BrowserService {
   private activeContexts = new Map<string, BrowserContext>();
   private tabRegistry = new TabRegistry();
   private profileManager = new ProfileManager();
+  private snapshotService = new SnapshotService();
+  private actionExecutor = new ActionExecutor();
 
   async start(profileName?: string): Promise<{ running: boolean; profile: string }> {
     const profile = this.profileManager.resolve(profileName);
@@ -119,6 +123,36 @@ export class ManagedPlaywrightBrowserService implements BrowserService {
     }
 
     await tab.page.goto(url, { waitUntil: "load", timeout: 30000 });
+    const title = await tab.page.title();
+    return {
+      targetId,
+      url: tab.page.url(),
+      title,
+      active: tab.active,
+    };
+  }
+
+  async snapshot(profileName: string | undefined, targetId: string): Promise<BrowserSnapshot> {
+    const profile = this.profileManager.resolve(profileName);
+    await this.ensureStarted(profile.name);
+    const tab = this.tabRegistry.get(targetId, profile.name);
+    if (!tab) {
+      throw new Error(`Tab ${targetId} not found in profile ${profile.name}`);
+    }
+
+    return this.snapshotService.generate(tab.page, targetId);
+  }
+
+  async act(profileName: string | undefined, targetId: string, request: BrowserActionRequest): Promise<BrowserTab> {
+    const profile = this.profileManager.resolve(profileName);
+    await this.ensureStarted(profile.name);
+    const tab = this.tabRegistry.get(targetId, profile.name);
+    if (!tab) {
+      throw new Error(`Tab ${targetId} not found in profile ${profile.name}`);
+    }
+
+    await this.actionExecutor.execute(tab.page, targetId, request);
+
     const title = await tab.page.title();
     return {
       targetId,

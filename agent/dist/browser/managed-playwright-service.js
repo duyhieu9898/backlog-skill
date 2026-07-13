@@ -9,10 +9,14 @@ const playwright_1 = require("playwright");
 const tab_registry_1 = require("./tab-registry");
 const profile_manager_1 = require("./profile-manager");
 const store_1 = require("../artifacts/store");
+const snapshot_service_1 = require("./snapshot-service");
+const action_executor_1 = require("./action-executor");
 class ManagedPlaywrightBrowserService {
     activeContexts = new Map();
     tabRegistry = new tab_registry_1.TabRegistry();
     profileManager = new profile_manager_1.ProfileManager();
+    snapshotService = new snapshot_service_1.SnapshotService();
+    actionExecutor = new action_executor_1.ActionExecutor();
     async start(profileName) {
         const profile = this.profileManager.resolve(profileName);
         if (this.activeContexts.has(profile.name)) {
@@ -105,6 +109,31 @@ class ManagedPlaywrightBrowserService {
             throw new Error(`Tab ${targetId} not found in profile ${profile.name}`);
         }
         await tab.page.goto(url, { waitUntil: "load", timeout: 30000 });
+        const title = await tab.page.title();
+        return {
+            targetId,
+            url: tab.page.url(),
+            title,
+            active: tab.active,
+        };
+    }
+    async snapshot(profileName, targetId) {
+        const profile = this.profileManager.resolve(profileName);
+        await this.ensureStarted(profile.name);
+        const tab = this.tabRegistry.get(targetId, profile.name);
+        if (!tab) {
+            throw new Error(`Tab ${targetId} not found in profile ${profile.name}`);
+        }
+        return this.snapshotService.generate(tab.page, targetId);
+    }
+    async act(profileName, targetId, request) {
+        const profile = this.profileManager.resolve(profileName);
+        await this.ensureStarted(profile.name);
+        const tab = this.tabRegistry.get(targetId, profile.name);
+        if (!tab) {
+            throw new Error(`Tab ${targetId} not found in profile ${profile.name}`);
+        }
+        await this.actionExecutor.execute(tab.page, targetId, request);
         const title = await tab.page.title();
         return {
             targetId,
