@@ -22,6 +22,7 @@ import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import type { DesktopToolAction, FileToolAction, ToolResult, BrowserToolAction } from "./contracts";
+import { toolRegistry, type ToolRiskLevel } from "./registry";
 import { browserService } from "../browser/browser-service";
 import { BrowserError } from "../browser/errors";
 import { validateJsonSchema, type JsonSchema } from "./schema";
@@ -44,6 +45,7 @@ export type PreparedToolCall = {
   blocked?: ToolResult;
   userIntent?: string;
   approvalGranted?: boolean;
+  customTool?: { name: string; risk: ToolRiskLevel };
 };
 
 const emptyObjectSchema: JsonSchema = {
@@ -307,7 +309,11 @@ export class ToolExecutor {
     if (scope?.desktopOnly) return [computerDefinition];
     if (scope?.webOnly) return [webCaptureDefinition];
     const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-    return [...files, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+    const base = [...files, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+    // Custom tools appear only in the default (unscoped) toolset so scoped
+    // views (desktopOnly/webOnly/skill) keep their exact builtin shape.
+    if (scope) return base;
+    return [...base, ...toolRegistry.definitions()];
   }
 
   /** Resolve a trusted shortcut into a command action without deciding policy. */
@@ -446,6 +452,15 @@ export class ToolExecutor {
         preview: formatBrowserPreview(args, browserContext),
         requiresConfirmation: false,
         browserAction: action,
+      };
+    }
+
+    const custom = toolRegistry.get(call.name);
+    if (custom) {
+      return {
+        ...custom.prepare(call),
+        requiresConfirmation: false,
+        customTool: { name: call.name, risk: custom.risk },
       };
     }
 
@@ -688,6 +703,16 @@ export class ToolExecutor {
         }
         return { ok: false, code: "BROWSER_ERROR", summary: error instanceof Error ? error.message : String(error) };
       }
+    }
+    if (prepared.customTool) {
+      const custom = toolRegistry.get(prepared.customTool.name);
+      if (!custom) throw new Error(`Custom tool no longer registered: ${prepared.customTool.name}`);
+      return custom.execute(prepared, {
+        traceId: input.traceId,
+        chatId: input.chatId,
+        confirmationGranted: input.confirmationGranted,
+        signal: input.signal,
+      });
     }
     if (!prepared.fileAction) throw new Error("Prepared tool call has no executable action.");
     return this.files.execute(prepared.fileAction, {

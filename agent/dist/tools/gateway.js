@@ -8,6 +8,7 @@ const linux_x11_1 = require("./computer/linux-x11");
 const browser_confirmation_1 = require("../security/browser-confirmation");
 const action_policy_1 = require("../browser/action-policy");
 const executor_1 = require("./executor");
+const register_tools_1 = require("./register-tools");
 /**
  * The only runtime entry point for LLM-originated tool calls.
  *
@@ -19,6 +20,7 @@ class ToolGateway {
     executor;
     constructor(executor = new executor_1.ToolExecutor()) {
         this.executor = executor;
+        (0, register_tools_1.ensureToolsRegistered)();
     }
     definitions(scope) {
         return this.executor.definitions(scope);
@@ -33,6 +35,24 @@ class ToolGateway {
     authorize(prepared, chatId) {
         if (prepared.blocked)
             return prepared;
+        if (prepared.customTool) {
+            const { risk } = prepared.customTool;
+            if (risk === "destructive") {
+                return {
+                    ...prepared,
+                    requiresConfirmation: false,
+                    blocked: { ok: false, code: "CUSTOM_TOOL_BLOCKED", summary: `Custom tool ${prepared.call.name} is declared destructive.` },
+                };
+            }
+            if (risk === "sensitive" && !prepared.approvalGranted) {
+                return {
+                    ...prepared,
+                    requiresConfirmation: true,
+                    preview: `${prepared.call.name} requires confirmation.\n${prepared.preview}`,
+                };
+            }
+            return prepared;
+        }
         if (prepared.command) {
             const decision = (0, commands_1.evaluateCommandPermission)(prepared.command, prepared.approvalGranted, prepared.userIntent);
             if (decision.outcome === "deny") {

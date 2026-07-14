@@ -19,6 +19,7 @@ const node_fs_1 = __importDefault(require("node:fs"));
 const node_child_process_1 = require("node:child_process");
 const node_os_1 = __importDefault(require("node:os"));
 const node_path_1 = __importDefault(require("node:path"));
+const registry_1 = require("./registry");
 const browser_service_1 = require("../browser/browser-service");
 const errors_1 = require("../browser/errors");
 const schema_1 = require("./schema");
@@ -281,7 +282,12 @@ class ToolExecutor {
         if (scope?.webOnly)
             return [webCaptureDefinition];
         const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-        return [...files, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+        const base = [...files, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+        // Custom tools appear only in the default (unscoped) toolset so scoped
+        // views (desktopOnly/webOnly/skill) keep their exact builtin shape.
+        if (scope)
+            return base;
+        return [...base, ...registry_1.toolRegistry.definitions()];
     }
     /** Resolve a trusted shortcut into a command action without deciding policy. */
     prepareCommand(action, defaultTimeoutMs) {
@@ -417,6 +423,14 @@ class ToolExecutor {
                 preview: formatBrowserPreview(args, browserContext),
                 requiresConfirmation: false,
                 browserAction: action,
+            };
+        }
+        const custom = registry_1.toolRegistry.get(call.name);
+        if (custom) {
+            return {
+                ...custom.prepare(call),
+                requiresConfirmation: false,
+                customTool: { name: call.name, risk: custom.risk },
             };
         }
         const action = fileAction(call);
@@ -672,6 +686,17 @@ class ToolExecutor {
                 }
                 return { ok: false, code: "BROWSER_ERROR", summary: error instanceof Error ? error.message : String(error) };
             }
+        }
+        if (prepared.customTool) {
+            const custom = registry_1.toolRegistry.get(prepared.customTool.name);
+            if (!custom)
+                throw new Error(`Custom tool no longer registered: ${prepared.customTool.name}`);
+            return custom.execute(prepared, {
+                traceId: input.traceId,
+                chatId: input.chatId,
+                confirmationGranted: input.confirmationGranted,
+                signal: input.signal,
+            });
         }
         if (!prepared.fileAction)
             throw new Error("Prepared tool call has no executable action.");

@@ -7,6 +7,7 @@ import type { FileToolAction, ToolResult } from "./contracts";
 import { browserConfirmationStore } from "../security/browser-confirmation";
 import { computeActionFingerprint } from "../browser/action-policy";
 import { ToolExecutor, buildBrowserActionPolicyContext, computerController, type PreparedToolCall } from "./executor";
+import { ensureToolsRegistered } from "./register-tools";
 
 /**
  * The only runtime entry point for LLM-originated tool calls.
@@ -16,7 +17,9 @@ import { ToolExecutor, buildBrowserActionPolicyContext, computerController, type
  * during preparation.
  */
 export class ToolGateway {
-  constructor(private readonly executor = new ToolExecutor()) {}
+  constructor(private readonly executor = new ToolExecutor()) {
+    ensureToolsRegistered();
+  }
 
   definitions(scope?: AiToolScope): AiToolDefinition[] {
     return this.executor.definitions(scope);
@@ -33,6 +36,25 @@ export class ToolGateway {
 
   private authorize(prepared: PreparedToolCall, chatId?: string): PreparedToolCall {
     if (prepared.blocked) return prepared;
+
+    if (prepared.customTool) {
+      const { risk } = prepared.customTool;
+      if (risk === "destructive") {
+        return {
+          ...prepared,
+          requiresConfirmation: false,
+          blocked: { ok: false, code: "CUSTOM_TOOL_BLOCKED", summary: `Custom tool ${prepared.call.name} is declared destructive.` },
+        };
+      }
+      if (risk === "sensitive" && !prepared.approvalGranted) {
+        return {
+          ...prepared,
+          requiresConfirmation: true,
+          preview: `${prepared.call.name} requires confirmation.\n${prepared.preview}`,
+        };
+      }
+      return prepared;
+    }
 
     if (prepared.command) {
       const decision = evaluateCommandPermission(prepared.command, prepared.approvalGranted, prepared.userIntent);
