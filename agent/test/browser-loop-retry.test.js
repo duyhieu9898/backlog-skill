@@ -5,6 +5,7 @@ process.env.ALLOW_DATA_URLS = "true";
 const { browserService } = require("../dist/browser/browser-service");
 const { AgentToolLoop } = require("../dist/tools/loop");
 const { ToolExecutor } = require("../dist/tools/executor");
+const { ToolGateway } = require("../dist/tools/gateway");
 const { AiRouter } = require("../dist/brain/router");
 
 test("AgentToolLoop auto-retry policy on STALE_ELEMENT_REF", async () => {
@@ -78,7 +79,7 @@ test("AgentToolLoop auto-retry policy on STALE_ELEMENT_REF", async () => {
 
     const loop = new AgentToolLoop(
       new AiRouter({ provider, providerName: "fake", model: "fake", systemPrompt: "test" }),
-      new ToolExecutor()
+      new ToolGateway(new ToolExecutor())
     );
 
     // 4. Run the loop

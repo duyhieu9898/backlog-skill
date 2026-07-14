@@ -14,16 +14,13 @@ const {
   resetSession,
   insertChatMessage,
   getUncompactedChatMessages,
+  getPendingApproval,
 } = require("../dist/storage/repositories");
 const {
   commandPreviewDigest,
   previewCommand,
 } = require("../dist/commands");
-const {
-  deletePendingConfirmation,
-  getPendingConfirmation,
-  upsertPendingConfirmation,
-} = require("../dist/storage/repositories");
+const { ApprovalService } = require("../dist/security/approvalService");
 
 const agentDir = path.join(__dirname, "..");
 const cliPath = path.join(agentDir, "dist", "cli.js");
@@ -63,7 +60,7 @@ test("CLI accepts stdin input without starting Telegram", () => {
   assert.match(output, /bemo\.checkout/);
 });
 
-test("CLI confirms a digest-bound harmless command from a prior local invocation", () => {
+test("CLI approves a digest-bound harmless command from a prior local invocation", () => {
   const action = {
     name: "test.cli-confirm",
     label: "CLI confirmation test",
@@ -72,25 +69,14 @@ test("CLI confirms a digest-bound harmless command from a prior local invocation
   };
   const preview = previewCommand(action);
   const digest = commandPreviewDigest(preview);
-  upsertPendingConfirmation({
-    chatId: LOCAL_CLI_CHAT_ID,
-    traceId: `test-cli-pending-${Date.now()}`,
-    commandName: action.name,
-    payload: { action, preview, digest },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
-
-  try {
-    const output = execFileSync(
-      process.execPath,
-      [cliPath, `confirm ${action.name} ${digest.slice(0, 12)}`],
-      { cwd: agentDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    assert.match(output, /cli-confirmed/);
-    assert.equal(getPendingConfirmation(LOCAL_CLI_CHAT_ID), null);
-  } finally {
-    deletePendingConfirmation(LOCAL_CLI_CHAT_ID);
-  }
+  const pending = new ApprovalService().create({ runId: `test-cli-pending-${Date.now()}`, principalId: LOCAL_CLI_USER_ID, chatId: LOCAL_CLI_CHAT_ID, description: "CLI confirmation test.", actionDigest: digest, payload: { action, preview }, expiresAt: new Date(Date.now() + 120000).toISOString() });
+  const output = execFileSync(
+    process.execPath,
+    [cliPath, `approve ${pending.short_id}`],
+    { cwd: agentDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  assert.match(output, /cli-confirmed/);
+  assert.equal(getPendingApproval(pending.short_id, LOCAL_CLI_USER_ID, LOCAL_CLI_CHAT_ID)?.status, "approved");
 });
 
 test("CLI /reset command clears local chat history", () => {
@@ -173,5 +159,4 @@ test("Compactor prevents concurrent compaction calls for the same chatId", async
   const summaries = remaining.filter((m) => m.role === "system");
   assert.equal(summaries.length, 1);
 });
-
 

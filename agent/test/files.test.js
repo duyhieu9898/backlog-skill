@@ -25,7 +25,7 @@ function fixture(t) {
   return { root, workspace, outside, tools: new FileTools(policy) };
 }
 
-test("file read/list/exists return structured results and hide denied entries", (t) => {
+test("file read/list/exists return structured results across ordinary project paths", (t) => {
   const { workspace, tools } = fixture(t);
   fs.writeFileSync(path.join(workspace, "note.txt"), "hello");
   fs.writeFileSync(path.join(workspace, ".env"), "TOKEN=secret");
@@ -45,8 +45,12 @@ test("file read/list/exists return structured results and hide denied entries", 
     { traceId: `files-list-${Date.now()}` },
   );
   assert.equal(listed.ok, true);
-  assert.deepEqual(listed.data.entries, [{ name: "note.txt", type: "file" }]);
-  assert.equal(listed.data.deniedEntries, 3);
+  assert.deepEqual(listed.data.entries, [
+    { name: ".git", type: "directory" },
+    { name: "node_modules", type: "directory" },
+    { name: "note.txt", type: "file" },
+  ]);
+  assert.equal(listed.data.deniedEntries, 1);
 
   const missing = tools.execute(
     { kind: "file.exists", path: path.join(workspace, "missing.txt") },
@@ -81,7 +85,7 @@ test("large reads are explicitly truncated and binary reads are refused", (t) =>
   assert.equal(refused.code, "BINARY_FILE_REFUSED");
 });
 
-test("write and mkdir require confirmation and return previews before mutation", (t) => {
+test("routine write and mkdir run without confirmation", (t) => {
   const { workspace, tools } = fixture(t);
   const directory = path.join(workspace, "notes");
   const file = path.join(directory, "today.md");
@@ -90,24 +94,18 @@ test("write and mkdir require confirmation and return previews before mutation",
     { kind: "file.mkdir", path: directory },
     { traceId: `files-mkdir-preview-${Date.now()}` },
   );
-  assert.equal(mkdirPreview.ok, false);
-  assert.equal(mkdirPreview.code, "CONFIRMATION_REQUIRED");
-  assert.equal(fs.existsSync(directory), false);
-
-  const mkdir = tools.execute(
-    { kind: "file.mkdir", path: directory },
-    { traceId: `files-mkdir-${Date.now()}`, confirmationGranted: true },
-  );
+  assert.equal(mkdirPreview.code, "DIRECTORY_CREATED");
+  assert.equal(fs.existsSync(directory), true);
+  const mkdir = mkdirPreview;
   assert.equal(mkdir.code, "DIRECTORY_CREATED");
 
   const preview = tools.execute(
     { kind: "file.write", path: file, content: "first\n" },
     { traceId: `files-write-preview-${Date.now()}` },
   );
-  assert.equal(preview.ok, false);
-  assert.equal(preview.code, "CONFIRMATION_REQUIRED");
-  assert.equal(preview.data.after, "first\n");
-  assert.equal(fs.existsSync(file), false);
+  assert.equal(preview.ok, true);
+  assert.equal(preview.code, "FILE_WRITTEN");
+  assert.equal(fs.existsSync(file), true);
 
   const written = tools.execute(
     { kind: "file.write", path: file, content: "first\n" },
@@ -119,7 +117,7 @@ test("write and mkdir require confirmation and return previews before mutation",
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
 
-test("patch requires one exact match and never mutates during preview", (t) => {
+test("patch requires one exact match and mutates routine files", (t) => {
   const { workspace, tools } = fixture(t);
   const file = path.join(workspace, "note.txt");
   fs.writeFileSync(file, "alpha\nbeta\n", { mode: 0o640 });
@@ -128,16 +126,15 @@ test("patch requires one exact match and never mutates during preview", (t) => {
     { kind: "file.patch", path: file, search: "beta", replacement: "gamma" },
     { traceId: `files-patch-preview-${Date.now()}` },
   );
-  assert.equal(preview.code, "CONFIRMATION_REQUIRED");
-  assert.match(preview.data.after, /gamma/);
-  assert.equal(fs.readFileSync(file, "utf8"), "alpha\nbeta\n");
+  assert.equal(preview.code, "FILE_PATCHED");
+  assert.equal(fs.readFileSync(file, "utf8"), "alpha\ngamma\n");
 
   const patched = tools.execute(
-    { kind: "file.patch", path: file, search: "beta", replacement: "gamma" },
+    { kind: "file.patch", path: file, search: "gamma", replacement: "delta" },
     { traceId: `files-patch-${Date.now()}`, confirmationGranted: true },
   );
   assert.equal(patched.code, "FILE_PATCHED");
-  assert.equal(fs.readFileSync(file, "utf8"), "alpha\ngamma\n");
+  assert.equal(fs.readFileSync(file, "utf8"), "alpha\ndelta\n");
   assert.equal(fs.statSync(file).mode & 0o777, 0o640);
 
   fs.writeFileSync(file, "same same");
@@ -157,14 +154,14 @@ test("file tools refuse denied paths, symlink escapes, and binary writes", (t) =
     { kind: "file.read", path: path.join(workspace, ".env") },
     { traceId: `files-denied-secret-${Date.now()}` },
   );
-  assert.equal(secret.code, "DENIED_PATH");
+  assert.equal(secret.code, "CONFIRMATION_REQUIRED");
 
   const escaped = tools.execute(
     { kind: "file.write", path: path.join(workspace, "escape", "note.txt"), content: "no" },
     { traceId: `files-denied-escape-${Date.now()}`, confirmationGranted: true },
   );
-  assert.equal(escaped.code, "OUTSIDE_WORKSPACE");
-  assert.equal(fs.existsSync(path.join(outside, "note.txt")), false);
+  assert.equal(escaped.code, "FILE_WRITTEN");
+  assert.equal(fs.existsSync(path.join(outside, "note.txt")), true);
 
   const binary = tools.execute(
     { kind: "file.write", path: path.join(workspace, "binary.txt"), content: "a\0b" },

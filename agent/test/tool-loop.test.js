@@ -9,8 +9,9 @@ const { GeminiProvider } = require("../dist/brain/providers/gemini");
 const { aiInteractionDir, aiInteractionIndex } = require("../dist/config/paths");
 const { buildCommandCatalog } = require("../dist/commands");
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
-const { getPendingConfirmation } = require("../dist/storage/repositories");
+const { getPendingApproval, listRunSteps } = require("../dist/storage/repositories");
 const { ToolExecutor } = require("../dist/tools/executor");
+const { ToolGateway } = require("../dist/tools/gateway");
 const { FileTools } = require("../dist/tools/files");
 const { AgentToolLoop } = require("../dist/tools/loop");
 
@@ -256,12 +257,13 @@ test("AiRouter does not retry permanent provider failures", async () => {
 test("ToolExecutor validates structured command input and sends JSON over stdin", async (t) => {
   const root = workspace(t);
   const executor = executorFor(root, path.join(root, "effect.txt"));
+  const gateway = new ToolGateway(executor);
   const call = {
     name: "command.test.prepare",
     arguments: { skipDates: ["2026-07-01"] },
   };
-  const prepared = executor.prepare(call, "tool-input");
-  const result = await executor.execute(prepared, {
+  const prepared = gateway.prepare(call, "tool-input");
+  const result = await gateway.execute(prepared, {
     traceId: "tool-input",
     chatId: "tool-input-chat",
   });
@@ -273,6 +275,63 @@ test("ToolExecutor validates structured command input and sends JSON over stdin"
     () => executor.prepare({ ...call, arguments: { skipDates: ["01/07/2026"] } }, "bad-input"),
     /YYYY-MM-DD/,
   );
+});
+
+test("ToolGateway evaluates a file write before execution without mutating during prepare", async (t) => {
+  const root = workspace(t);
+  const target = path.join(root, "prepared-only.txt");
+  const gateway = new ToolGateway();
+  const prepared = gateway.prepare({
+    name: "file.write",
+    arguments: { path: target, content: "written only after execute" },
+  }, "gateway-file-prepare");
+
+  assert.equal(prepared.blocked, undefined);
+  assert.equal(prepared.requiresConfirmation, false);
+  assert.equal(fs.existsSync(target), false);
+
+  const result = await gateway.execute(prepared, {
+    traceId: "gateway-file-execute",
+    chatId: "gateway-file-chat",
+  });
+  assert.equal(result.code, "FILE_WRITTEN");
+  assert.equal(fs.readFileSync(target, "utf8"), "written only after execute");
+});
+
+test("ToolGateway runs arbitrary argv commands and denies clearly destructive shell input", async (t) => {
+  const root = workspace(t);
+  const gateway = new ToolGateway();
+  const prepared = gateway.prepare({
+    name: "command.run",
+    arguments: {
+      executable: process.execPath,
+      args: ["-e", 'process.stdout.write("generic-command-ok")'],
+      cwd: root,
+      timeoutMs: 5000,
+      maxOutputBytes: 4096,
+    },
+  }, "gateway-command-prepare");
+  assert.equal(prepared.requiresConfirmation, false);
+  const result = await gateway.execute(prepared, { traceId: "gateway-command-execute", chatId: "gateway-command-chat" });
+  assert.equal(result.code, "COMMAND_COMPLETED");
+  assert.match(result.data.output, /generic-command-ok/);
+
+  const destructive = gateway.prepare({
+    name: "command.run",
+    arguments: { shellCommand: "rm -rf /", cwd: root },
+  }, "gateway-command-deny");
+  assert.equal(destructive.blocked?.code, "DENIED_PATH");
+});
+
+test("ToolExecutor refuses direct execution without a ToolGateway authorization", async (t) => {
+  const root = workspace(t);
+  const executor = new ToolExecutor();
+  const prepared = executor.prepare({
+    name: "command.run",
+    arguments: { executable: process.execPath, args: ["-e", "process.exit(0)"], cwd: root },
+  }, "executor-direct-deny");
+  const result = await executor.execute(prepared, { traceId: "executor-direct-deny", chatId: "executor-direct-chat" });
+  assert.equal(result.code, "TOOL_GATEWAY_REQUIRED");
 });
 
 test("AgentToolLoop composes a read-only command then pauses at one confirmed effect", async (t) => {
@@ -298,26 +357,29 @@ test("AgentToolLoop composes a read-only command then pauses at one confirmed ef
   };
   const loop = new AgentToolLoop(
     new AiRouter({ provider, providerName: "fake", model: "fake", systemPrompt: "test" }),
-    executor,
+    new ToolGateway(executor),
   );
-  const input = message("prepare then create", "compose");
+  const input = message("prepare then create", `compose-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   let replyMarkup;
 
   const preview = await loop.run(input, "context", (markup) => {
     replyMarkup = markup;
   });
-  const pending = getPendingConfirmation(input.chatId);
+  const shortId = preview.match(/Approval ID: ([a-f0-9]{8})/)[1];
+  const pending = getPendingApproval(shortId, input.userId, input.chatId);
 
   assert.match(preview, /test\.create cần xác nhận/);
   assert.equal(fs.existsSync(marker), false);
   assert.ok(pending);
-  const token = preview.match(/Approval: ([a-f0-9]{12})/)[1];
   assert.deepEqual(replyMarkup, {
-    inline_keyboard: [[{ text: "✅ Xác nhận: test.create", callback_data: `confirm test.create ${token}` }]],
+    inline_keyboard: [[
+      { text: "✅ Approve", callback_data: `approve ${shortId}` },
+      { text: "❌ Reject", callback_data: `reject ${shortId}` },
+    ]],
   });
-  const confirmed = await loop.consumeConfirmation({
+  const confirmed = await loop.consumeScopedApproval({
     ...input,
-    text: `confirm test.create ${token}`,
+    text: `approve ${shortId}`,
     traceId: `${input.traceId}-confirm`,
   });
 
@@ -325,6 +387,9 @@ test("AgentToolLoop composes a read-only command then pauses at one confirmed ef
   assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), {
     skipDates: ["2026-07-01"],
   });
+  const persisted = listRunSteps(input.traceId);
+  assert.equal(persisted.length, 2);
+  assert.deepEqual(persisted.map((step) => step.tool_name), ["command.test.prepare", "command.test.create"]);
 });
 
 test("AgentToolLoop rejects unknown tools and lets the provider recover", async () => {
@@ -337,7 +402,7 @@ test("AgentToolLoop rejects unknown tools and lets the provider recover", async 
   };
   const loop = new AgentToolLoop(
     new AiRouter({ provider, providerName: "fake", model: "fake", systemPrompt: "test" }),
-    new ToolExecutor(),
+    new ToolGateway(new ToolExecutor()),
   );
 
   assert.equal(await loop.run(message("do unsafe thing", "unknown"), "context"), "rejected safely");

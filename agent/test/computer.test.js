@@ -103,28 +103,13 @@ test("computer control lease is bounded by time and action count", () => {
   assert.equal(controller.hasLease("chat-a", now + COMPUTER_CONTROL_LEASE_TTL_MS), false);
 });
 
-test("desktop actions deny unavailable capabilities and require confirmation when granted", () => {
+test("desktop actions deny unavailable capabilities and default allow ordinary granted automation", () => {
   const unavailable = new UnavailableDesktopAdapter().getStatus();
   assert.equal(policy().evaluate({ kind: "desktop.capture" }, { desktopStatus: unavailable }).reasonCode, "DESKTOP_CAPABILITY_UNAVAILABLE");
-  assert.equal(policy().evaluate({ kind: "desktop.capture", displayId: "display-1" }, { desktopStatus: grantedStatus }).outcome, "confirm");
+  assert.equal(policy().evaluate({ kind: "desktop.capture", displayId: "display-1" }, { desktopStatus: grantedStatus }).outcome, "allow");
   assert.equal(policy().evaluate({ kind: "desktop.capture", displayId: "unknown" }, { desktopStatus: grantedStatus }).reasonCode, "UNKNOWN_DISPLAY");
   assert.equal(policy().evaluate({ kind: "desktop.launch", appId: "org.example.other" }, { desktopStatus: grantedStatus }).reasonCode, "UNDECLARED_DESKTOP_APP");
-  assert.equal(
-    policy().evaluate(
-      { kind: "desktop.launch", appId: "org.example.notes" },
-      { desktopStatus: grantedStatus, confirmationGranted: true },
-    ).outcome,
-    "allow",
-  );
-});
-
-test("desktop capture can be explicitly configured without confirmation while launch remains gated", () => {
-  const policyWithoutCaptureConfirm = new PermissionPolicy({
-    workspaceRoot: process.cwd(), allowedReadRoots: [process.cwd()], allowedWriteRoots: [process.cwd()], deniedPaths: [],
-    desktopAppIds: ["org.example.notes"], desktopCaptureRequiresConfirmation: false,
-  });
-  assert.equal(policyWithoutCaptureConfirm.evaluate({ kind: "desktop.capture", displayId: "display-1" }, { desktopStatus: grantedStatus }).outcome, "allow");
-  assert.equal(policyWithoutCaptureConfirm.evaluate({ kind: "desktop.launch", appId: "org.example.notes" }, { desktopStatus: grantedStatus }).outcome, "confirm");
+  assert.equal(policy().evaluate({ kind: "desktop.launch", appId: "org.example.notes" }, { desktopStatus: grantedStatus }).outcome, "allow");
 });
 
 test("desktop events use the shared trace event store", () => {

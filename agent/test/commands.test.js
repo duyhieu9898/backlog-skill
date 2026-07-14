@@ -14,19 +14,19 @@ const {
   previewCommand,
   resolveCwd,
   runTrackedCommand,
+  waitForRunningCommandStop,
 } = require("../dist/commands");
 const { ContextHydrator } = require("../dist/context/hydrator");
 const { Router } = require("../dist/core/router");
 const { SkillRegistry } = require("../dist/skills/registry");
 const {
-  deletePendingConfirmation,
-  getPendingConfirmation,
+  getPendingApproval,
   insertChatMessage,
   listRecentCommandRuns,
   listTraceEvents,
-  upsertPendingConfirmation,
 } = require("../dist/storage/repositories");
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
+const { ApprovalService } = require("../dist/security/approvalService");
 
 test("loadCommands maps command names and aliases from allowlist", () => {
   const commands = loadCommands();
@@ -75,13 +75,15 @@ test("Router shows an argv command preview before confirmation", async () => {
   assert.match(reply, /Executable: systemctl/);
   assert.match(reply, /Args: \["poweroff"\]/);
   assert.match(reply, /Cwd: /);
-  assert.match(reply, /Approval: [a-f0-9]{12}/);
-  assert.match(reply, /confirm shutdown [a-f0-9]{12}/);
-  assert.ok(getPendingConfirmation(chatId));
-  deletePendingConfirmation(chatId);
+  assert.match(reply, /Phạm vi: Cho phép chạy Tắt máy tính trong run này\./);
+  const match = reply.match(/Approval ID: ([a-f0-9]{8})/);
+  assert.ok(match);
+  assert.match(reply, new RegExp(`approve ${match[1]} hoặc reject ${match[1]}`));
+  const pending = getPendingApproval(match[1], "test-user", chatId);
+  assert.ok(pending);
 });
 
-test("Router executes only a confirmation bound to the exact preview digest", async () => {
+test("Router executes a scoped approval bound to the exact action digest", async () => {
   const chatId = `test-digest-confirm-${Date.now()}`;
   const action = {
     name: "test.digest",
@@ -91,11 +93,13 @@ test("Router executes only a confirmation bound to the exact preview digest", as
   };
   const preview = previewCommand(action);
   const digest = commandPreviewDigest(preview);
-  upsertPendingConfirmation({
+  const pending = new ApprovalService().create({
+    runId: `test-digest-pending-${Date.now()}`,
+    principalId: "test-user",
     chatId,
-    traceId: `test-digest-pending-${Date.now()}`,
-    commandName: action.name,
-    payload: { action, preview, digest },
+    description: "Run digest-bound command for this test.",
+    actionDigest: digest,
+    payload: { action, preview },
     expiresAt: new Date(Date.now() + 120000).toISOString(),
   });
 
@@ -105,103 +109,23 @@ test("Router executes only a confirmation bound to the exact preview digest", as
     provider: "telegram",
     chatId,
     userId: "test-user",
-    text: `confirm ${action.name} ${digest.slice(0, 12)}`,
+    text: `approve ${pending.short_id}`,
     timestamp: new Date(),
   });
 
   assert.match(reply, /confirmed-ok/);
-  assert.equal(getPendingConfirmation(chatId), null);
+  assert.equal(getPendingApproval(pending.short_id, "test-user", chatId)?.status, "approved");
 });
 
-test("Router executes confirmation with short confirm aliases and token-only syntax", async () => {
+test("Router rejects a scoped approval without executing its action", async () => {
   const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
-
-  // 1. Short confirm 'confirm'
-  const chatId1 = `test-short-confirm-1-${Date.now()}`;
-  const action1 = {
-    name: "test.short1",
-    label: "Short confirm command 1",
-    argv: [process.execPath, "-e", 'process.stdout.write("short-ok-1")'],
-    requiresConfirmation: true,
-  };
-  const preview1 = previewCommand(action1);
-  const digest1 = commandPreviewDigest(preview1);
-  upsertPendingConfirmation({
-    chatId: chatId1,
-    traceId: `test-short-pending-1-${Date.now()}`,
-    commandName: action1.name,
-    payload: { action: action1, preview: preview1, digest: digest1 },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
-
-  const reply1 = await router.route({
-    traceId: `test-short-confirm-trace-1-${Date.now()}`,
-    provider: "telegram",
-    chatId: chatId1,
-    userId: "test-user",
-    text: "confirm",
-    timestamp: new Date(),
-  });
-  assert.match(reply1, /short-ok-1/);
-  assert.equal(getPendingConfirmation(chatId1), null);
-
-  // 2. Short confirm 'y'
-  const chatId2 = `test-short-confirm-2-${Date.now()}`;
-  const action2 = {
-    name: "test.short2",
-    label: "Short confirm command 2",
-    argv: [process.execPath, "-e", 'process.stdout.write("short-ok-2")'],
-    requiresConfirmation: true,
-  };
-  const preview2 = previewCommand(action2);
-  const digest2 = commandPreviewDigest(preview2);
-  upsertPendingConfirmation({
-    chatId: chatId2,
-    traceId: `test-short-pending-2-${Date.now()}`,
-    commandName: action2.name,
-    payload: { action: action2, preview: preview2, digest: digest2 },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
-
-  const reply2 = await router.route({
-    traceId: `test-short-confirm-trace-2-${Date.now()}`,
-    provider: "telegram",
-    chatId: chatId2,
-    userId: "test-user",
-    text: "y",
-    timestamp: new Date(),
-  });
-  assert.match(reply2, /short-ok-2/);
-  assert.equal(getPendingConfirmation(chatId2), null);
-
-  // 3. Token-only confirm 'confirm <token>'
-  const chatId3 = `test-short-confirm-3-${Date.now()}`;
-  const action3 = {
-    name: "test.short3",
-    label: "Short confirm command 3",
-    argv: [process.execPath, "-e", 'process.stdout.write("short-ok-3")'],
-    requiresConfirmation: true,
-  };
-  const preview3 = previewCommand(action3);
-  const digest3 = commandPreviewDigest(preview3);
-  upsertPendingConfirmation({
-    chatId: chatId3,
-    traceId: `test-short-pending-3-${Date.now()}`,
-    commandName: action3.name,
-    payload: { action: action3, preview: preview3, digest: digest3 },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
-
-  const reply3 = await router.route({
-    traceId: `test-short-confirm-trace-3-${Date.now()}`,
-    provider: "telegram",
-    chatId: chatId3,
-    userId: "test-user",
-    text: `confirm ${digest3.slice(0, 12)}`,
-    timestamp: new Date(),
-  });
-  assert.match(reply3, /short-ok-3/);
-  assert.equal(getPendingConfirmation(chatId3), null);
+  const chatId = `test-short-approval-${Date.now()}`;
+  const action = { name: "test.reject", label: "Reject test", argv: [process.execPath, "-e", 'process.stdout.write("must-not-run")'], requiresConfirmation: true };
+  const digest = commandPreviewDigest(previewCommand(action));
+  const pending = new ApprovalService().create({ runId: `test-reject-${Date.now()}`, principalId: "test-user", chatId, description: "Reject this test action.", actionDigest: digest, payload: { action }, expiresAt: new Date(Date.now() + 120000).toISOString() });
+  const reply = await router.route({ traceId: `test-reject-trace-${Date.now()}`, provider: "telegram", chatId, userId: "test-user", text: `reject ${pending.short_id}`, timestamp: new Date() });
+  assert.match(reply, /Đã từ chối/);
+  assert.equal(getPendingApproval(pending.short_id, "test-user", chatId)?.status, "rejected");
 });
 
 test("Router rejects mismatched tokens and changed pending actions", async () => {
@@ -215,48 +139,31 @@ test("Router rejects mismatched tokens and changed pending actions", async () =>
   const preview = previewCommand(action);
   const digest = commandPreviewDigest(preview);
   const mismatchChat = `test-digest-mismatch-${Date.now()}`;
-  upsertPendingConfirmation({
-    chatId: mismatchChat,
-    traceId: "test-digest-mismatch-pending",
-    commandName: action.name,
-    payload: { action, preview, digest },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
+  const mismatch = new ApprovalService().create({ runId: "test-digest-mismatch-pending", principalId: "test-user", chatId: mismatchChat, description: "Mismatch test.", actionDigest: digest, payload: { action, preview }, expiresAt: new Date(Date.now() + 120000).toISOString() });
 
   const mismatchReply = await router.route({
     traceId: `test-digest-mismatch-trace-${Date.now()}`,
     provider: "telegram",
     chatId: mismatchChat,
     userId: "test-user",
-    text: `confirm ${action.name} 000000000000`,
+    text: "approve 00000000",
     timestamp: new Date(),
   });
-  assert.match(mismatchReply, /không khớp/);
-  assert.ok(getPendingConfirmation(mismatchChat));
-  deletePendingConfirmation(mismatchChat);
+  assert.match(mismatchReply, /không tồn tại|không còn hợp lệ/);
+  assert.equal(getPendingApproval(mismatch.short_id, "test-user", mismatchChat)?.status, "pending");
 
   const changedChat = `test-digest-changed-${Date.now()}`;
-  upsertPendingConfirmation({
-    chatId: changedChat,
-    traceId: "test-digest-changed-pending",
-    commandName: action.name,
-    payload: {
-      action: { ...action, argv: [process.execPath, "-e", 'process.stdout.write("changed")'] },
-      preview,
-      digest,
-    },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
+  const changed = new ApprovalService().create({ runId: "test-digest-changed-pending", principalId: "test-user", chatId: changedChat, description: "Changed action test.", actionDigest: digest, payload: { action: { ...action, argv: [process.execPath, "-e", 'process.stdout.write("changed")'] }, preview }, expiresAt: new Date(Date.now() + 120000).toISOString() });
   const changedReply = await router.route({
     traceId: `test-digest-changed-trace-${Date.now()}`,
     provider: "telegram",
     chatId: changedChat,
     userId: "test-user",
-    text: `confirm ${action.name} ${digest.slice(0, 12)}`,
+    text: `approve ${changed.short_id}`,
     timestamp: new Date(),
   });
-  assert.match(changedReply, /action đã thay đổi/);
-  assert.equal(getPendingConfirmation(changedChat), null);
+  assert.match(changedReply, /không tồn tại|action đã thay đổi|không còn hợp lệ/);
+  assert.equal(getPendingApproval(changed.short_id, "test-user", changedChat)?.status, "invalidated");
 });
 
 test("SQLite schema initializes and traced command runs persist", async () => {
@@ -301,7 +208,7 @@ test("tracked command preserves non-zero exit code and stderr output", async () 
   assert.match(result.output, /agent-fail/);
 });
 
-test("permission policy applies deny precedence and canonical root checks", () => {
+test("permission policy defaults to allow, prompts for sensitive paths, and denies destructive commands", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-policy-"));
   const workspace = path.join(tmp, "workspace");
   const writable = path.join(workspace, "notes");
@@ -318,21 +225,15 @@ test("permission policy applies deny precedence and canonical root checks", () =
   });
 
   assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "README.md") }).outcome, "allow");
-  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, ".env") }).reasonCode, "DENIED_PATH");
-  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(writable, "new.md") }).outcome, "confirm");
-  assert.equal(
-    policy.evaluate(
-      { kind: "file.write", path: path.join(writable, "new.md") },
-      { confirmationGranted: true },
-    ).outcome,
-    "allow",
-  );
-  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(workspace, "other.md") }).reasonCode, "OUTSIDE_WRITE_ROOTS");
-  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(workspace, "escape", "new.md") }).reasonCode, "OUTSIDE_WORKSPACE");
-  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, ".git", "config") }).reasonCode, "DENIED_PATH");
-  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "node_modules", "pkg") }).reasonCode, "DENIED_PATH");
-  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "credentials.json") }).reasonCode, "DENIED_PATH");
-  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(outside, "note.md") }).reasonCode, "OUTSIDE_READ_ROOTS");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, ".env") }).reasonCode, "CONFIRMATION_REQUIRED");
+  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(writable, "new.md") }).outcome, "allow");
+  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(workspace, "other.md") }).outcome, "allow");
+  assert.equal(policy.evaluate({ kind: "file.write", path: path.join(workspace, "escape", "new.md") }).outcome, "allow");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, ".git", "config") }).outcome, "allow");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "node_modules", "pkg") }).outcome, "allow");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(workspace, "credentials.json") }).reasonCode, "CONFIRMATION_REQUIRED");
+  assert.equal(policy.evaluate({ kind: "file.read", path: path.join(outside, "note.md") }).outcome, "allow");
+  assert.equal(policy.evaluate({ kind: "command.run", commandId: "destroy", executable: "rm", args: ["-rf", "/"], cwd: workspace, requiresConfirmation: false, externalSideEffect: false }).outcome, "deny");
   assert.equal(
     policy.evaluate({
       kind: "command.run",
@@ -345,23 +246,29 @@ test("permission policy applies deny precedence and canonical root checks", () =
     }).reasonCode,
     "CONFIRMATION_REQUIRED",
   );
+  const installNginx = {
+    kind: "command.run",
+    commandId: "install-nginx",
+    executable: "sudo",
+    args: ["apt-get", "install", "-y", "nginx"],
+    cwd: workspace,
+    requiresConfirmation: false,
+    externalSideEffect: false,
+  };
+  assert.equal(policy.evaluate(installNginx).reasonCode, "CONFIRMATION_REQUIRED");
+  assert.equal(
+    policy.evaluate(installNginx, { userIntent: "Hãy cài Nginx và cấu hình reverse proxy." }).outcome,
+    "allow",
+  );
+  assert.equal(
+    policy.evaluate(installNginx, { userIntent: "Hãy xem trạng thái Nginx." }).reasonCode,
+    "CONFIRMATION_REQUIRED",
+  );
 });
 
-test("tracked commands cannot bypass policy or confirmation", async () => {
-  await assert.rejects(
-    runTrackedCommand({
-      traceId: `test-policy-cwd-${Date.now()}`,
-      chatId: "test-chat",
-      action: {
-        name: "test.outside",
-        label: "Outside workspace",
-        cwd: os.tmpdir(),
-        argv: [process.execPath, "-e", 'process.stdout.write("must-not-run")'],
-        requiresConfirmation: false,
-      },
-    }),
-    /OUTSIDE_WORKSPACE/,
-  );
+test("tracked commands allow an in-scope cwd and still require approval for marked impact", async () => {
+  const result = await runTrackedCommand({ traceId: `test-policy-cwd-${Date.now()}`, chatId: "test-chat", action: { name: "test.outside", label: "Outside workspace", cwd: os.tmpdir(), argv: [process.execPath, "-e", 'process.stdout.write("allowed")'], requiresConfirmation: false } });
+  assert.match(result.output, /allowed/);
 
   await assert.rejects(
     runTrackedCommand({
@@ -378,63 +285,46 @@ test("tracked commands cannot bypass policy or confirmation", async () => {
   );
 });
 
-test("permission policy requires every write root to be readable", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-policy-roots-"));
-  const readable = path.join(tmp, "readable");
-  const writable = path.join(tmp, "writable");
-  fs.mkdirSync(readable);
-  fs.mkdirSync(writable);
-
-  assert.throws(
-    () =>
-      new PermissionPolicy({
-        workspaceRoot: tmp,
-        allowedReadRoots: [readable],
-        allowedWriteRoots: [writable],
-        deniedPaths: [],
-      }),
-    /write root must be contained by an allowed read root/,
-  );
-  fs.rmSync(tmp, { recursive: true, force: true });
-});
-
-test("pending confirmation can expire after 2 minutes", () => {
+test("pending approval records expiry and stays bound to its owner", () => {
   const chatId = `test-chat-${Date.now()}`;
-  upsertPendingConfirmation({
-    chatId,
-    traceId: "trace-confirm",
-    commandName: "test.confirm",
-    payload: { ok: true },
-    expiresAt: new Date(Date.now() - 1).toISOString(),
-  });
-
-  const pending = getPendingConfirmation(chatId);
-  assert.equal(pending.command_name, "test.confirm");
-  assert.equal(pending.expires_at <= new Date().toISOString(), true);
-  deletePendingConfirmation(chatId);
+  const pending = new ApprovalService().create({ runId: "trace-confirm", principalId: "test-user", chatId, description: "Expired approval.", actionDigest: "a".repeat(64), payload: { ok: true }, expiresAt: new Date(Date.now() - 1).toISOString() });
+  const stored = getPendingApproval(pending.short_id, "test-user", chatId);
+  assert.ok(stored);
+  assert.equal(stored.description, "Expired approval.");
+  const wrongOwner = getPendingApproval(pending.short_id, "other-user", chatId);
+  assert.equal(wrongOwner, null);
+  assert.equal(stored.expires_at <= new Date().toISOString(), true);
 });
 
-test("new pending confirmation replaces old pending confirmation", () => {
+test("multiple scoped approvals can coexist for one chat", () => {
   const chatId = `test-chat-replace-${Date.now()}`;
-  upsertPendingConfirmation({
-    chatId,
-    traceId: "trace-old",
-    commandName: "test.old",
-    payload: { old: true },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
-  upsertPendingConfirmation({
-    chatId,
-    traceId: "trace-new",
-    commandName: "test.new",
-    payload: { new: true },
-    expiresAt: new Date(Date.now() + 120000).toISOString(),
-  });
+  const approvals = new ApprovalService();
+  const first = approvals.create({ runId: "trace-old", principalId: "test-user", chatId, description: "First action.", actionDigest: "b".repeat(64), payload: { old: true }, expiresAt: new Date(Date.now() + 120000).toISOString() });
+  const second = approvals.create({ runId: "trace-new", principalId: "test-user", chatId, description: "Second action.", actionDigest: "c".repeat(64), payload: { newer: true }, expiresAt: new Date(Date.now() + 120000).toISOString() });
+  assert.notEqual(first.short_id, second.short_id);
+  assert.equal(getPendingApproval(first.short_id, "test-user", chatId)?.run_id, "trace-old");
+  assert.equal(getPendingApproval(second.short_id, "test-user", chatId)?.run_id, "trace-new");
+});
 
-  const pending = getPendingConfirmation(chatId);
-  assert.equal(pending.command_name, "test.new");
-  assert.equal(pending.trace_id, "trace-new");
-  deletePendingConfirmation(chatId);
+test("approved action creates a persisted run grant that covers only its action family", () => {
+  const service = new ApprovalService();
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const runId = `grant-run-${suffix}`;
+  const principalId = `grant-owner-${suffix}`;
+  const chatId = `grant-chat-${suffix}`;
+  const digest = `grant-digest-${suffix}`;
+  const pending = service.create({
+    runId,
+    principalId,
+    chatId,
+    description: "Approve file edits for this run.",
+    actionDigest: digest,
+    payload: { call: { name: "file.write" } },
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  assert.ok(service.resolve({ shortId: pending.short_id, principalId, chatId, actionDigest: digest, approve: true }));
+  assert.equal(service.covers({ principalId, runId, actionKey: "file.write" }), true);
+  assert.equal(service.covers({ principalId, runId, actionKey: "command.run" }), false);
 });
 
 test("command preview exposes fixed argv, cwd, timeout, and risk", () => {
@@ -514,6 +404,7 @@ test("/stop interrupts an active tracked command without waiting for the chat lo
     text: "/stop",
     timestamp: new Date(),
   });
+  await waitForRunningCommandStop(1000);
   const result = await run;
 
   assert.match(reply, /Đã yêu cầu dừng/);
@@ -628,7 +519,7 @@ test("ContextHydrator builds a minimal, redacted prompt for general conversation
 test("ContextHydrator isolates desktop requests from stale chat tool protocol", () => {
   const registry = new SkillRegistry(path.join(__dirname, "..", "..", "skills"));
   const chatId = `desktop-context-${Date.now()}`;
-  insertChatMessage({ chatId, userId: "user", role: "user", content: "confirm computer deadbeef1234", traceId: "old-confirm" });
+  insertChatMessage({ chatId, userId: "user", role: "user", content: "approve deadbeef", traceId: "old-approval" });
   insertChatMessage({ chatId, userId: "agent", role: "assistant", content: '```json\n{"toolCall":{"name":"computer","arguments":{"action":"left_click"}}}\n```', traceId: "old-raw" });
   insertChatMessage({ chatId, userId: "user", role: "user", content: "tạo file cũ", traceId: "old-task" });
   const prompt = new ContextHydrator(registry).hydrate({

@@ -9,17 +9,22 @@ const { SkillRegistry } = require("../dist/skills/registry");
 const {
   claimDueScheduledJob,
   getJsonState,
+  getRun,
   getScheduledJob,
+  listRunSteps,
+  upsertScheduledJob,
   updateScheduledJobState,
 } = require("../dist/storage/repositories");
 const {
   applyScheduleUpdate,
+  createRuntimeSchedule,
   findScheduledCheck,
   formatScheduleList,
   formatScheduleHistory,
   normalizeScheduledCheck,
   nextRunAtFor,
   runScheduledCheck,
+  removeRuntimeSchedule,
   scheduleUpdatePreview,
   seedScheduledJobsFromConfig,
 } = require("../dist/scheduler");
@@ -53,7 +58,7 @@ function workspace(t) {
   return root;
 }
 
-test("scheduled checks must reference read-only allowlisted commands", (t) => {
+test("scheduled checks accept configured actions and reject only unknown commands", (t) => {
   const root = workspace(t);
   const commands = catalog(root);
   const check = normalizeScheduledCheck(
@@ -71,13 +76,12 @@ test("scheduled checks must reference read-only allowlisted commands", (t) => {
   assert.equal(check.label, "Daily read");
   assert.equal(check.enabled, true);
   assert.match(formatScheduleList([check]), /daily-read - Daily read \[enabled, cron: \*\/15 \* \* \* \*, telegram\]/);
-  assert.throws(
-    () =>
-      normalizeScheduledCheck(
-        { name: "bad-write", command: "test.write", cron: "*/15 * * * *" },
-        commands,
-      ),
-    /read-only command/,
+  assert.equal(
+    normalizeScheduledCheck(
+      { name: "configured-write", command: "test.write", cron: "*/15 * * * *", enabled: true },
+      commands,
+    ).command.name,
+    "test.write",
   );
   assert.throws(
     () =>
@@ -117,6 +121,75 @@ test("config seeding replaces an interval schedule with a cron schedule", () => 
   assert.notEqual(updated.next_run_at, first.next_run_at);
 });
 
+test("config seeding owns config schedules but never overwrites a runtime schedule", () => {
+  const name = `runtime-owned-${Date.now()}`;
+  upsertScheduledJob({
+    name,
+    source: "runtime",
+    label: "Runtime schedule",
+    commandName: "test.read",
+    cronExpr: "0 3 * * *",
+    timezone: "UTC",
+    enabled: true,
+    delivery: "silent",
+    notifyOnChangeOnly: false,
+  });
+
+  seedScheduledJobsFromConfig([
+    { name, label: "Config must not win", command: "test.read", cron: "0 4 * * *", enabled: true },
+  ], catalog(__dirname));
+
+  const row = getScheduledJob(name);
+  assert.equal(row.source, "runtime");
+  assert.equal(row.label, "Runtime schedule");
+  assert.equal(row.cron_expr, "0 3 * * *");
+});
+
+test("removing a config schedule disables it without touching runtime schedules", () => {
+  const configured = `removed-config-${Date.now()}`;
+  const runtime = `remaining-runtime-${Date.now()}`;
+  seedScheduledJobsFromConfig([
+    { name: configured, command: "test.read", cron: "*/5 * * * *", enabled: true },
+  ], catalog(__dirname));
+  upsertScheduledJob({
+    name: runtime,
+    source: "runtime",
+    label: "Runtime schedule",
+    commandName: "test.read",
+    cronExpr: "*/5 * * * *",
+    timezone: "UTC",
+    enabled: true,
+    delivery: "silent",
+    notifyOnChangeOnly: false,
+  });
+
+  seedScheduledJobsFromConfig([], catalog(__dirname));
+
+  assert.equal(getScheduledJob(configured).enabled, 0);
+  assert.equal(getScheduledJob(runtime).enabled, 1);
+});
+
+test("runtime schedules persist independently and cannot replace config schedules", () => {
+  const commands = catalog(__dirname);
+  const runtimeName = `runtime-created-${Date.now()}`;
+  const created = createRuntimeSchedule(
+    { name: runtimeName, command: "test.write", cron: "0 4 * * *", enabled: true },
+    commands,
+  );
+  assert.equal(created.source, "runtime");
+  assert.equal(getScheduledJob(runtimeName).source, "runtime");
+  assert.equal(removeRuntimeSchedule(runtimeName), true);
+  assert.equal(getScheduledJob(runtimeName), null);
+
+  const configName = `config-owned-${Date.now()}`;
+  seedScheduledJobsFromConfig([{ name: configName, command: "test.read", cron: "0 4 * * *", enabled: true }], commands);
+  assert.throws(
+    () => createRuntimeSchedule({ name: configName, command: "test.write", cron: "0 5 * * *" }, commands),
+    /owned by config\.json/,
+  );
+  assert.equal(removeRuntimeSchedule(configName), false);
+});
+
 test("scheduled run records traceable command result and last scheduled state", async (t) => {
   const root = workspace(t);
   const check = normalizeScheduledCheck(
@@ -125,6 +198,7 @@ test("scheduled run records traceable command result and last scheduled state", 
   );
   const result = await runScheduledCheck({
     check,
+    principalId: "schedule-test-user",
     chatId: "schedule-test-chat",
     defaultTimeoutMs: 5000,
     notify: async () => {},
@@ -135,7 +209,25 @@ test("scheduled run records traceable command result and last scheduled state", 
   assert.match(result.outputTail, /scheduled-ok/);
   assert.equal(last.name, "manual-read");
   assert.equal(last.traceId, result.traceId);
+  assert.equal(getRun(result.traceId).status, "completed");
+  assert.deepEqual(listRunSteps(result.traceId).map((step) => step.tool_name), ["command.test.read"]);
   assert.match(formatScheduleHistory("manual-read"), /SUCCESS manual-read/);
+});
+
+test("configured schedule runs an in-scope side-effecting command without recurring approval", async (t) => {
+  const root = workspace(t);
+  const check = normalizeScheduledCheck(
+    { name: `scheduled-write-${Date.now()}`, command: "test.write", cron: "*/5 * * * *", enabled: true },
+    catalog(root),
+  );
+  const result = await runScheduledCheck({
+    check,
+    principalId: "schedule-owner",
+    chatId: "schedule-owner-chat",
+    defaultTimeoutMs: 5000,
+  });
+  assert.equal(result.status, "success");
+  assert.match(result.outputTail, /write/);
 });
 
 test("findScheduledCheck resolves named checks from supplied list", (t) => {
@@ -163,6 +255,32 @@ test("Router exposes configured schedule listing", async () => {
   assert.match(reply, /bemo-late - Bemo late-day read-only check \[enabled, cron: 0 17 \* \* 1-5, telegram, change-only\]/);
 });
 
+test("Router creates and deletes a runtime schedule without an approval loop", async () => {
+  const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
+  const name = `runtime-cli-${Date.now()}`;
+  const base = {
+    provider: "cli",
+    chatId: `runtime-cli-chat-${Date.now()}`,
+    userId: "test-user",
+    timestamp: new Date(),
+  };
+  const created = await router.route({
+    ...base,
+    traceId: `runtime-cli-add-${Date.now()}`,
+    text: `/schedule add ${name} */5 * * * * bemo.late-list`,
+  });
+  assert.match(created, new RegExp(`Created runtime schedule ${name}`));
+  assert.equal(getScheduledJob(name).source, "runtime");
+
+  const deleted = await router.route({
+    ...base,
+    traceId: `runtime-cli-delete-${Date.now()}`,
+    text: `/schedule delete ${name}`,
+  });
+  assert.equal(deleted, `Deleted runtime schedule ${name}.`);
+  assert.equal(getScheduledJob(name), null);
+});
+
 test("schedule update preview requires exact digest before applying", () => {
   seedScheduledJobsFromConfig([
     {
@@ -180,7 +298,7 @@ test("schedule update preview requires exact digest before applying", () => {
   assert.equal(applyScheduleUpdate(update), "Updated digest-read cron to: 0 9 * * *");
 });
 
-test("config seeding preserves runtime schedule controls", () => {
+test("config seeding refreshes all controls for config-owned schedules", () => {
   const name = `seed-preserve-${Date.now()}`;
   seedScheduledJobsFromConfig([
     {
@@ -215,10 +333,10 @@ test("config seeding preserves runtime schedule controls", () => {
   const row = getScheduledJob(name);
   assert.equal(row.label, "Updated label");
   assert.equal(row.cron_expr, "0 10 * * *");
-  assert.equal(row.enabled, 0);
-  assert.equal(row.delivery, "silent");
-  assert.equal(row.notify_on_change_only, 1);
-  assert.equal(row.next_run_at, null);
+  assert.equal(row.enabled, 1);
+  assert.equal(row.delivery, "telegram");
+  assert.equal(row.notify_on_change_only, 0);
+  assert.notEqual(row.next_run_at, null);
 });
 
 test("config seeding does not bump version when metadata is unchanged", () => {
@@ -308,6 +426,7 @@ test("change-only delivery suppresses duplicate successful notification", async 
   let sent = 0;
   await runScheduledCheck({
     check,
+    principalId: "change-only-user",
     chatId: "change-only-chat",
     defaultTimeoutMs: 5000,
     notify: async () => {
@@ -316,6 +435,7 @@ test("change-only delivery suppresses duplicate successful notification", async 
   });
   await runScheduledCheck({
     check,
+    principalId: "change-only-user",
     chatId: "change-only-chat",
     defaultTimeoutMs: 5000,
     notify: async () => {
