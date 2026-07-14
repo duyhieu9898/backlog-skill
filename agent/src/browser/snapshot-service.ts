@@ -3,7 +3,7 @@ import { refStore, type LocatorDescriptor } from "./ref-store";
 
 export class SnapshotService {
   async generate(page: Page, targetId: string): Promise<{ snapshotId: string; text: string }> {
-    const snapshotId = refStore.createSnapshot(targetId);
+    const snapshotId = refStore.createSnapshot(targetId, page.url());
     
     let rawSnapshot = "";
     try {

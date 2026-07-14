@@ -7,6 +7,9 @@ import { ProfileManager } from "./profile-manager";
 import { ArtifactStore } from "../artifacts/store";
 import { SnapshotService } from "./snapshot-service";
 import { ActionExecutor } from "./action-executor";
+import { evaluateUrl } from "./url-policy";
+import { loadAgentConfig } from "../config/app";
+import { BrowserError } from "./errors";
 
 export class ManagedPlaywrightBrowserService implements BrowserService {
   private activeContexts = new Map<string, BrowserContext>();
@@ -26,6 +29,20 @@ export class ManagedPlaywrightBrowserService implements BrowserService {
     const context = await chromium.launchPersistentContext(profile.userDataDir, {
       headless: profile.headless,
       viewport: { width: 1280, height: 800 },
+    });
+
+    // Register navigation guard
+    await context.route("**/*", async (route, request) => {
+      if (request.isNavigationRequest()) {
+        const config = loadAgentConfig();
+        const allowedHosts = config.permissions?.browser?.allowedHosts || [];
+        const decision = await evaluateUrl({ url: request.url(), allowedHosts });
+        if (decision.decision === "deny") {
+          await route.abort("blockedbyclient");
+          return;
+        }
+      }
+      await route.continue();
     });
 
     this.activeContexts.set(profile.name, context);
@@ -56,6 +73,13 @@ export class ManagedPlaywrightBrowserService implements BrowserService {
   }
 
   async open(profileName: string | undefined, url: string): Promise<BrowserTab> {
+    const config = loadAgentConfig();
+    const allowedHosts = config.permissions?.browser?.allowedHosts || [];
+    const decision = await evaluateUrl({ url, allowedHosts });
+    if (decision.decision === "deny") {
+      throw new BrowserError(decision.code as any, decision.reason);
+    }
+
     const profile = this.profileManager.resolve(profileName);
     const context = await this.ensureStarted(profile.name);
 
@@ -115,6 +139,13 @@ export class ManagedPlaywrightBrowserService implements BrowserService {
   }
 
   async navigate(profileName: string | undefined, targetId: string, url: string): Promise<BrowserTab> {
+    const config = loadAgentConfig();
+    const allowedHosts = config.permissions?.browser?.allowedHosts || [];
+    const decision = await evaluateUrl({ url, allowedHosts });
+    if (decision.decision === "deny") {
+      throw new BrowserError(decision.code as any, decision.reason);
+    }
+
     const profile = this.profileManager.resolve(profileName);
     await this.ensureStarted(profile.name);
     const tab = this.tabRegistry.get(targetId, profile.name);

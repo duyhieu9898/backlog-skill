@@ -11,6 +11,9 @@ const profile_manager_1 = require("./profile-manager");
 const store_1 = require("../artifacts/store");
 const snapshot_service_1 = require("./snapshot-service");
 const action_executor_1 = require("./action-executor");
+const url_policy_1 = require("./url-policy");
+const app_1 = require("../config/app");
+const errors_1 = require("./errors");
 class ManagedPlaywrightBrowserService {
     activeContexts = new Map();
     tabRegistry = new tab_registry_1.TabRegistry();
@@ -26,6 +29,19 @@ class ManagedPlaywrightBrowserService {
         const context = await playwright_1.chromium.launchPersistentContext(profile.userDataDir, {
             headless: profile.headless,
             viewport: { width: 1280, height: 800 },
+        });
+        // Register navigation guard
+        await context.route("**/*", async (route, request) => {
+            if (request.isNavigationRequest()) {
+                const config = (0, app_1.loadAgentConfig)();
+                const allowedHosts = config.permissions?.browser?.allowedHosts || [];
+                const decision = await (0, url_policy_1.evaluateUrl)({ url: request.url(), allowedHosts });
+                if (decision.decision === "deny") {
+                    await route.abort("blockedbyclient");
+                    return;
+                }
+            }
+            await route.continue();
         });
         this.activeContexts.set(profile.name, context);
         // Register any existing pages
@@ -50,6 +66,12 @@ class ManagedPlaywrightBrowserService {
         return this.tabRegistry.listWithTitles(profile.name);
     }
     async open(profileName, url) {
+        const config = (0, app_1.loadAgentConfig)();
+        const allowedHosts = config.permissions?.browser?.allowedHosts || [];
+        const decision = await (0, url_policy_1.evaluateUrl)({ url, allowedHosts });
+        if (decision.decision === "deny") {
+            throw new errors_1.BrowserError(decision.code, decision.reason);
+        }
         const profile = this.profileManager.resolve(profileName);
         const context = await this.ensureStarted(profile.name);
         // Reuse the active/blank tab if it exists and is at about:blank
@@ -102,6 +124,12 @@ class ManagedPlaywrightBrowserService {
         this.tabRegistry.remove(targetId, profile.name);
     }
     async navigate(profileName, targetId, url) {
+        const config = (0, app_1.loadAgentConfig)();
+        const allowedHosts = config.permissions?.browser?.allowedHosts || [];
+        const decision = await (0, url_policy_1.evaluateUrl)({ url, allowedHosts });
+        if (decision.decision === "deny") {
+            throw new errors_1.BrowserError(decision.code, decision.reason);
+        }
         const profile = this.profileManager.resolve(profileName);
         await this.ensureStarted(profile.name);
         const tab = this.tabRegistry.get(targetId, profile.name);

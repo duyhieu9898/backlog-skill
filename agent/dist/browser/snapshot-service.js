@@ -4,7 +4,7 @@ exports.SnapshotService = void 0;
 const ref_store_1 = require("./ref-store");
 class SnapshotService {
     async generate(page, targetId) {
-        const snapshotId = ref_store_1.refStore.createSnapshot(targetId);
+        const snapshotId = ref_store_1.refStore.createSnapshot(targetId, page.url());
         let rawSnapshot = "";
         try {
             rawSnapshot = await page.locator("body").ariaSnapshot();

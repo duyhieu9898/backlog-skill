@@ -8,6 +8,8 @@ exports.canonicalizePolicyPath = canonicalizePolicyPath;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const contracts_1 = require("../tools/contracts");
+const url_policy_1 = require("../browser/url-policy");
+const action_policy_1 = require("../browser/action-policy");
 const DENIED_SEGMENTS = new Set([".git", "node_modules"]);
 const SECRET_FILE_PATTERNS = [
     /^\.env(?:\..+)?$/i,
@@ -77,6 +79,7 @@ class PermissionPolicy {
     deniedPaths;
     desktopAppIds;
     desktopCaptureRequiresConfirmation;
+    browserConfig;
     constructor(config) {
         this.workspaceRoot = canonicalizePolicyPath(config.workspaceRoot);
         this.allowedReadRoots = normalizeRoots(config.allowedReadRoots);
@@ -84,6 +87,7 @@ class PermissionPolicy {
         this.deniedPaths = normalizeRoots(config.deniedPaths);
         this.desktopAppIds = new Set(config.desktopAppIds || []);
         this.desktopCaptureRequiresConfirmation = config.desktopCaptureRequiresConfirmation !== false;
+        this.browserConfig = config.browser || {};
         for (const writeRoot of this.allowedWriteRoots) {
             if (!this.allowedReadRoots.some((readRoot) => isWithin(writeRoot, readRoot))) {
                 throw new Error(`Allowed write root must be contained by an allowed read root: ${writeRoot}`);
@@ -185,10 +189,57 @@ class PermissionPolicy {
         };
     }
     evaluateBrowser(action, context) {
+        const kind = action.kind;
+        if (kind === "browser.open" || kind === "browser.navigate") {
+            const url = action.url;
+            if (url) {
+                const allowedHosts = this.browserConfig.allowedHosts || [];
+                const decision = (0, url_policy_1.evaluateUrlSync)({ url, allowedHosts });
+                if (decision.decision === "deny") {
+                    return {
+                        outcome: "deny",
+                        reasonCode: decision.code,
+                        reason: decision.reason,
+                        action,
+                    };
+                }
+            }
+        }
+        if (kind === "browser.act") {
+            if (context.browserContext) {
+                const decision = (0, action_policy_1.evaluateAction)(context.browserContext, this.browserConfig);
+                if (decision.decision === "deny") {
+                    return {
+                        outcome: "deny",
+                        reasonCode: "ACTION_DENIED",
+                        reason: decision.reason,
+                        action,
+                    };
+                }
+                if (decision.decision === "confirm") {
+                    if (context.confirmationGranted) {
+                        return {
+                            outcome: "allow",
+                            reasonCode: "ALLOWED",
+                            reason: "Action confirmed by user.",
+                            action,
+                        };
+                    }
+                    return {
+                        outcome: "confirm",
+                        reasonCode: "CONFIRMATION_REQUIRED",
+                        reason: decision.reason,
+                        action,
+                        // Include fingerprint in the confirmation decision so ToolExecutor can extract it
+                        actionFingerprint: decision.actionFingerprint,
+                    };
+                }
+            }
+        }
         return {
             outcome: "allow",
             reasonCode: "ALLOWED",
-            reason: "Browser action is allowed by policy.",
+            reason: `${action.kind} is allowed by policy.`,
             action,
         };
     }

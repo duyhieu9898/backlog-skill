@@ -11,6 +11,11 @@ import type {
 } from "../tools/contracts";
 import type { DesktopStatus } from "../tools/computer/contracts";
 
+import { evaluateUrlSync } from "../browser/url-policy";
+import { evaluateAction } from "../browser/action-policy";
+import type { BrowserActionPolicyContext } from "../browser/action-policy";
+import type { BrowserPermissionConfig } from "../config/app";
+
 export type PermissionPolicyConfig = {
   workspaceRoot: string;
   allowedReadRoots: string[];
@@ -18,11 +23,13 @@ export type PermissionPolicyConfig = {
   deniedPaths: string[];
   desktopAppIds?: string[];
   desktopCaptureRequiresConfirmation?: boolean;
+  browser?: BrowserPermissionConfig;
 };
 
 export type PermissionContext = {
   confirmationGranted?: boolean;
   desktopStatus?: DesktopStatus;
+  browserContext?: BrowserActionPolicyContext;
 };
 
 const DENIED_SEGMENTS = new Set([".git", "node_modules"]);
@@ -107,6 +114,7 @@ export class PermissionPolicy {
   private readonly deniedPaths: string[];
   private readonly desktopAppIds: Set<string>;
   private readonly desktopCaptureRequiresConfirmation: boolean;
+  private readonly browserConfig: BrowserPermissionConfig;
 
   constructor(config: PermissionPolicyConfig) {
     this.workspaceRoot = canonicalizePolicyPath(config.workspaceRoot);
@@ -115,6 +123,7 @@ export class PermissionPolicy {
     this.deniedPaths = normalizeRoots(config.deniedPaths);
     this.desktopAppIds = new Set(config.desktopAppIds || []);
     this.desktopCaptureRequiresConfirmation = config.desktopCaptureRequiresConfirmation !== false;
+    this.browserConfig = config.browser || {};
     for (const writeRoot of this.allowedWriteRoots) {
       if (!this.allowedReadRoots.some((readRoot) => isWithin(writeRoot, readRoot))) {
         throw new Error(`Allowed write root must be contained by an allowed read root: ${writeRoot}`);
@@ -231,10 +240,60 @@ export class PermissionPolicy {
   }
 
   private evaluateBrowser(action: BrowserToolAction, context: PermissionContext): PolicyDecision {
+    const kind = action.kind;
+
+    if (kind === "browser.open" || kind === "browser.navigate") {
+      const url = (action as any).url;
+      if (url) {
+        const allowedHosts = this.browserConfig.allowedHosts || [];
+        const decision = evaluateUrlSync({ url, allowedHosts });
+        if (decision.decision === "deny") {
+          return {
+            outcome: "deny",
+            reasonCode: decision.code as any,
+            reason: decision.reason,
+            action,
+          };
+        }
+      }
+    }
+
+    if (kind === "browser.act") {
+      if (context.browserContext) {
+        const decision = evaluateAction(context.browserContext, this.browserConfig);
+        if (decision.decision === "deny") {
+          return {
+            outcome: "deny",
+            reasonCode: "ACTION_DENIED" as any,
+            reason: decision.reason,
+            action,
+          };
+        }
+        if (decision.decision === "confirm") {
+          if (context.confirmationGranted) {
+            return {
+              outcome: "allow",
+              reasonCode: "ALLOWED",
+              reason: "Action confirmed by user.",
+              action,
+            };
+          }
+          return {
+            outcome: "confirm",
+            reasonCode: "CONFIRMATION_REQUIRED",
+            reason: decision.reason,
+            action,
+            // Include fingerprint in the confirmation decision so ToolExecutor can extract it
+            actionFingerprint: decision.actionFingerprint,
+          } as any;
+        }
+      }
+    }
+
     return {
       outcome: "allow",
       reasonCode: "ALLOWED",
-      reason: "Browser action is allowed by policy.",
+      reason: `${action.kind} is allowed by policy.`,
       action,
     };
   }

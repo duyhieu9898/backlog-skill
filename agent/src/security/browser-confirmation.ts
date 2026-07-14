@@ -1,0 +1,143 @@
+import crypto from "node:crypto";
+
+export type BrowserConfirmationGrant = {
+  id: string;
+  sessionId: string;
+  runId: string;
+  profile: string;
+  targetId: string;
+  snapshotId?: string;
+  actionFingerprint: string;
+  createdAt: number;
+  expiresAt: number;
+  consumed: boolean;
+};
+
+export type VerifyResult =
+  | { valid: true }
+  | { valid: false; code: string; reason: string };
+
+export class BrowserConfirmationStore {
+  private grants = new Map<string, BrowserConfirmationGrant>();
+
+  createGrant(input: {
+    sessionId: string;
+    runId: string;
+    profile: string;
+    targetId: string;
+    snapshotId?: string;
+    actionFingerprint: string;
+    ttlMs?: number;
+  }): BrowserConfirmationGrant {
+    const id = `conf_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const ttl = input.ttlMs ?? 5 * 60 * 1000; // default 5 minutes
+    const now = Date.now();
+    const grant: BrowserConfirmationGrant = {
+      id,
+      sessionId: input.sessionId,
+      runId: input.runId,
+      profile: input.profile,
+      targetId: input.targetId,
+      snapshotId: input.snapshotId,
+      actionFingerprint: input.actionFingerprint,
+      createdAt: now,
+      expiresAt: now + ttl,
+      consumed: false,
+    };
+    this.grants.set(id, grant);
+    return grant;
+  }
+
+  verifyAndConsume(
+    grantId: string,
+    current: {
+      sessionId: string;
+      runId: string;
+      profile: string;
+      targetId: string;
+      snapshotId?: string;
+      actionFingerprint: string;
+    },
+  ): VerifyResult {
+    const grant = this.grants.get(grantId);
+    if (!grant) {
+      return { valid: false, code: "CONFIRMATION_NOT_FOUND", reason: "Confirmation grant not found." };
+    }
+
+    if (grant.consumed) {
+      return { valid: false, code: "CONFIRMATION_ALREADY_USED", reason: "Confirmation grant has already been used." };
+    }
+
+    if (Date.now() > grant.expiresAt) {
+      return { valid: false, code: "CONFIRMATION_EXPIRED", reason: "Confirmation grant has expired." };
+    }
+
+    if (
+      grant.sessionId !== current.sessionId ||
+      grant.profile !== current.profile ||
+      grant.targetId !== current.targetId
+    ) {
+      return { valid: false, code: "CONFIRMATION_MISMATCH", reason: "Confirmation context mismatch." };
+    }
+
+    if (grant.snapshotId !== current.snapshotId) {
+      return { valid: false, code: "CONFIRMATION_STALE", reason: "Page snapshot is stale since confirmation was requested." };
+    }
+
+    if (grant.actionFingerprint !== current.actionFingerprint) {
+      return { valid: false, code: "CONFIRMATION_MISMATCH", reason: "Action parameters or fingerprint mismatch." };
+    }
+
+    grant.consumed = true;
+    return { valid: true };
+  }
+
+  invalidateForTab(profile: string, targetId: string): void {
+    for (const grant of this.grants.values()) {
+      if (grant.profile === profile && grant.targetId === targetId) {
+        grant.consumed = true; // effectively invalidates it
+      }
+    }
+  }
+
+  findAndConsume(current: {
+    sessionId: string;
+    runId: string;
+    profile: string;
+    targetId: string;
+    snapshotId?: string;
+    actionFingerprint: string;
+  }): VerifyResult {
+    const grantsForFingerprint = Array.from(this.grants.values()).filter(
+      (g) => g.profile === current.profile && g.targetId === current.targetId && g.actionFingerprint === current.actionFingerprint
+    );
+
+    if (grantsForFingerprint.length === 0) {
+      return { valid: false, code: "CONFIRMATION_NOT_FOUND", reason: "Confirmation not found." };
+    }
+
+    const active = grantsForFingerprint.find((g) => !g.consumed && g.expiresAt > Date.now());
+    if (!active) {
+      if (grantsForFingerprint.every((g) => g.consumed)) {
+        return { valid: false, code: "CONFIRMATION_ALREADY_USED", reason: "Confirmation already used." };
+      }
+      if (grantsForFingerprint.every((g) => g.expiresAt <= Date.now())) {
+        return { valid: false, code: "CONFIRMATION_EXPIRED", reason: "Confirmation expired." };
+      }
+      return { valid: false, code: "CONFIRMATION_NOT_FOUND", reason: "Confirmation not found." };
+    }
+
+    if (active.snapshotId !== current.snapshotId) {
+      return { valid: false, code: "CONFIRMATION_STALE", reason: "Page snapshot is stale since confirmation was requested." };
+    }
+
+    active.consumed = true;
+    return { valid: true };
+  }
+
+  clear(): void {
+    this.grants.clear();
+  }
+}
+
+export const browserConfirmationStore = new BrowserConfirmationStore();

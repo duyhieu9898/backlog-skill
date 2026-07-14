@@ -1,5 +1,6 @@
 import type { Page, BrowserContext } from "playwright";
 import type { BrowserTab } from "./types";
+import { browserConfirmationStore } from "../security/browser-confirmation";
 
 export type TabRecord = {
   targetId: string;
@@ -25,6 +26,12 @@ export class TabRegistry {
         record.active = false;
       }
     }
+
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) {
+        browserConfirmationStore.invalidateForTab(profile, targetId);
+      }
+    });
 
     this.records.set(targetId, {
       targetId,

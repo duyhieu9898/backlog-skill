@@ -45,6 +45,13 @@
     "allowedReadRoots": [".."],
     "allowedWriteRoots": [".", "../skills"],
     "deniedPaths": ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
-    "desktopCaptureRequiresConfirmation": false
+    "desktopCaptureRequiresConfirmation": false,
+    "browser": {
+      "allowedHosts": [],
+      "publicNavigation": "allow",
+      "privateNavigation": "deny",
+      "consequentialActions": "confirm",
+      "destructiveActions": "confirm"
+    }
   }
 }

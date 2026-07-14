@@ -8,13 +8,14 @@ const node_crypto_1 = __importDefault(require("node:crypto"));
 class RefStore {
     sessions = new Map();
     latestSnapshots = new Map(); // targetId -> snapshotId
-    createSnapshot(targetId) {
+    createSnapshot(targetId, url) {
         const snapshotId = `snap_${node_crypto_1.default.randomUUID().replace(/-/g, "").slice(0, 16)}`;
         const record = {
             snapshotId,
             targetId,
             createdAt: Date.now(),
             refs: new Map(),
+            url,
         };
         this.sessions.set(snapshotId, record);
         this.latestSnapshots.set(targetId, snapshotId);

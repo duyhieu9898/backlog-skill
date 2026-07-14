@@ -9,6 +9,13 @@ const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const paths_1 = require("./paths");
 const apps_1 = require("../tools/computer/apps");
+const DEFAULT_BROWSER_PERMISSIONS = {
+    allowedHosts: [],
+    publicNavigation: "allow",
+    privateNavigation: "deny",
+    consequentialActions: "confirm",
+    destructiveActions: "confirm",
+};
 const defaultConfig = {
     ai: {
         default: "gemini",
@@ -37,6 +44,7 @@ const defaultConfig = {
         allowedReadRoots: [paths_1.repoDir],
         allowedWriteRoots: [paths_1.agentDir, paths_1.skillsDir],
         deniedPaths: ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
+        browser: DEFAULT_BROWSER_PERMISSIONS,
     },
 };
 function loadAgentConfig() {
@@ -66,6 +74,10 @@ function loadAgentConfig() {
         permissions: {
             ...defaultConfig.permissions,
             ...config.permissions,
+            browser: {
+                ...DEFAULT_BROWSER_PERMISSIONS,
+                ...config.permissions?.browser,
+            },
         },
     };
     const resolveFromAgent = (candidate) => node_path_1.default.isAbsolute(candidate) ? candidate : node_path_1.default.resolve(paths_1.agentDir, candidate);
@@ -83,6 +95,7 @@ function loadAgentConfig() {
             allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
             deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
             desktopAppIds: desktopApps.map((app) => app.id),
+            browser: merged.permissions.browser,
         },
     };
 }

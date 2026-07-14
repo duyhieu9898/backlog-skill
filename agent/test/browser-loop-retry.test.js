@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+process.env.ALLOW_DATA_URLS = "true";
+
 const { browserService } = require("../dist/browser/browser-service");
 const { AgentToolLoop } = require("../dist/tools/loop");
 const { ToolExecutor } = require("../dist/tools/executor");
@@ -15,21 +17,21 @@ test("AgentToolLoop auto-retry policy on STALE_ELEMENT_REF", async () => {
     const htmlA = `data:text/html,
       <html>
         <body>
-          <button>Submit Button</button>
+          <button>Click Me</button>
         </body>
       </html>
     `.replace(/\n/g, "");
 
     tab = await browserService.open(profileName, htmlA);
     const snapshotA = await browserService.snapshot(profileName, tab.targetId);
-    assert.match(snapshotA.text, /button "Submit Button" \[ref=e1\]/);
+    assert.match(snapshotA.text, /button "Click Me" \[ref=e1\]/);
 
     // 2. Navigate to Page B (which has two buttons with same name, making e1 stale and ambiguous when resolved)
     const htmlB = `data:text/html,
       <html>
         <body>
-          <button>Submit Button</button>
-          <button>Submit Button</button>
+          <button>Click Me</button>
+          <button>Click Me</button>
         </body>
       </html>
     `.replace(/\n/g, "");

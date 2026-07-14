@@ -13,19 +13,21 @@ export type SnapshotRecord = {
   targetId: string;
   createdAt: number;
   refs: Map<string, LocatorDescriptor>;
+  url?: string;
 };
 
 export class RefStore {
   private sessions = new Map<string, SnapshotRecord>();
   private latestSnapshots = new Map<string, string>(); // targetId -> snapshotId
 
-  createSnapshot(targetId: string): string {
+  createSnapshot(targetId: string, url?: string): string {
     const snapshotId = `snap_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const record: SnapshotRecord = {
       snapshotId,
       targetId,
       createdAt: Date.now(),
       refs: new Map(),
+      url,
     };
     this.sessions.set(snapshotId, record);
     this.latestSnapshots.set(targetId, snapshotId);

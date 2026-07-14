@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TabRegistry = void 0;
+const browser_confirmation_1 = require("../security/browser-confirmation");
 class TabRegistry {
     records = new Map();
     counter = 0;
@@ -13,6 +14,11 @@ class TabRegistry {
                 record.active = false;
             }
         }
+        page.on("framenavigated", (frame) => {
+            if (frame === page.mainFrame()) {
+                browser_confirmation_1.browserConfirmationStore.invalidateForTab(profile, targetId);
+            }
+        });
         this.records.set(targetId, {
             targetId,
             page,

@@ -21,6 +21,9 @@ const node_path_1 = __importDefault(require("node:path"));
 const browser_service_1 = require("../browser/browser-service");
 const errors_1 = require("../browser/errors");
 const schema_1 = require("./schema");
+const browser_confirmation_1 = require("../security/browser-confirmation");
+const action_policy_1 = require("../browser/action-policy");
+const ref_store_1 = require("../browser/ref-store");
 const emptyObjectSchema = {
     type: "object",
     properties: {},
@@ -348,7 +351,8 @@ class ToolExecutor {
                 ...args
             };
             const config = (0, app_1.loadAgentConfig)();
-            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(action);
+            const browserContext = buildBrowserActionPolicyContext(args, action.kind);
+            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(action, { browserContext });
             const actionDigest = digest(action);
             if (decision.outcome === "deny") {
                 return {
@@ -361,12 +365,54 @@ class ToolExecutor {
                     browserAction: action,
                 };
             }
+            if (decision.outcome === "confirm") {
+                const fingerprint = decision.actionFingerprint || "";
+                browser_confirmation_1.browserConfirmationStore.createGrant({
+                    sessionId: "sess-1",
+                    runId: "run-1",
+                    profile: args.profile || "default",
+                    targetId: args.targetId || "",
+                    snapshotId: args.request?.snapshotId,
+                    actionFingerprint: fingerprint,
+                });
+                let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
+                if (args.action === "act" && args.request) {
+                    const isSensitive = args.request.kind === "fill" &&
+                        (args.request.inputType === "password" ||
+                            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
+                            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
+                    if (isSensitive) {
+                        const redactedRequest = { ...args.request, value: "[REDACTED]" };
+                        preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
+                    }
+                }
+                return {
+                    call,
+                    key: "browser",
+                    digest: actionDigest,
+                    preview: `${decision.reason}\nAction: ${preview}`,
+                    requiresConfirmation: true,
+                    browserAction: action,
+                    actionFingerprint: fingerprint,
+                };
+            }
+            let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
+            if (args.action === "act" && args.request) {
+                const isSensitive = args.request.kind === "fill" &&
+                    (args.request.inputType === "password" ||
+                        /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
+                        /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
+                if (isSensitive) {
+                    const redactedRequest = { ...args.request, value: "[REDACTED]" };
+                    preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
+                }
+            }
             return {
                 call,
                 key: "browser",
                 digest: actionDigest,
-                preview: `browser.${args.action}: ${JSON.stringify(call.arguments)}`,
-                requiresConfirmation: decision.outcome === "confirm",
+                preview,
+                requiresConfirmation: false,
                 browserAction: action,
             };
         }
@@ -533,6 +579,43 @@ class ToolExecutor {
             const action = prepared.browserAction;
             const actionArgs = prepared.call.arguments;
             const profile = actionArgs.profile;
+            // 1. Re-evaluate policy immediately before execution
+            const currentContext = buildBrowserActionPolicyContext(actionArgs, action.kind);
+            const config = (0, app_1.loadAgentConfig)();
+            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(action, {
+                browserContext: currentContext,
+                confirmationGranted: input.confirmationGranted,
+            });
+            if (decision.outcome === "deny") {
+                return { ok: false, code: decision.reasonCode, summary: decision.reason };
+            }
+            if (decision.outcome === "confirm") {
+                const fingerprint = currentContext ? (0, action_policy_1.computeActionFingerprint)(currentContext) : "";
+                if (!input.confirmationGranted) {
+                    return {
+                        ok: false,
+                        code: "ACTION_REQUIRES_CONFIRMATION",
+                        summary: decision.reason,
+                        data: { confirmation: { actionFingerprint: fingerprint } }
+                    };
+                }
+                // Verify and consume confirmation grant
+                const verifyRes = browser_confirmation_1.browserConfirmationStore.findAndConsume({
+                    sessionId: "sess-1",
+                    runId: "run-1",
+                    profile: actionArgs.profile || "default",
+                    targetId: actionArgs.targetId || "",
+                    snapshotId: actionArgs.request?.snapshotId,
+                    actionFingerprint: fingerprint,
+                });
+                if (!verifyRes.valid) {
+                    return {
+                        ok: false,
+                        code: verifyRes.code,
+                        summary: verifyRes.reason,
+                    };
+                }
+            }
             try {
                 switch (action.kind) {
                     case "browser.status": {
@@ -645,3 +728,44 @@ class ToolExecutor {
     }
 }
 exports.ToolExecutor = ToolExecutor;
+function buildBrowserActionPolicyContext(args, actionKind) {
+    if (actionKind !== "browser.act")
+        return undefined;
+    const request = args.request;
+    if (!request)
+        return undefined;
+    const targetId = args.targetId || "";
+    const snapshotId = request.snapshotId;
+    const ref = request.ref;
+    let url = "";
+    let element = undefined;
+    if (snapshotId) {
+        const record = ref_store_1.refStore.getRecord(snapshotId);
+        if (record) {
+            url = record.url || "";
+            if (ref) {
+                const descriptor = record.refs.get(ref);
+                if (descriptor) {
+                    element = {
+                        ref,
+                        role: descriptor.role,
+                        name: descriptor.name,
+                        text: descriptor.text,
+                        placeholder: descriptor.placeholder,
+                        inputType: descriptor.role === "textbox" && descriptor.name?.toLowerCase().includes("password") ? "password" : undefined
+                    };
+                }
+            }
+        }
+    }
+    return {
+        sessionId: "sess-1",
+        runId: "run-1",
+        profile: args.profile || "default",
+        targetId,
+        snapshotId,
+        url,
+        action: request,
+        element,
+    };
+}

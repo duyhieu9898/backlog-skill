@@ -37,7 +37,18 @@ export type AgentConfig = {
     deniedPaths: string[];
     desktopAppIds?: string[];
     desktopCaptureRequiresConfirmation?: boolean;
+    browser?: BrowserPermissionConfig;
   };
+};
+
+export type BrowserPermissionMode = "allow" | "confirm" | "deny";
+
+export type BrowserPermissionConfig = {
+  allowedHosts?: string[];
+  publicNavigation?: BrowserPermissionMode;
+  privateNavigation?: BrowserPermissionMode;
+  consequentialActions?: BrowserPermissionMode;
+  destructiveActions?: BrowserPermissionMode;
 };
 
 export type ScheduledCheckConfig = {
@@ -56,6 +67,14 @@ export type ScheduledCheckConfig = {
   };
 };
 
+
+const DEFAULT_BROWSER_PERMISSIONS: BrowserPermissionConfig = {
+  allowedHosts: [],
+  publicNavigation: "allow",
+  privateNavigation: "deny",
+  consequentialActions: "confirm",
+  destructiveActions: "confirm",
+};
 
 const defaultConfig: AgentConfig = {
   ai: {
@@ -85,6 +104,7 @@ const defaultConfig: AgentConfig = {
     allowedReadRoots: [repoDir],
     allowedWriteRoots: [agentDir, skillsDir],
     deniedPaths: ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
+    browser: DEFAULT_BROWSER_PERMISSIONS,
   },
 };
 
@@ -114,6 +134,10 @@ export function loadAgentConfig(): AgentConfig {
     permissions: {
       ...defaultConfig.permissions,
       ...config.permissions,
+      browser: {
+        ...DEFAULT_BROWSER_PERMISSIONS,
+        ...config.permissions?.browser,
+      },
     },
   };
   const resolveFromAgent = (candidate: string): string =>
@@ -132,6 +156,7 @@ export function loadAgentConfig(): AgentConfig {
       allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
       deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
       desktopAppIds: desktopApps.map((app) => app.id),
+      browser: merged.permissions.browser,
     },
   };
 }

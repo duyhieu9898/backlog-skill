@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+process.env.ALLOW_DATA_URLS = "true";
 
 const { browserService } = require("../dist/browser/browser-service");
 

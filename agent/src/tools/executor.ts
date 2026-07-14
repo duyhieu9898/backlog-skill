@@ -27,6 +27,10 @@ import type { DesktopToolAction, FileToolAction, ToolResult, BrowserToolAction }
 import { browserService } from "../browser/browser-service";
 import { BrowserError } from "../browser/errors";
 import { validateJsonSchema, type JsonSchema } from "./schema";
+import { browserConfirmationStore } from "../security/browser-confirmation";
+import { computeActionFingerprint } from "../browser/action-policy";
+import type { BrowserActionPolicyContext } from "../browser/action-policy";
+import { refStore } from "../browser/ref-store";
 
 export type PreparedToolCall = {
   call: AiToolCall;
@@ -38,6 +42,7 @@ export type PreparedToolCall = {
   fileAction?: FileToolAction;
   desktopAction?: DesktopToolAction;
   browserAction?: BrowserToolAction;
+  actionFingerprint?: string;
   computerInput?: ComputerInput | ComputerLaunch | { action: "screenshot"; displayId?: string };
   webCapture?: { url: string };
   blocked?: ToolResult;
@@ -373,7 +378,8 @@ export class ToolExecutor {
         ...args
       } as unknown as BrowserToolAction;
       const config = loadAgentConfig();
-      const decision = new PermissionPolicy(config.permissions).evaluate(action);
+      const browserContext = buildBrowserActionPolicyContext(args, action.kind);
+      const decision = new PermissionPolicy(config.permissions).evaluate(action, { browserContext });
       const actionDigest = digest(action);
 
       if (decision.outcome === "deny") {
@@ -388,12 +394,60 @@ export class ToolExecutor {
         };
       }
 
+      if (decision.outcome === "confirm") {
+        const fingerprint = (decision as any).actionFingerprint || "";
+        browserConfirmationStore.createGrant({
+          sessionId: "sess-1",
+          runId: "run-1",
+          profile: args.profile || "default",
+          targetId: args.targetId || "",
+          snapshotId: args.request?.snapshotId,
+          actionFingerprint: fingerprint,
+        });
+
+        let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
+        if (args.action === "act" && args.request) {
+          const isSensitive =
+            args.request.kind === "fill" &&
+            (args.request.inputType === "password" ||
+              /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
+              /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
+          if (isSensitive) {
+            const redactedRequest = { ...args.request, value: "[REDACTED]" };
+            preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
+          }
+        }
+
+        return {
+          call,
+          key: "browser",
+          digest: actionDigest,
+          preview: `${decision.reason}\nAction: ${preview}`,
+          requiresConfirmation: true,
+          browserAction: action,
+          actionFingerprint: fingerprint,
+        };
+      }
+
+      let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
+      if (args.action === "act" && args.request) {
+        const isSensitive =
+          args.request.kind === "fill" &&
+          (args.request.inputType === "password" ||
+            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
+            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
+        if (isSensitive) {
+          const redactedRequest = { ...args.request, value: "[REDACTED]" };
+          preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
+        }
+      }
+
       return {
         call,
         key: "browser",
         digest: actionDigest,
-        preview: `browser.${args.action}: ${JSON.stringify(call.arguments)}`,
-        requiresConfirmation: decision.outcome === "confirm",
+        preview,
+        requiresConfirmation: false,
         browserAction: action,
       };
     }
@@ -548,6 +602,48 @@ export class ToolExecutor {
       const actionArgs = prepared.call.arguments as Record<string, any>;
       const profile = actionArgs.profile;
 
+      // 1. Re-evaluate policy immediately before execution
+      const currentContext = buildBrowserActionPolicyContext(actionArgs, action.kind);
+      const config = loadAgentConfig();
+      const decision = new PermissionPolicy(config.permissions).evaluate(action, {
+        browserContext: currentContext,
+        confirmationGranted: input.confirmationGranted,
+      });
+
+      if (decision.outcome === "deny") {
+        return { ok: false, code: decision.reasonCode, summary: decision.reason };
+      }
+
+      if (decision.outcome === "confirm") {
+        const fingerprint = currentContext ? computeActionFingerprint(currentContext) : "";
+        if (!input.confirmationGranted) {
+          return {
+            ok: false,
+            code: "ACTION_REQUIRES_CONFIRMATION",
+            summary: decision.reason,
+            data: { confirmation: { actionFingerprint: fingerprint } }
+          };
+        }
+
+        // Verify and consume confirmation grant
+        const verifyRes = browserConfirmationStore.findAndConsume({
+          sessionId: "sess-1",
+          runId: "run-1",
+          profile: actionArgs.profile || "default",
+          targetId: actionArgs.targetId || "",
+          snapshotId: actionArgs.request?.snapshotId,
+          actionFingerprint: fingerprint,
+        });
+
+        if (!verifyRes.valid) {
+          return {
+            ok: false,
+            code: verifyRes.code,
+            summary: verifyRes.reason,
+          };
+        }
+      }
+
       try {
         switch (action.kind) {
           case "browser.status": {
@@ -655,4 +751,52 @@ export class ToolExecutor {
       confirmationGranted: input.confirmationGranted,
     });
   }
+}
+
+function buildBrowserActionPolicyContext(
+  args: Record<string, any>,
+  actionKind: string
+): BrowserActionPolicyContext | undefined {
+  if (actionKind !== "browser.act") return undefined;
+
+  const request = args.request;
+  if (!request) return undefined;
+
+  const targetId = args.targetId || "";
+  const snapshotId = request.snapshotId;
+  const ref = request.ref;
+
+  let url = "";
+  let element: BrowserActionPolicyContext["element"] = undefined;
+
+  if (snapshotId) {
+    const record = refStore.getRecord(snapshotId);
+    if (record) {
+      url = record.url || "";
+      if (ref) {
+        const descriptor = record.refs.get(ref);
+        if (descriptor) {
+          element = {
+            ref,
+            role: descriptor.role,
+            name: descriptor.name,
+            text: descriptor.text,
+            placeholder: descriptor.placeholder,
+            inputType: descriptor.role === "textbox" && descriptor.name?.toLowerCase().includes("password") ? "password" : undefined
+          };
+        }
+      }
+    }
+  }
+
+  return {
+    sessionId: "sess-1",
+    runId: "run-1",
+    profile: args.profile || "default",
+    targetId,
+    snapshotId,
+    url,
+    action: request,
+    element,
+  };
 }

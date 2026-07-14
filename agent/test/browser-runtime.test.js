@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+process.env.ALLOW_DATA_URLS = "true";
 
 const { browserService } = require("../dist/browser/browser-service");
 
