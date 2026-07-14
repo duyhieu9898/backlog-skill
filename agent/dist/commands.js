@@ -13,6 +13,7 @@ exports.evaluateCommandPermission = evaluateCommandPermission;
 exports.isCommandRunning = isCommandRunning;
 exports.getRunningTraceId = getRunningTraceId;
 exports.stopRunningCommand = stopRunningCommand;
+exports.waitForRunningCommandStop = waitForRunningCommandStop;
 exports.buildCommandEnvironment = buildCommandEnvironment;
 exports.previewCommand = previewCommand;
 exports.commandPreviewDigest = commandPreviewDigest;
@@ -44,18 +45,34 @@ const SAFE_ENV_KEYS = [
     "XDG_DATA_HOME",
 ];
 let runningCommand = null;
+function signalProcessGroup(child, signal) {
+    if (child.pid && process.platform !== "win32") {
+        try {
+            process.kill(-child.pid, signal);
+            return true;
+        }
+        catch {
+            // The child may have exited before its process group is signalled.
+        }
+    }
+    return child.kill(signal);
+}
 function normalizeCommand(action) {
     if (!action.name?.trim())
-        throw new Error("Allowlisted command is missing a name.");
+        throw new Error("Command is missing a name.");
     if (!action.label?.trim())
-        throw new Error(`Allowlisted command ${action.name} is missing a label.`);
-    if (!Array.isArray(action.argv) || !action.argv.length) {
-        throw new Error(`Allowlisted command ${action.name} must define a non-empty argv array.`);
-    }
-    for (const value of action.argv) {
+        throw new Error(`Command ${action.name} is missing a label.`);
+    const hasArgv = Array.isArray(action.argv) && action.argv.length > 0;
+    const hasShell = typeof action.shellCommand === "string" && action.shellCommand.trim().length > 0;
+    if (hasArgv === hasShell)
+        throw new Error(`Command ${action.name} must define exactly one of argv or shellCommand.`);
+    for (const value of action.argv || []) {
         if (typeof value !== "string" || !value || value.includes("\0")) {
-            throw new Error(`Allowlisted command ${action.name} has an invalid argv value.`);
+            throw new Error(`Command ${action.name} has an invalid argv value.`);
         }
+    }
+    if (hasShell && (action.shellCommand.includes("\0") || action.shellCommand.length > 64 * 1024)) {
+        throw new Error(`Command ${action.name} has an invalid shell command.`);
     }
     if (action.inputMode && action.inputMode !== "json-stdin") {
         throw new Error(`Allowlisted command ${action.name} has an unsupported input mode.`);
@@ -127,18 +144,19 @@ function resolveCwd(cwd) {
         return paths_1.agentDir;
     return node_path_1.default.isAbsolute(cwd) ? cwd : node_path_1.default.resolve(paths_1.agentDir, cwd);
 }
-function evaluateCommandPermission(action, confirmationGranted = false) {
+function evaluateCommandPermission(action, confirmationGranted = false, userIntent) {
     const config = (0, app_1.loadAgentConfig)().permissions;
     const policy = new permissionPolicy_1.PermissionPolicy(config);
     return policy.evaluate({
         kind: "command.run",
         commandId: action.name || action.label,
-        executable: action.argv[0],
-        args: action.argv.slice(1),
+        executable: action.argv?.[0],
+        args: action.argv?.slice(1),
+        shellCommand: action.shellCommand,
         cwd: resolveCwd(action.cwd),
         requiresConfirmation: action.requiresConfirmation ?? true,
         externalSideEffect: action.externalSideEffect ?? false,
-    }, { confirmationGranted });
+    }, { confirmationGranted, userIntent });
 }
 function isCommandRunning() {
     return runningCommand !== null;
@@ -153,15 +171,28 @@ function stopRunningCommand() {
         return { stopped: false };
     if (running.stopRequested)
         return { stopped: true, traceId: running.traceId };
-    const signalled = running.child.kill("SIGTERM");
+    const signalled = signalProcessGroup(running.child, "SIGTERM");
     if (!signalled)
         return { stopped: false };
     running.stopRequested = true;
     running.killTimer = setTimeout(() => {
         if (runningCommand === running)
-            running.child.kill("SIGKILL");
+            signalProcessGroup(running.child, "SIGKILL");
     }, 5_000);
     return { stopped: true, traceId: running.traceId };
+}
+/** Wait briefly for a command already asked to stop, without blocking shutdown forever. */
+function waitForRunningCommandStop(timeoutMs = 6_000) {
+    const running = runningCommand;
+    if (!running)
+        return Promise.resolve();
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs);
+        running.child.once("close", () => {
+            clearTimeout(timer);
+            resolve();
+        });
+    });
 }
 function buildCommandEnvironment(source = process.env) {
     const env = {};
@@ -177,8 +208,9 @@ function previewCommand(action, defaultTimeoutMs = DEFAULT_TIMEOUT_MS) {
     return {
         commandName: normalized.name || normalized.label,
         label: normalized.label,
-        executable: normalized.argv[0],
-        args: normalized.argv.slice(1),
+        executable: normalized.argv?.[0],
+        args: normalized.argv?.slice(1) || [],
+        shellCommand: normalized.shellCommand,
         cwd: resolveCwd(normalized.cwd),
         timeoutMs: Number(normalized.timeoutMs || defaultTimeoutMs),
         requiresConfirmation: normalized.requiresConfirmation ?? true,
@@ -192,6 +224,7 @@ function commandPreviewDigest(preview) {
         label: preview.label,
         executable: preview.executable,
         args: preview.args,
+        shellCommand: preview.shellCommand,
         cwd: preview.cwd,
         timeoutMs: preview.timeoutMs,
         requiresConfirmation: preview.requiresConfirmation,
@@ -200,15 +233,22 @@ function commandPreviewDigest(preview) {
     });
     return node_crypto_1.default.createHash("sha256").update(canonical).digest("hex");
 }
-function runCommand(action, defaultTimeoutMs, traceId) {
+function runCommand(action, defaultTimeoutMs, traceId, abortSignal) {
     return new Promise((resolve, reject) => {
+        if (abortSignal?.aborted) {
+            reject(new Error("Command cancelled before execution."));
+            return;
+        }
         const preview = previewCommand(action, defaultTimeoutMs);
-        const child = (0, node_child_process_1.spawn)(preview.executable, preview.args, {
+        const options = {
             cwd: preview.cwd,
-            env: buildCommandEnvironment(),
-            shell: false,
+            env: { ...buildCommandEnvironment(), ...action.env },
+            detached: true,
             stdio: [action.invocationInput === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-        });
+        };
+        const child = preview.shellCommand
+            ? (0, node_child_process_1.spawn)("/bin/sh", ["-lc", preview.shellCommand], options)
+            : (0, node_child_process_1.spawn)(preview.executable, preview.args, options);
         const running = { traceId, child, stopRequested: false, killTimer: null };
         runningCommand = running;
         const chunks = [];
@@ -216,19 +256,26 @@ function runCommand(action, defaultTimeoutMs, traceId) {
         let outputLimited = false;
         let timedOut = false;
         let settled = false;
+        let aborted = false;
+        const onAbort = () => {
+            aborted = true;
+            signalProcessGroup(child, "SIGTERM");
+        };
+        abortSignal?.addEventListener("abort", onAbort, { once: true });
         if (action.invocationInput !== undefined && child.stdin) {
             child.stdin.end(`${JSON.stringify(action.invocationInput)}\n`);
         }
         const capture = (chunk) => {
             if (outputLimited)
                 return;
-            const remaining = MAX_OUTPUT_BYTES - outputBytes;
+            const outputLimit = Math.max(1024, Math.min(action.maxOutputBytes || MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES));
+            const remaining = outputLimit - outputBytes;
             if (chunk.length > remaining) {
                 if (remaining > 0)
                     chunks.push(chunk.subarray(0, remaining));
-                chunks.push(Buffer.from("\n[output truncated: command exceeded 10 MiB]"));
+                chunks.push(Buffer.from(`\n[output truncated: command exceeded ${outputLimit} bytes]`));
                 outputLimited = true;
-                child.kill("SIGTERM");
+                signalProcessGroup(child, "SIGTERM");
                 return;
             }
             chunks.push(chunk);
@@ -238,27 +285,29 @@ function runCommand(action, defaultTimeoutMs, traceId) {
         child.stderr?.on("data", capture);
         const timer = setTimeout(() => {
             timedOut = true;
-            child.kill("SIGTERM");
+            signalProcessGroup(child, "SIGTERM");
         }, preview.timeoutMs);
         child.once("error", (error) => {
             if (settled)
                 return;
             settled = true;
+            abortSignal?.removeEventListener("abort", onAbort);
             clearTimeout(timer);
             if (running.killTimer)
                 clearTimeout(running.killTimer);
             reject(error);
         });
-        child.once("close", (code, signal) => {
+        child.once("close", (code, childSignal) => {
             if (settled)
                 return;
             settled = true;
+            abortSignal?.removeEventListener("abort", onAbort);
             clearTimeout(timer);
             if (running.killTimer)
                 clearTimeout(running.killTimer);
             resolve({
-                exitCode: timedOut ? 124 : code ?? (signal ? 1 : 0),
-                signal: signal || undefined,
+                exitCode: timedOut ? 124 : aborted ? 130 : code ?? (childSignal ? 1 : 0),
+                signal: childSignal || undefined,
                 output: Buffer.concat(chunks).toString("utf8"),
                 timedOut,
                 stopped: running.stopRequested,
@@ -271,7 +320,7 @@ async function runTrackedCommand(input) {
         throw new Error(`Command already running for trace ${runningCommand.traceId}`);
     }
     const action = normalizeCommand(input.action);
-    const policyDecision = evaluateCommandPermission(action, input.confirmationGranted);
+    const policyDecision = evaluateCommandPermission(action, input.confirmationGranted, input.userIntent);
     if (policyDecision.outcome !== "allow") {
         throw new Error(`Permission ${policyDecision.outcome}: ${policyDecision.reasonCode} - ${policyDecision.reason}`);
     }
@@ -310,7 +359,7 @@ async function runTrackedCommand(input) {
         cwd,
     });
     try {
-        const result = await runCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS, input.traceId);
+        const result = await runCommand(action, input.defaultTimeoutMs || DEFAULT_TIMEOUT_MS, input.traceId, input.signal);
         const ok = result.exitCode === 0 && !result.signal;
         const finishedAt = (0, repositories_1.nowIso)();
         const outputTail = (0, utils_1.tailLines)(result.output, 80).slice(-4096);

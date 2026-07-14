@@ -40,8 +40,9 @@ export type FileToolAction = FileReadOnlyAction | FileMutationAction;
 export type CommandRunAction = {
   kind: "command.run";
   commandId: string;
-  executable: string;
-  args: string[];
+  executable?: string;
+  args?: string[];
+  shellCommand?: string;
   cwd: string;
   requiresConfirmation: boolean;
   externalSideEffect: boolean;

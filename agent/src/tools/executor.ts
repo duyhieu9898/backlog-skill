@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 
 import {
   commandPreviewDigest,
-  evaluateCommandPermission,
   loadCommandCatalog,
   previewCommand,
   runTrackedCommand,
@@ -17,7 +16,6 @@ import { DesktopRegistry } from "./computer/apps";
 import { ComputerController, type ComputerInput, type ComputerLaunch, xdotoolArgs } from "./computer/computer-tool";
 import { ArtifactStore } from "../artifacts/store";
 import { logDesktopEvent } from "./computer/events";
-import { PermissionPolicy } from "../security/permissionPolicy";
 import { loadAgentConfig } from "../config/app";
 import fs from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
@@ -27,8 +25,6 @@ import type { DesktopToolAction, FileToolAction, ToolResult, BrowserToolAction }
 import { browserService } from "../browser/browser-service";
 import { BrowserError } from "../browser/errors";
 import { validateJsonSchema, type JsonSchema } from "./schema";
-import { browserConfirmationStore } from "../security/browser-confirmation";
-import { computeActionFingerprint } from "../browser/action-policy";
 import type { BrowserActionPolicyContext } from "../browser/action-policy";
 import { refStore } from "../browser/ref-store";
 
@@ -46,12 +42,33 @@ export type PreparedToolCall = {
   computerInput?: ComputerInput | ComputerLaunch | { action: "screenshot"; displayId?: string };
   webCapture?: { url: string };
   blocked?: ToolResult;
+  userIntent?: string;
+  approvalGranted?: boolean;
 };
 
 const emptyObjectSchema: JsonSchema = {
   type: "object",
   properties: {},
   additionalProperties: false,
+};
+
+const genericCommandDefinition: AiToolDefinition = {
+  name: "command.run",
+  description: "Run an arbitrary local command. Prefer executable plus args. shellCommand is available only when a pipeline, redirect, glob, conditional, or multi-step shell script is necessary.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      executable: { type: "string", minLength: 1, maxLength: 4096 },
+      args: { type: "array", items: { type: "string", maxLength: 16384 }, maxItems: 512 },
+      shellCommand: { type: "string", minLength: 1, maxLength: 65536 },
+      cwd: { type: "string", minLength: 1, maxLength: 4096 },
+      env: { type: "object", properties: {}, additionalProperties: true },
+      timeoutMs: { type: "integer", minimum: 1, maximum: 3600000 },
+      maxOutputBytes: { type: "integer", minimum: 1024, maximum: 10485760 },
+    },
+    required: ["cwd"],
+    additionalProperties: false,
+  },
 };
 
 const fileDefinitions: AiToolDefinition[] = [
@@ -201,7 +218,7 @@ function publicHttpsUrl(value: unknown): string {
   return url.toString();
 }
 
-const computerController = new ComputerController();
+export const computerController = new ComputerController();
 
 function digest(value: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -290,7 +307,25 @@ export class ToolExecutor {
     if (scope?.desktopOnly) return [computerDefinition];
     if (scope?.webOnly) return [webCaptureDefinition];
     const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-    return [...files, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+    return [...files, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Resolve a trusted shortcut into a command action without deciding policy. */
+  prepareCommand(action: AgentCommand, defaultTimeoutMs?: number): PreparedToolCall {
+    const preview = previewCommand(action, defaultTimeoutMs);
+    return {
+      call: { name: `command.${action.name || "run"}`, arguments: (action.invocationInput || {}) as Record<string, unknown> },
+      key: action.name || "command.run",
+      digest: commandPreviewDigest(preview),
+      preview: [
+        action.label,
+        ...(preview.shellCommand ? [`Shell: ${preview.shellCommand}`] : [`Executable: ${preview.executable}`, `Args: ${JSON.stringify(preview.args)}`]),
+        `Cwd: ${preview.cwd}`,
+        `Timeout: ${preview.timeoutMs} ms`,
+      ].join("\n"),
+      requiresConfirmation: false,
+      command: action,
+    };
   }
 
   prepare(call: AiToolCall, traceId: string, definitions = this.definitions(), chatId?: string): PreparedToolCall {
@@ -299,25 +334,53 @@ export class ToolExecutor {
     const errors = validateJsonSchema(definition.inputSchema, call.arguments, "arguments");
     if (errors.length) throw new Error(`Invalid tool arguments for ${call.name}: ${errors.join(" ")}`);
 
+    if (call.name === "command.run") {
+      const input = call.arguments as Record<string, unknown>;
+      const executable = typeof input.executable === "string" ? input.executable : undefined;
+      const shellCommand = typeof input.shellCommand === "string" ? input.shellCommand : undefined;
+      if (Boolean(executable) === Boolean(shellCommand)) {
+        throw new Error("command.run requires exactly one of executable or shellCommand.");
+      }
+      const args = input.args === undefined ? [] : input.args;
+      if (!Array.isArray(args) || args.some((value) => typeof value !== "string")) throw new Error("command.run args must be an array of strings.");
+      const env = input.env;
+      if (env !== undefined && (!env || typeof env !== "object" || Array.isArray(env) || Object.values(env as Record<string, unknown>).some((value) => typeof value !== "string"))) {
+        throw new Error("command.run env must map variable names to strings.");
+      }
+      const command: AgentCommand = {
+        name: "command.run",
+        label: executable ? `Run ${executable}` : "Run shell command",
+        cwd: String(input.cwd),
+        ...(executable ? { argv: [executable, ...args] as [string, ...string[]] } : { shellCommand }),
+        ...(env ? { env: env as Record<string, string> } : {}),
+        ...(input.timeoutMs ? { timeoutMs: input.timeoutMs as number } : {}),
+        ...(input.maxOutputBytes ? { maxOutputBytes: input.maxOutputBytes as number } : {}),
+        requiresConfirmation: false,
+        externalSideEffect: false,
+      };
+      const preview = previewCommand(command);
+      return {
+        call,
+        key: "command.run",
+        digest: commandPreviewDigest(preview),
+        requiresConfirmation: false,
+        command,
+        preview: [
+          command.label,
+          ...(preview.shellCommand ? [`Shell: ${preview.shellCommand}`] : [`Executable: ${preview.executable}`, `Args: ${JSON.stringify(preview.args)}`]),
+          `Cwd: ${preview.cwd}`,
+          `Timeout: ${preview.timeoutMs} ms`,
+        ].join("\n"),
+      };
+    }
+
     if (call.name.startsWith("command.")) {
       const commandName = call.name.slice("command.".length);
       const base = this.catalogLoader().allow.find((command) => command.name === commandName);
       if (!base) throw new Error(`Unknown allowlisted command: ${commandName}`);
       const command = base.inputSchema ? withCommandInput(base, call.arguments) : base;
-      const decision = evaluateCommandPermission(command);
       const preview = previewCommand(command);
       const commandDigest = commandPreviewDigest(preview);
-      if (decision.outcome === "deny") {
-        return {
-          call,
-          key: commandName,
-          digest: commandDigest,
-          preview: decision.reason,
-          requiresConfirmation: false,
-          command,
-          blocked: { ok: false, code: decision.reasonCode, summary: decision.reason },
-        };
-      }
       const inputPreview = command.invocationInput === undefined
         ? []
         : [`Input: ${truncate(JSON.stringify(command.invocationInput))}`];
@@ -325,7 +388,9 @@ export class ToolExecutor {
         call,
         key: commandName,
         digest: commandDigest,
-        requiresConfirmation: decision.outcome === "confirm",
+        // PermissionPolicy belongs to ToolGateway. The executor only resolves
+        // the concrete command and later executes an already-authorized one.
+        requiresConfirmation: false,
         command,
         preview: [
           command.label,
@@ -357,13 +422,8 @@ export class ToolExecutor {
         : input.action === "launch"
           ? { kind: "desktop.launch", appId: resolvedApp!.id }
         : { kind: "desktop.act", targetId: input.action === "left_click" ? input.frameId : "focused-target", operation: input.action === "left_click" ? "click" : input.action };
-      const adapter = getDesktopAdapter();
-      const config = loadAgentConfig();
-      const decision = new PermissionPolicy(config.permissions).evaluate(desktopAction, { desktopStatus: adapter.getStatus() });
       const actionDigest = digest(input);
-      const leaseActive = input.action !== "screenshot" && input.action !== "launch" && Boolean(chatId && computerController.hasLease(chatId));
-      if (decision.outcome === "deny") return { call, key: "computer", digest: actionDigest, preview: decision.reason, requiresConfirmation: false, computerInput: input, desktopAction, blocked: { ok: false, code: decision.reasonCode, summary: decision.reason } };
-      return { call, key: "computer", digest: actionDigest, preview: `computer.${input.action}: ${JSON.stringify(call.arguments)}`, requiresConfirmation: decision.outcome === "confirm" && !leaseActive, computerInput: input, desktopAction };
+      return { call, key: "computer", digest: actionDigest, preview: `computer.${input.action}: ${JSON.stringify(call.arguments)}`, requiresConfirmation: false, computerInput: input, desktopAction };
     }
 
     if (call.name === "web.capture") {
@@ -377,76 +437,13 @@ export class ToolExecutor {
         kind: `browser.${args.action}`,
         ...args
       } as unknown as BrowserToolAction;
-      const config = loadAgentConfig();
       const browserContext = buildBrowserActionPolicyContext(args, action.kind);
-      const decision = new PermissionPolicy(config.permissions).evaluate(action, { browserContext });
       const actionDigest = digest(action);
-
-      if (decision.outcome === "deny") {
-        return {
-          call,
-          key: "browser",
-          digest: actionDigest,
-          preview: decision.reason,
-          requiresConfirmation: false,
-          blocked: { ok: false, code: decision.reasonCode, summary: decision.reason },
-          browserAction: action,
-        };
-      }
-
-      if (decision.outcome === "confirm") {
-        const fingerprint = (decision as any).actionFingerprint || "";
-        browserConfirmationStore.createGrant({
-          sessionId: "sess-1",
-          runId: "run-1",
-          profile: args.profile || "default",
-          targetId: args.targetId || "",
-          snapshotId: args.request?.snapshotId,
-          actionFingerprint: fingerprint,
-        });
-
-        let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
-        if (args.action === "act" && args.request) {
-          const isSensitive =
-            args.request.kind === "fill" &&
-            (args.request.inputType === "password" ||
-              /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
-              /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
-          if (isSensitive) {
-            const redactedRequest = { ...args.request, value: "[REDACTED]" };
-            preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
-          }
-        }
-
-        return {
-          call,
-          key: "browser",
-          digest: actionDigest,
-          preview: `${decision.reason}\nAction: ${preview}`,
-          requiresConfirmation: true,
-          browserAction: action,
-          actionFingerprint: fingerprint,
-        };
-      }
-
-      let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
-      if (args.action === "act" && args.request) {
-        const isSensitive =
-          args.request.kind === "fill" &&
-          (args.request.inputType === "password" ||
-            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
-            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
-        if (isSensitive) {
-          const redactedRequest = { ...args.request, value: "[REDACTED]" };
-          preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
-        }
-      }
-
       return {
         call,
         key: "browser",
         digest: actionDigest,
-        preview,
+        preview: formatBrowserPreview(args, browserContext),
         requiresConfirmation: false,
         browserAction: action,
       };
@@ -454,37 +451,27 @@ export class ToolExecutor {
 
     const action = fileAction(call);
     const actionDigest = digest(action);
-    const requiresConfirmation = ["file.mkdir", "file.write", "file.patch"].includes(call.name);
-    let preview = `${call.name}: ${(call.arguments.path as string) || ""}`;
-    if (requiresConfirmation) {
-      const result = this.files.execute(action, { traceId });
-      if (result.code !== "CONFIRMATION_REQUIRED") {
-        return {
-          call,
-          key: call.name,
-          digest: actionDigest,
-          preview: result.summary,
-          requiresConfirmation: false,
-          fileAction: action,
-          blocked: result,
-        };
-      }
-      preview = truncate(JSON.stringify(result.data, null, 2));
-    }
     return {
       call,
       key: call.name,
       digest: actionDigest,
-      preview,
-      requiresConfirmation,
+      preview: `${call.name}: ${(call.arguments.path as string) || ""}`,
+      requiresConfirmation: false,
       fileAction: action,
     };
   }
 
   async execute(
     prepared: PreparedToolCall,
-    input: { traceId: string; chatId: string; confirmationGranted?: boolean },
+    input: { traceId: string; chatId: string; confirmationGranted?: boolean; gatewayAuthorized?: boolean; userIntent?: string; signal?: AbortSignal },
   ): Promise<ToolResult> {
+    if (!input.gatewayAuthorized) {
+      return {
+        ok: false,
+        code: "TOOL_GATEWAY_REQUIRED",
+        summary: "Tool execution must be authorized by ToolGateway.",
+      };
+    }
     if (prepared.blocked) return prepared.blocked;
     if (prepared.command) {
       try {
@@ -493,6 +480,8 @@ export class ToolExecutor {
           chatId: input.chatId,
           action: prepared.command,
           confirmationGranted: input.confirmationGranted,
+          userIntent: input.userIntent,
+          signal: input.signal,
         });
         const ok = result.exitCode === 0 && !result.signal;
         return {
@@ -512,11 +501,8 @@ export class ToolExecutor {
     }
     if (prepared.computerInput && prepared.desktopAction) {
       const adapter = getDesktopAdapter();
-      const config = loadAgentConfig();
       const isInput = prepared.computerInput.action !== "screenshot" && prepared.computerInput.action !== "launch";
       const leaseActive = isInput && computerController.hasLease(input.chatId);
-      const decision = new PermissionPolicy(config.permissions).evaluate(prepared.desktopAction, { desktopStatus: adapter.getStatus(), confirmationGranted: input.confirmationGranted || leaseActive });
-      if (decision.outcome !== "allow") return { ok: false, code: decision.reasonCode, summary: decision.reason };
       try {
         if (prepared.computerInput.action === "screenshot") {
           if (!("capture" in adapter) || typeof adapter.capture !== "function") throw new Error("Desktop adapter cannot capture.");
@@ -601,48 +587,6 @@ export class ToolExecutor {
       const action = prepared.browserAction;
       const actionArgs = prepared.call.arguments as Record<string, any>;
       const profile = actionArgs.profile;
-
-      // 1. Re-evaluate policy immediately before execution
-      const currentContext = buildBrowserActionPolicyContext(actionArgs, action.kind);
-      const config = loadAgentConfig();
-      const decision = new PermissionPolicy(config.permissions).evaluate(action, {
-        browserContext: currentContext,
-        confirmationGranted: input.confirmationGranted,
-      });
-
-      if (decision.outcome === "deny") {
-        return { ok: false, code: decision.reasonCode, summary: decision.reason };
-      }
-
-      if (decision.outcome === "confirm") {
-        const fingerprint = currentContext ? computeActionFingerprint(currentContext) : "";
-        if (!input.confirmationGranted) {
-          return {
-            ok: false,
-            code: "ACTION_REQUIRES_CONFIRMATION",
-            summary: decision.reason,
-            data: { confirmation: { actionFingerprint: fingerprint } }
-          };
-        }
-
-        // Verify and consume confirmation grant
-        const verifyRes = browserConfirmationStore.findAndConsume({
-          sessionId: "sess-1",
-          runId: "run-1",
-          profile: actionArgs.profile || "default",
-          targetId: actionArgs.targetId || "",
-          snapshotId: actionArgs.request?.snapshotId,
-          actionFingerprint: fingerprint,
-        });
-
-        if (!verifyRes.valid) {
-          return {
-            ok: false,
-            code: verifyRes.code,
-            summary: verifyRes.reason,
-          };
-        }
-      }
 
       try {
         switch (action.kind) {
@@ -753,7 +697,7 @@ export class ToolExecutor {
   }
 }
 
-function buildBrowserActionPolicyContext(
+export function buildBrowserActionPolicyContext(
   args: Record<string, any>,
   actionKind: string
 ): BrowserActionPolicyContext | undefined {
@@ -799,4 +743,15 @@ function buildBrowserActionPolicyContext(
     action: request,
     element,
   };
+}
+
+export function formatBrowserPreview(args: Record<string, any>, browserContext?: BrowserActionPolicyContext): string {
+  let preview = `browser.${args.action}: ${JSON.stringify(args)}`;
+  const sensitive = args.action === "act" && args.request?.kind === "fill" && (
+    args.request.inputType === "password"
+    || /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "")
+    || /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || "")
+  );
+  if (sensitive) preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: { ...args.request, value: "[REDACTED]" } })}`;
+  return preview;
 }

@@ -1,7 +1,7 @@
 import { loadCommandCatalog } from "../commands";
 import { sqliteFile } from "../config/paths";
 import {
-  countPendingConfirmations,
+  countPendingApprovals,
   getJsonState,
   getLastCommandRun,
   getLastFailedCommandRun,
@@ -155,7 +155,7 @@ export function handleDebugCommand(text: string, registry: SkillRegistry): strin
       `🔄 current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
       "",
       "📋 Operations:",
-      `  ├─ 🗳️ pending confirmations: ${countPendingConfirmations()}`,
+      `  ├─ 🗳️ pending approvals: ${countPendingApprovals()}`,
       `  ├─ ⚙️ loaded commands: ${catalog.allow.length}`,
       `  ├─ 🧩 loaded skills: ${registry.listSkills().length}`,
       `  └─ ⚠️ skill registry errors: ${registry.listErrors().length}`,

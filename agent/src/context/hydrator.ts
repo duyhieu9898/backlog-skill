@@ -20,14 +20,14 @@ const WEB_WORDS = ["http://", "https://", "website", "trang web", "web "];
 function redactHistory(content: string): string {
   return content
     .split("\n")
-    .filter((line) => !/^(Executable|Args|Cwd|Timeout|Input|Approval|Gõ:\s*confirm)\s*:/i.test(line.trim()))
+    .filter((line) => !/^(Executable|Args|Cwd|Timeout|Input|Approval|Gõ:\s*(approve|reject))\s*:/i.test(line.trim()))
     .join("\n")
     .trim();
 }
 
 function isToolProtocolMessage(role: string, content: string): boolean {
   const text = content.trim();
-  if (role === "user") return /^confirm\b/i.test(text);
+  if (role === "user") return /^(approve|reject)\b/i.test(text);
   return /^(Tool completed|Tool failed|computer cần xác nhận|```json\s*\{\s*"toolCall"|Không có confirmation nào đang chờ\.)/is.test(text);
 }
 

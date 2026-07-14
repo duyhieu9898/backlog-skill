@@ -5,6 +5,7 @@ import { isDesktopToolAction, isBrowserToolAction } from "../tools/contracts";
 import type {
   DesktopToolAction,
   BrowserToolAction,
+  CommandRunAction,
   NormalizedToolAction,
   PolicyDecision,
   ToolAction,
@@ -17,22 +18,18 @@ import type { BrowserActionPolicyContext } from "../browser/action-policy";
 import type { BrowserPermissionConfig } from "../config/app";
 
 export type PermissionPolicyConfig = {
-  workspaceRoot: string;
-  allowedReadRoots: string[];
-  allowedWriteRoots: string[];
-  deniedPaths: string[];
   desktopAppIds?: string[];
-  desktopCaptureRequiresConfirmation?: boolean;
   browser?: BrowserPermissionConfig;
 };
 
 export type PermissionContext = {
   confirmationGranted?: boolean;
+  /** Original owner request for the current run; never model-generated tool text. */
+  userIntent?: string;
   desktopStatus?: DesktopStatus;
   browserContext?: BrowserActionPolicyContext;
 };
 
-const DENIED_SEGMENTS = new Set([".git", "node_modules"]);
 const SECRET_FILE_PATTERNS = [
   /^\.env(?:\..+)?$/i,
   /^(?:credentials?|secrets?)(?:\..+)?$/i,
@@ -61,21 +58,41 @@ export function canonicalizePolicyPath(candidate: string): string {
   return path.join(fs.realpathSync(existing), ...suffix);
 }
 
-function isWithin(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
-}
-
 function isSecretLike(candidate: string): boolean {
   return SECRET_FILE_PATTERNS.some((pattern) => pattern.test(path.basename(candidate)));
 }
 
-function hasDeniedSegment(candidate: string): boolean {
-  return candidate.split(path.sep).some((segment) => DENIED_SEGMENTS.has(segment));
+function isClearlyDestructiveCommand(action: CommandRunAction): boolean {
+  const command = [action.executable || "", ...(action.args || []), action.shellCommand || ""].join(" ").toLowerCase();
+  return /\brm\s+-[^\n]*r[^\n]*\s+\/(?:\s|$)|\brm\s+-[^\n]*r[^\n]*\s+\/\*|\brm\s+-[^\n]*r[^\n]*\s+\/home(?:\s|$)|\bmkfs\b|\b(?:dd|cat)\b[^\n]*(?:of=)?\/dev\/(?:sd|nvme|vd)|\b(?:grub-install|update-grub)\b|\b(?:fork\s*bomb|:\(\)\s*\{\s*:\|:\s*&\s*\})|\b(?:curl|wget)\b[^\n|]*\|\s*(?:ba)?sh\b/.test(command);
 }
 
-function normalizeRoots(roots: string[]): string[] {
-  return roots.map(canonicalizePolicyPath);
+function needsSystemApproval(action: CommandRunAction): boolean {
+  const executable = path.basename(action.executable || "").toLowerCase();
+  const command = [action.executable || "", ...(action.args || []), action.shellCommand || ""].join(" ").toLowerCase();
+  return executable === "sudo" || ["apt", "apt-get", "snap", "systemctl", "service", "dpkg", "rpm"].includes(executable)
+    || /\b(?:sudo|apt(?:-get)?|snap|systemctl|service|dpkg|rpm)\b/.test(command);
+}
+
+/**
+ * A clear owner request is approval for the exact task, including the ordinary
+ * package/service steps needed to complete it. This is deliberately narrow:
+ * it only relaxes the system-impact prompt, never the destructive deny rules.
+ */
+function hasExplicitSystemIntent(action: CommandRunAction, userIntent?: string): boolean {
+  if (!userIntent || !needsSystemApproval(action)) return false;
+  const intent = userIntent.toLowerCase();
+  const asksForSystemWork = /\b(?:install|uninstall|remove|configure|config|restart|start|stop|enable|disable|upgrade|update)\b|cài(?:\s+đặt)?|gỡ|cấu\s*hình|khởi\s*động|dừng|bật|tắt/.test(intent);
+  if (!asksForSystemWork) return false;
+
+  // A generic request such as “restart the service” is intentionally enough
+  // for the matching service operation. When a concrete package/service name
+  // appears, require that it also appears in the command.
+  const command = [action.executable || "", ...(action.args || []), action.shellCommand || ""].join(" ").toLowerCase();
+  const namedTargets = intent.match(/\b[a-z0-9][a-z0-9._+-]{2,}\b/g) || [];
+  const ignored = new Set(["install", "uninstall", "remove", "configure", "config", "restart", "start", "stop", "enable", "disable", "upgrade", "update", "system", "service", "sudo", "please", "with", "this", "that"]);
+  const requestedTargets = namedTargets.filter((term) => !ignored.has(term));
+  return requestedTargets.length === 0 || requestedTargets.some((term) => command.includes(term));
 }
 
 function normalizeAction(action: ToolAction): NormalizedToolAction {
@@ -108,27 +125,12 @@ function denied(
 }
 
 export class PermissionPolicy {
-  private readonly workspaceRoot: string;
-  private readonly allowedReadRoots: string[];
-  private readonly allowedWriteRoots: string[];
-  private readonly deniedPaths: string[];
   private readonly desktopAppIds: Set<string>;
-  private readonly desktopCaptureRequiresConfirmation: boolean;
   private readonly browserConfig: BrowserPermissionConfig;
 
   constructor(config: PermissionPolicyConfig) {
-    this.workspaceRoot = canonicalizePolicyPath(config.workspaceRoot);
-    this.allowedReadRoots = normalizeRoots(config.allowedReadRoots);
-    this.allowedWriteRoots = normalizeRoots(config.allowedWriteRoots);
-    this.deniedPaths = normalizeRoots(config.deniedPaths);
     this.desktopAppIds = new Set(config.desktopAppIds || []);
-    this.desktopCaptureRequiresConfirmation = config.desktopCaptureRequiresConfirmation !== false;
     this.browserConfig = config.browser || {};
-    for (const writeRoot of this.allowedWriteRoots) {
-      if (!this.allowedReadRoots.some((readRoot) => isWithin(writeRoot, readRoot))) {
-        throw new Error(`Allowed write root must be contained by an allowed read root: ${writeRoot}`);
-      }
-    }
   }
 
   evaluate(action: ToolAction, context: PermissionContext = {}): PolicyDecision {
@@ -153,12 +155,12 @@ export class PermissionPolicy {
     }
 
     const target = normalized.kind === "command.run" ? normalized.cwd : normalized.path;
-    if (
-      hasDeniedSegment(target) ||
-      isSecretLike(target) ||
-      this.deniedPaths.some((deniedPath) => isWithin(target, deniedPath))
-    ) {
-      return denied(normalized, "DENIED_PATH", `Path is denied by policy: ${target}`);
+    if (normalized.kind === "command.run" && isClearlyDestructiveCommand(normalized)) {
+      return denied(normalized, "DENIED_PATH", "Command matches a clearly destructive pattern.");
+    }
+    if (isSecretLike(target)) {
+      if (!context.confirmationGranted) return { outcome: "confirm", reasonCode: "CONFIRMATION_REQUIRED", reason: `Sensitive path requires approval: ${target}`, action: normalized };
+      return { outcome: "allow", reasonCode: "ALLOWED", reason: "Sensitive path approved for this task.", action: normalized };
     }
 
     if (
@@ -166,27 +168,14 @@ export class PermissionPolicy {
       normalized.kind === "file.list" ||
       normalized.kind === "file.exists"
     ) {
-      if (!this.allowedReadRoots.some((root) => isWithin(target, root))) {
-        return denied(normalized, "OUTSIDE_READ_ROOTS", `Read path is outside allowed roots: ${target}`);
-      }
       return { outcome: "allow", reasonCode: "ALLOWED", reason: "Read path is allowed.", action: normalized };
     }
 
-    if (normalized.kind !== "command.run") {
-      if (!isWithin(target, this.workspaceRoot)) {
-        return denied(normalized, "OUTSIDE_WORKSPACE", `Write path is outside workspace: ${target}`);
-      }
-      if (!this.allowedWriteRoots.some((root) => isWithin(target, root))) {
-        return denied(normalized, "OUTSIDE_WRITE_ROOTS", `Write path is outside allowed roots: ${target}`);
-      }
-    } else if (!isWithin(target, this.workspaceRoot)) {
-      return denied(normalized, "OUTSIDE_WORKSPACE", `Command cwd is outside workspace: ${target}`);
-    }
-
+    const explicitSystemIntent = normalized.kind === "command.run" && hasExplicitSystemIntent(normalized, context.userIntent);
     const needsConfirmation =
       normalized.kind === "command.run"
-        ? normalized.requiresConfirmation || normalized.externalSideEffect
-        : true;
+        ? (normalized.requiresConfirmation || normalized.externalSideEffect || needsSystemApproval(normalized)) && !explicitSystemIntent
+        : false;
     if (needsConfirmation && !context.confirmationGranted) {
       return {
         outcome: "confirm",
@@ -223,18 +212,10 @@ export class PermissionPolicy {
     ) {
       return denied(action, "UNKNOWN_DISPLAY", `Desktop display is not available: ${action.displayId}`);
     }
-    if (!(action.kind === "desktop.capture" && !this.desktopCaptureRequiresConfirmation) && !context.confirmationGranted) {
-      return {
-        outcome: "confirm",
-        reasonCode: "CONFIRMATION_REQUIRED",
-        reason: `${action.kind} requires explicit confirmation.`,
-        action,
-      };
-    }
     return {
       outcome: "allow",
       reasonCode: "ALLOWED",
-      reason: `${action.kind} is allowed by policy.`,
+      reason: `${action.kind} is allowed as ordinary local desktop automation.`,
       action,
     };
   }

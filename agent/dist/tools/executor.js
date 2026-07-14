@@ -3,7 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ToolExecutor = void 0;
+exports.ToolExecutor = exports.computerController = void 0;
+exports.buildBrowserActionPolicyContext = buildBrowserActionPolicyContext;
+exports.formatBrowserPreview = formatBrowserPreview;
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const commands_1 = require("../commands");
 const files_1 = require("./files");
@@ -12,7 +14,6 @@ const apps_1 = require("./computer/apps");
 const computer_tool_1 = require("./computer/computer-tool");
 const store_1 = require("../artifacts/store");
 const events_1 = require("./computer/events");
-const permissionPolicy_1 = require("../security/permissionPolicy");
 const app_1 = require("../config/app");
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_child_process_1 = require("node:child_process");
@@ -21,13 +22,29 @@ const node_path_1 = __importDefault(require("node:path"));
 const browser_service_1 = require("../browser/browser-service");
 const errors_1 = require("../browser/errors");
 const schema_1 = require("./schema");
-const browser_confirmation_1 = require("../security/browser-confirmation");
-const action_policy_1 = require("../browser/action-policy");
 const ref_store_1 = require("../browser/ref-store");
 const emptyObjectSchema = {
     type: "object",
     properties: {},
     additionalProperties: false,
+};
+const genericCommandDefinition = {
+    name: "command.run",
+    description: "Run an arbitrary local command. Prefer executable plus args. shellCommand is available only when a pipeline, redirect, glob, conditional, or multi-step shell script is necessary.",
+    inputSchema: {
+        type: "object",
+        properties: {
+            executable: { type: "string", minLength: 1, maxLength: 4096 },
+            args: { type: "array", items: { type: "string", maxLength: 16384 }, maxItems: 512 },
+            shellCommand: { type: "string", minLength: 1, maxLength: 65536 },
+            cwd: { type: "string", minLength: 1, maxLength: 4096 },
+            env: { type: "object", properties: {}, additionalProperties: true },
+            timeoutMs: { type: "integer", minimum: 1, maximum: 3600000 },
+            maxOutputBytes: { type: "integer", minimum: 1024, maximum: 10485760 },
+        },
+        required: ["cwd"],
+        additionalProperties: false,
+    },
 };
 const fileDefinitions = [
     {
@@ -177,7 +194,7 @@ function publicHttpsUrl(value) {
     }
     return url.toString();
 }
-const computerController = new computer_tool_1.ComputerController();
+exports.computerController = new computer_tool_1.ComputerController();
 function digest(value) {
     return node_crypto_1.default.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -264,7 +281,24 @@ class ToolExecutor {
         if (scope?.webOnly)
             return [webCaptureDefinition];
         const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-        return [...files, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+        return [...files, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    /** Resolve a trusted shortcut into a command action without deciding policy. */
+    prepareCommand(action, defaultTimeoutMs) {
+        const preview = (0, commands_1.previewCommand)(action, defaultTimeoutMs);
+        return {
+            call: { name: `command.${action.name || "run"}`, arguments: (action.invocationInput || {}) },
+            key: action.name || "command.run",
+            digest: (0, commands_1.commandPreviewDigest)(preview),
+            preview: [
+                action.label,
+                ...(preview.shellCommand ? [`Shell: ${preview.shellCommand}`] : [`Executable: ${preview.executable}`, `Args: ${JSON.stringify(preview.args)}`]),
+                `Cwd: ${preview.cwd}`,
+                `Timeout: ${preview.timeoutMs} ms`,
+            ].join("\n"),
+            requiresConfirmation: false,
+            command: action,
+        };
     }
     prepare(call, traceId, definitions = this.definitions(), chatId) {
         const definition = definitions.find((tool) => tool.name === call.name);
@@ -273,26 +307,54 @@ class ToolExecutor {
         const errors = (0, schema_1.validateJsonSchema)(definition.inputSchema, call.arguments, "arguments");
         if (errors.length)
             throw new Error(`Invalid tool arguments for ${call.name}: ${errors.join(" ")}`);
+        if (call.name === "command.run") {
+            const input = call.arguments;
+            const executable = typeof input.executable === "string" ? input.executable : undefined;
+            const shellCommand = typeof input.shellCommand === "string" ? input.shellCommand : undefined;
+            if (Boolean(executable) === Boolean(shellCommand)) {
+                throw new Error("command.run requires exactly one of executable or shellCommand.");
+            }
+            const args = input.args === undefined ? [] : input.args;
+            if (!Array.isArray(args) || args.some((value) => typeof value !== "string"))
+                throw new Error("command.run args must be an array of strings.");
+            const env = input.env;
+            if (env !== undefined && (!env || typeof env !== "object" || Array.isArray(env) || Object.values(env).some((value) => typeof value !== "string"))) {
+                throw new Error("command.run env must map variable names to strings.");
+            }
+            const command = {
+                name: "command.run",
+                label: executable ? `Run ${executable}` : "Run shell command",
+                cwd: String(input.cwd),
+                ...(executable ? { argv: [executable, ...args] } : { shellCommand }),
+                ...(env ? { env: env } : {}),
+                ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+                ...(input.maxOutputBytes ? { maxOutputBytes: input.maxOutputBytes } : {}),
+                requiresConfirmation: false,
+                externalSideEffect: false,
+            };
+            const preview = (0, commands_1.previewCommand)(command);
+            return {
+                call,
+                key: "command.run",
+                digest: (0, commands_1.commandPreviewDigest)(preview),
+                requiresConfirmation: false,
+                command,
+                preview: [
+                    command.label,
+                    ...(preview.shellCommand ? [`Shell: ${preview.shellCommand}`] : [`Executable: ${preview.executable}`, `Args: ${JSON.stringify(preview.args)}`]),
+                    `Cwd: ${preview.cwd}`,
+                    `Timeout: ${preview.timeoutMs} ms`,
+                ].join("\n"),
+            };
+        }
         if (call.name.startsWith("command.")) {
             const commandName = call.name.slice("command.".length);
             const base = this.catalogLoader().allow.find((command) => command.name === commandName);
             if (!base)
                 throw new Error(`Unknown allowlisted command: ${commandName}`);
             const command = base.inputSchema ? (0, commands_1.withCommandInput)(base, call.arguments) : base;
-            const decision = (0, commands_1.evaluateCommandPermission)(command);
             const preview = (0, commands_1.previewCommand)(command);
             const commandDigest = (0, commands_1.commandPreviewDigest)(preview);
-            if (decision.outcome === "deny") {
-                return {
-                    call,
-                    key: commandName,
-                    digest: commandDigest,
-                    preview: decision.reason,
-                    requiresConfirmation: false,
-                    command,
-                    blocked: { ok: false, code: decision.reasonCode, summary: decision.reason },
-                };
-            }
             const inputPreview = command.invocationInput === undefined
                 ? []
                 : [`Input: ${truncate(JSON.stringify(command.invocationInput))}`];
@@ -300,7 +362,9 @@ class ToolExecutor {
                 call,
                 key: commandName,
                 digest: commandDigest,
-                requiresConfirmation: decision.outcome === "confirm",
+                // PermissionPolicy belongs to ToolGateway. The executor only resolves
+                // the concrete command and later executes an already-authorized one.
+                requiresConfirmation: false,
                 command,
                 preview: [
                     command.label,
@@ -331,14 +395,8 @@ class ToolExecutor {
                 : input.action === "launch"
                     ? { kind: "desktop.launch", appId: resolvedApp.id }
                     : { kind: "desktop.act", targetId: input.action === "left_click" ? input.frameId : "focused-target", operation: input.action === "left_click" ? "click" : input.action };
-            const adapter = (0, linux_x11_1.getDesktopAdapter)();
-            const config = (0, app_1.loadAgentConfig)();
-            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(desktopAction, { desktopStatus: adapter.getStatus() });
             const actionDigest = digest(input);
-            const leaseActive = input.action !== "screenshot" && input.action !== "launch" && Boolean(chatId && computerController.hasLease(chatId));
-            if (decision.outcome === "deny")
-                return { call, key: "computer", digest: actionDigest, preview: decision.reason, requiresConfirmation: false, computerInput: input, desktopAction, blocked: { ok: false, code: decision.reasonCode, summary: decision.reason } };
-            return { call, key: "computer", digest: actionDigest, preview: `computer.${input.action}: ${JSON.stringify(call.arguments)}`, requiresConfirmation: decision.outcome === "confirm" && !leaseActive, computerInput: input, desktopAction };
+            return { call, key: "computer", digest: actionDigest, preview: `computer.${input.action}: ${JSON.stringify(call.arguments)}`, requiresConfirmation: false, computerInput: input, desktopAction };
         }
         if (call.name === "web.capture") {
             const url = publicHttpsUrl(call.arguments.url);
@@ -350,101 +408,36 @@ class ToolExecutor {
                 kind: `browser.${args.action}`,
                 ...args
             };
-            const config = (0, app_1.loadAgentConfig)();
             const browserContext = buildBrowserActionPolicyContext(args, action.kind);
-            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(action, { browserContext });
             const actionDigest = digest(action);
-            if (decision.outcome === "deny") {
-                return {
-                    call,
-                    key: "browser",
-                    digest: actionDigest,
-                    preview: decision.reason,
-                    requiresConfirmation: false,
-                    blocked: { ok: false, code: decision.reasonCode, summary: decision.reason },
-                    browserAction: action,
-                };
-            }
-            if (decision.outcome === "confirm") {
-                const fingerprint = decision.actionFingerprint || "";
-                browser_confirmation_1.browserConfirmationStore.createGrant({
-                    sessionId: "sess-1",
-                    runId: "run-1",
-                    profile: args.profile || "default",
-                    targetId: args.targetId || "",
-                    snapshotId: args.request?.snapshotId,
-                    actionFingerprint: fingerprint,
-                });
-                let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
-                if (args.action === "act" && args.request) {
-                    const isSensitive = args.request.kind === "fill" &&
-                        (args.request.inputType === "password" ||
-                            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
-                            /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
-                    if (isSensitive) {
-                        const redactedRequest = { ...args.request, value: "[REDACTED]" };
-                        preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
-                    }
-                }
-                return {
-                    call,
-                    key: "browser",
-                    digest: actionDigest,
-                    preview: `${decision.reason}\nAction: ${preview}`,
-                    requiresConfirmation: true,
-                    browserAction: action,
-                    actionFingerprint: fingerprint,
-                };
-            }
-            let preview = `browser.${args.action}: ${JSON.stringify(call.arguments)}`;
-            if (args.action === "act" && args.request) {
-                const isSensitive = args.request.kind === "fill" &&
-                    (args.request.inputType === "password" ||
-                        /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "") ||
-                        /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
-                if (isSensitive) {
-                    const redactedRequest = { ...args.request, value: "[REDACTED]" };
-                    preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: redactedRequest })}`;
-                }
-            }
             return {
                 call,
                 key: "browser",
                 digest: actionDigest,
-                preview,
+                preview: formatBrowserPreview(args, browserContext),
                 requiresConfirmation: false,
                 browserAction: action,
             };
         }
         const action = fileAction(call);
         const actionDigest = digest(action);
-        const requiresConfirmation = ["file.mkdir", "file.write", "file.patch"].includes(call.name);
-        let preview = `${call.name}: ${call.arguments.path || ""}`;
-        if (requiresConfirmation) {
-            const result = this.files.execute(action, { traceId });
-            if (result.code !== "CONFIRMATION_REQUIRED") {
-                return {
-                    call,
-                    key: call.name,
-                    digest: actionDigest,
-                    preview: result.summary,
-                    requiresConfirmation: false,
-                    fileAction: action,
-                    blocked: result,
-                };
-            }
-            preview = truncate(JSON.stringify(result.data, null, 2));
-        }
         return {
             call,
             key: call.name,
             digest: actionDigest,
-            preview,
-            requiresConfirmation,
+            preview: `${call.name}: ${call.arguments.path || ""}`,
+            requiresConfirmation: false,
             fileAction: action,
         };
     }
     async execute(prepared, input) {
+        if (!input.gatewayAuthorized) {
+            return {
+                ok: false,
+                code: "TOOL_GATEWAY_REQUIRED",
+                summary: "Tool execution must be authorized by ToolGateway.",
+            };
+        }
         if (prepared.blocked)
             return prepared.blocked;
         if (prepared.command) {
@@ -454,6 +447,8 @@ class ToolExecutor {
                     chatId: input.chatId,
                     action: prepared.command,
                     confirmationGranted: input.confirmationGranted,
+                    userIntent: input.userIntent,
+                    signal: input.signal,
                 });
                 const ok = result.exitCode === 0 && !result.signal;
                 return {
@@ -474,12 +469,8 @@ class ToolExecutor {
         }
         if (prepared.computerInput && prepared.desktopAction) {
             const adapter = (0, linux_x11_1.getDesktopAdapter)();
-            const config = (0, app_1.loadAgentConfig)();
             const isInput = prepared.computerInput.action !== "screenshot" && prepared.computerInput.action !== "launch";
-            const leaseActive = isInput && computerController.hasLease(input.chatId);
-            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(prepared.desktopAction, { desktopStatus: adapter.getStatus(), confirmationGranted: input.confirmationGranted || leaseActive });
-            if (decision.outcome !== "allow")
-                return { ok: false, code: decision.reasonCode, summary: decision.reason };
+            const leaseActive = isInput && exports.computerController.hasLease(input.chatId);
             try {
                 if (prepared.computerInput.action === "screenshot") {
                     if (!("capture" in adapter) || typeof adapter.capture !== "function")
@@ -488,7 +479,7 @@ class ToolExecutor {
                     resizeImage(captured.path);
                     const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
                     node_fs_1.default.rmSync(captured.path, { force: true });
-                    const frame = computerController.observe(input.chatId, captured.displayId);
+                    const frame = exports.computerController.observe(input.chatId, captured.displayId);
                     (0, events_1.logDesktopEvent)(input.traceId, { component: "desktop", action: "computer.screenshot", outcome: "completed", artifactId: artifact.id });
                     return { ok: true, code: "COMPUTER_SCREENSHOT", summary: "Screen captured.", data: { artifactId: artifact.id, frameId: frame.frameId, displayId: captured.displayId, expiresAt: frame.expiresAt } };
                 }
@@ -507,28 +498,28 @@ class ToolExecutor {
                     resizeImage(captured.path);
                     const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
                     node_fs_1.default.rmSync(captured.path, { force: true });
-                    const frame = computerController.observe(input.chatId, captured.displayId);
-                    computerController.bindTarget(input.chatId, captured.displayId);
+                    const frame = exports.computerController.observe(input.chatId, captured.displayId);
+                    exports.computerController.bindTarget(input.chatId, captured.displayId);
                     (0, events_1.logDesktopEvent)(input.traceId, { component: "desktop", action: "computer.launch", outcome: "completed", artifactId: artifact.id });
                     return { ok: true, code: "COMPUTER_LAUNCHED", summary: `Launched and focused ${launched.appId}, then captured the screen.`, data: { appId: launched.appId, windowId: focused.windowId, windowTitle: focused.title, artifactId: artifact.id, frameId: frame.frameId, displayId: captured.displayId, expiresAt: frame.expiresAt } };
                 }
                 const actionInput = prepared.computerInput;
-                await computerController.runInput(actionInput, input.chatId, async () => {
+                await exports.computerController.runInput(actionInput, input.chatId, async () => {
                     const result = (0, node_child_process_1.spawnSync)("xdotool", (0, computer_tool_1.xdotoolArgs)(actionInput), { encoding: "utf8" });
                     if (result.status !== 0)
                         throw new Error(result.stderr.trim() || "X11 input failed.");
                 });
-                const lease = input.confirmationGranted ? computerController.grantLease(input.chatId) : undefined;
+                const lease = input.confirmationGranted ? exports.computerController.grantLease(input.chatId) : undefined;
                 if (!input.confirmationGranted && leaseActive)
-                    computerController.consumeLease(input.chatId);
+                    exports.computerController.consumeLease(input.chatId);
                 try {
                     if (!("capture" in adapter) || typeof adapter.capture !== "function")
                         throw new Error("Desktop adapter cannot capture.");
-                    const captured = adapter.capture(computerController.currentDisplay(input.chatId));
+                    const captured = adapter.capture(exports.computerController.currentDisplay(input.chatId));
                     resizeImage(captured.path);
                     const artifact = new store_1.ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: node_fs_1.default.readFileSync(captured.path) });
                     node_fs_1.default.rmSync(captured.path, { force: true });
-                    const frame = computerController.observe(input.chatId, captured.displayId);
+                    const frame = exports.computerController.observe(input.chatId, captured.displayId);
                     (0, events_1.logDesktopEvent)(input.traceId, { component: "desktop", action: `computer.${actionInput.action}`, outcome: "completed", artifactId: artifact.id });
                     return { ok: true, code: "COMPUTER_ACTION_COMPLETED", summary: `Computer ${actionInput.action} completed.`, data: { artifactId: artifact.id, frameId: frame.frameId, displayId: captured.displayId, expiresAt: frame.expiresAt, ...(lease ? { controlLease: lease } : {}) } };
                 }
@@ -579,43 +570,6 @@ class ToolExecutor {
             const action = prepared.browserAction;
             const actionArgs = prepared.call.arguments;
             const profile = actionArgs.profile;
-            // 1. Re-evaluate policy immediately before execution
-            const currentContext = buildBrowserActionPolicyContext(actionArgs, action.kind);
-            const config = (0, app_1.loadAgentConfig)();
-            const decision = new permissionPolicy_1.PermissionPolicy(config.permissions).evaluate(action, {
-                browserContext: currentContext,
-                confirmationGranted: input.confirmationGranted,
-            });
-            if (decision.outcome === "deny") {
-                return { ok: false, code: decision.reasonCode, summary: decision.reason };
-            }
-            if (decision.outcome === "confirm") {
-                const fingerprint = currentContext ? (0, action_policy_1.computeActionFingerprint)(currentContext) : "";
-                if (!input.confirmationGranted) {
-                    return {
-                        ok: false,
-                        code: "ACTION_REQUIRES_CONFIRMATION",
-                        summary: decision.reason,
-                        data: { confirmation: { actionFingerprint: fingerprint } }
-                    };
-                }
-                // Verify and consume confirmation grant
-                const verifyRes = browser_confirmation_1.browserConfirmationStore.findAndConsume({
-                    sessionId: "sess-1",
-                    runId: "run-1",
-                    profile: actionArgs.profile || "default",
-                    targetId: actionArgs.targetId || "",
-                    snapshotId: actionArgs.request?.snapshotId,
-                    actionFingerprint: fingerprint,
-                });
-                if (!verifyRes.valid) {
-                    return {
-                        ok: false,
-                        code: verifyRes.code,
-                        summary: verifyRes.reason,
-                    };
-                }
-            }
             try {
                 switch (action.kind) {
                     case "browser.status": {
@@ -768,4 +722,13 @@ function buildBrowserActionPolicyContext(args, actionKind) {
         action: request,
         element,
     };
+}
+function formatBrowserPreview(args, browserContext) {
+    let preview = `browser.${args.action}: ${JSON.stringify(args)}`;
+    const sensitive = args.action === "act" && args.request?.kind === "fill" && (args.request.inputType === "password"
+        || /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.name || "")
+        || /\b(password|pass|secret|token|key|card|cvv|pin)\b/i.test(browserContext?.element?.placeholder || ""));
+    if (sensitive)
+        preview = `browser.${args.action}: ${JSON.stringify({ ...args, request: { ...args.request, value: "[REDACTED]" } })}`;
+    return preview;
 }

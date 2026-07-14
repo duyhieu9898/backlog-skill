@@ -83,6 +83,9 @@ class FileTools {
             return failure(decision.reasonCode, decision.reason);
         }
         if (decision.outcome === "confirm") {
+            if (action.kind === "file.read" || action.kind === "file.list" || action.kind === "file.exists") {
+                return { ok: false, code: decision.reasonCode, summary: decision.reason };
+            }
             const preview = this.previewNormalized(decision.action);
             logger_1.log.info(context.traceId, "file.confirmation_required", {
                 kind: action.kind,

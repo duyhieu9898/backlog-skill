@@ -6,8 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentToolLoop = void 0;
 const router_1 = require("../brain/router");
 const logger_1 = require("../logging/logger");
+const gateway_1 = require("./gateway");
+const approvalService_1 = require("../security/approvalService");
 const repositories_1 = require("../storage/repositories");
-const executor_1 = require("./executor");
 const store_1 = require("../artifacts/store");
 const image_context_1 = require("./media/image-context");
 const node_fs_1 = __importDefault(require("node:fs"));
@@ -50,6 +51,10 @@ function persistentSteps(steps) {
     // put base64 pixels in the pending-confirmation database row.
     return steps.map(({ call, result }) => ({ call, result }));
 }
+function appendStep(runId, steps, step) {
+    steps.push(step);
+    (0, repositories_1.appendRunStep)({ runId, toolName: step.call.name, call: step.call, result: step.result });
+}
 function repeatedFailureMessage(call, result) {
     return [
         `Đã dừng sau ${MAX_IDENTICAL_FAILURES} lần lỗi lặp lại cho ${call.name} [${result.code}] để tránh hao token.`,
@@ -59,16 +64,19 @@ function repeatedFailureMessage(call, result) {
 }
 class AgentToolLoop {
     ai;
-    executor;
-    constructor(ai = new router_1.AiRouter(), executor = new executor_1.ToolExecutor()) {
+    gateway;
+    approvals = new approvalService_1.ApprovalService();
+    constructor(ai = new router_1.AiRouter(), gateway = new gateway_1.ToolGateway()) {
         this.ai = ai;
-        this.executor = executor;
+        this.gateway = gateway;
     }
-    async run(message, context, onReplyMarkup, onArtifact, initialSteps = [], userMessage = message.text) {
+    async run(message, context, onReplyMarkup, onArtifact, initialSteps = [], userMessage = message.text, runId = message.traceId, signal) {
         const steps = [...initialSteps];
         const failures = new Map();
-        const tools = this.executor.definitions(context.toolScope);
+        const tools = this.gateway.definitions(context.toolScope);
         for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
+            if (signal?.aborted)
+                return "Run cancelled.";
             const response = await this.ai.complete(message.traceId, context, userMessage, tools, steps);
             if (response.clarification) {
                 logger_1.log.info(message.traceId, "ai.clarification.requested", { step: index });
@@ -83,7 +91,12 @@ class AgentToolLoop {
                 toolName: response.toolCall.name,
             });
             try {
-                const prepared = this.executor.prepare(response.toolCall, message.traceId, tools, message.chatId);
+                const grantCoversAction = this.approvals.covers({
+                    principalId: message.userId,
+                    runId,
+                    actionKey: response.toolCall.name,
+                });
+                const prepared = this.gateway.prepare(response.toolCall, message.traceId, tools, message.chatId, userMessage, grantCoversAction);
                 if (prepared.requiresConfirmation) {
                     const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
                     const pending = {
@@ -97,12 +110,10 @@ class AgentToolLoop {
                             steps: persistentSteps(steps),
                         },
                     };
-                    (0, repositories_1.upsertPendingConfirmation)({
-                        chatId: message.chatId,
-                        traceId: message.traceId,
-                        commandName: prepared.key,
-                        payload: pending,
-                        expiresAt,
+                    const approval = this.approvals.create({
+                        runId, principalId: message.userId, chatId: message.chatId,
+                        description: `Cho phép chạy ${prepared.key} trong run này.`,
+                        actionDigest: prepared.digest, payload: pending, expiresAt,
                     });
                     logger_1.log.info(message.traceId, "ai.tool.confirmation_required", {
                         toolName: prepared.call.name,
@@ -112,8 +123,10 @@ class AgentToolLoop {
                         inline_keyboard: [
                             [
                                 {
-                                    text: `✅ Xác nhận: ${prepared.key}`,
-                                    callback_data: `confirm ${prepared.key} ${prepared.digest.slice(0, 12)}`,
+                                    text: "✅ Approve", callback_data: `approve ${approval.short_id}`,
+                                },
+                                {
+                                    text: "❌ Reject", callback_data: `reject ${approval.short_id}`,
                                 },
                             ],
                         ],
@@ -121,13 +134,14 @@ class AgentToolLoop {
                     return [
                         `${prepared.key} cần xác nhận trước khi chạy.`,
                         prepared.preview,
-                        `Approval: ${prepared.digest.slice(0, 12)}`,
-                        `Gõ: confirm ${prepared.key} ${prepared.digest.slice(0, 12)}`,
+                        `Approval ID: ${approval.short_id}`,
+                        `Gõ: approve ${approval.short_id} hoặc reject ${approval.short_id}`,
                     ].join("\n");
                 }
-                const result = await this.executor.execute(prepared, {
+                const result = await this.gateway.execute(prepared, {
                     traceId: message.traceId,
                     chatId: message.chatId,
+                    signal,
                 });
                 let finalResult = result;
                 let finalCall = response.toolCall;
@@ -139,7 +153,7 @@ class AgentToolLoop {
                             ref: actionArgs.request?.ref,
                         });
                         // 1. Push the failed step first so the trace is complete
-                        steps.push({
+                        appendStep(runId, steps, {
                             call: response.toolCall,
                             result,
                             image: modelImageForResult(result, message.chatId),
@@ -155,15 +169,16 @@ class AgentToolLoop {
                                 targetId,
                             },
                         };
-                        const snapshotPrepared = this.executor.prepare(snapshotCall, message.traceId, tools, message.chatId);
-                        const snapshotResult = await this.executor.execute(snapshotPrepared, {
+                        const snapshotPrepared = this.gateway.prepare(snapshotCall, message.traceId, tools, message.chatId, userMessage, this.approvals.covers({ principalId: message.userId, runId, actionKey: snapshotCall.name }));
+                        const snapshotResult = await this.gateway.execute(snapshotPrepared, {
                             traceId: message.traceId,
                             chatId: message.chatId,
+                            signal,
                         });
                         if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(snapshotResult.code) && typeof snapshotResult.data?.artifactId === "string") {
                             onArtifact?.(snapshotResult.data.artifactId);
                         }
-                        steps.push({
+                        appendStep(runId, steps, {
                             call: snapshotCall,
                             result: snapshotResult,
                             image: modelImageForResult(snapshotResult, message.chatId),
@@ -201,16 +216,17 @@ class AgentToolLoop {
                                 },
                             },
                         };
-                        const retryPrepared = this.executor.prepare(retryCall, message.traceId, tools, message.chatId);
-                        const retryResult = await this.executor.execute(retryPrepared, {
+                        const retryPrepared = this.gateway.prepare(retryCall, message.traceId, tools, message.chatId, userMessage, this.approvals.covers({ principalId: message.userId, runId, actionKey: retryCall.name }));
+                        const retryResult = await this.gateway.execute(retryPrepared, {
                             traceId: message.traceId,
                             chatId: message.chatId,
+                            signal,
                         });
                         finalResult = retryResult;
                         finalCall = retryCall;
                         if (!retryResult.ok) {
                             // Retry failed, push to steps and return failure to user immediately
-                            steps.push({
+                            appendStep(runId, steps, {
                                 call: retryCall,
                                 result: retryResult,
                                 image: modelImageForResult(retryResult, message.chatId),
@@ -222,7 +238,7 @@ class AgentToolLoop {
                 if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(finalResult.code) && typeof finalResult.data?.artifactId === "string") {
                     onArtifact?.(finalResult.data.artifactId);
                 }
-                steps.push({ call: finalCall, result: finalResult, image: modelImageForResult(finalResult, message.chatId) });
+                appendStep(runId, steps, { call: finalCall, result: finalResult, image: modelImageForResult(finalResult, message.chatId) });
                 logger_1.log.info(message.traceId, "ai.tool.completed", {
                     step: index,
                     toolName: finalCall.name,
@@ -250,7 +266,7 @@ class AgentToolLoop {
                     code: "INVALID_TOOL_CALL",
                     summary: error instanceof Error ? error.message : String(error),
                 };
-                steps.push({ call: response.toolCall, result });
+                appendStep(runId, steps, { call: response.toolCall, result });
                 logger_1.log.warn(message.traceId, "ai.tool.rejected", {
                     step: index,
                     toolName: response.toolCall.name,
@@ -275,72 +291,46 @@ class AgentToolLoop {
             "Nếu task chưa hoàn thành, hãy gõ \"tiếp tục\" để tiếp tục hoặc thu hẹp yêu cầu thành các bước nhỏ hơn.",
         ].join("\n");
     }
-    async consumeConfirmation(message, onArtifact, onReplyMarkup) {
-        const text = message.text.trim().toLowerCase();
-        if (!text.startsWith("confirm"))
+    async consumeScopedApproval(message, onArtifact, onReplyMarkup) {
+        const match = message.text.trim().toLowerCase().match(/^(approve|reject)\s+([a-f0-9]{8})$/);
+        if (!match)
             return null;
-        const pending = (0, repositories_1.getPendingConfirmation)(message.chatId);
-        if (!pending)
+        const candidate = this.approvals.get(match[2], message.userId, message.chatId);
+        if (!candidate)
             return null;
         let payload;
         try {
-            payload = JSON.parse(pending.payload_json);
+            payload = JSON.parse(candidate.payload_json);
         }
         catch {
             return null;
         }
         if (payload.kind !== "ai-tool")
             return null;
-        const match = text.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
-        if (!match)
-            return "Confirmation cần tool name và approval token từ preview.";
-        if (pending.expires_at <= (0, repositories_1.nowIso)()) {
-            (0, repositories_1.deletePendingConfirmation)(message.chatId);
-            return "Confirmation đã hết hạn. Gửi lại yêu cầu để tạo preview mới.";
-        }
         let prepared;
         try {
-            prepared = this.executor.prepare(payload.call, message.traceId, undefined, message.chatId);
+            prepared = this.gateway.prepare(payload.call, message.traceId, undefined, message.chatId, payload.continuation?.userMessage, this.approvals.covers({ principalId: message.userId, runId: candidate.run_id, actionKey: payload.call.name }));
         }
-        catch (error) {
-            (0, repositories_1.deletePendingConfirmation)(message.chatId);
-            return `Confirmation không còn hợp lệ: ${error instanceof Error ? error.message : String(error)}`;
+        catch {
+            return "Approval không còn hợp lệ.";
         }
-        if (prepared.key.toLowerCase() !== match[1] ||
-            prepared.digest !== payload.digest ||
-            prepared.digest.slice(0, 12) !== match[2]) {
-            return "Confirmation không khớp action đã preview.";
-        }
-        (0, repositories_1.deletePendingConfirmation)(message.chatId);
-        const result = await this.executor.execute(prepared, {
-            traceId: message.traceId,
-            chatId: message.chatId,
-            confirmationGranted: true,
-        });
-        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(result.code) && typeof result.data?.artifactId === "string") {
+        const pending = this.approvals.resolve({ shortId: match[2], principalId: message.userId, chatId: message.chatId, actionDigest: prepared.digest, approve: match[1] === "approve" });
+        if (!pending)
+            return "Approval không tồn tại, đã hết hạn, hoặc action đã thay đổi.";
+        if (match[1] === "reject")
+            return "Đã từ chối action đang chờ.";
+        const result = await this.gateway.execute(prepared, { traceId: message.traceId, chatId: message.chatId, confirmationGranted: true });
+        if (typeof result.data?.artifactId === "string")
             onArtifact?.(result.data.artifactId);
-        }
-        logger_1.log.info(message.traceId, "ai.tool.confirmed", {
-            toolName: prepared.call.name,
-            ok: result.ok,
-            code: result.code,
-        });
-        if (!payload.continuation)
+        if (!payload.continuation) {
+            (0, repositories_1.finishRun)(pending.run_id, result.ok ? "completed" : "failed", result.ok ? undefined : result.summary);
             return formatResult(result);
-        const resumedSteps = payload.continuation.steps.map((step) => ({
-            ...step,
-            image: modelImageForResult(step.result, message.chatId),
-        }));
-        resumedSteps.push({
-            call: payload.call,
-            result,
-            image: modelImageForResult(result, message.chatId),
-        });
-        logger_1.log.info(message.traceId, "ai.tool.continuing_after_confirmation", {
-            toolName: prepared.call.name,
-            priorSteps: payload.continuation.steps.length,
-        });
-        return this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, resumedSteps, payload.continuation.userMessage);
+        }
+        const steps = payload.continuation.steps.map((step) => ({ ...step, image: modelImageForResult(step.result, message.chatId) }));
+        appendStep(pending.run_id, steps, { call: payload.call, result, image: modelImageForResult(result, message.chatId) });
+        const reply = await this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, steps, payload.continuation.userMessage, pending.run_id);
+        (0, repositories_1.finishRun)(pending.run_id, "completed");
+        return reply;
     }
 }
 exports.AgentToolLoop = AgentToolLoop;

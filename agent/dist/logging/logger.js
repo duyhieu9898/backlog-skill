@@ -1,12 +1,24 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.log = void 0;
+exports.redactString = redactString;
+exports.sanitizeForLog = sanitizeForLog;
 const repositories_1 = require("../storage/repositories");
-function sanitize(value) {
+function redactString(value) {
+    return value
+        .replace(/\b((?:bearer|basic))\s+[a-z0-9._~+\/-]+=*/gi, "$1 [redacted]")
+        .replace(/\b(?:sk|rk|pk)_[a-z0-9_-]{12,}\b/gi, "[redacted]")
+        .replace(/\b(?:ghp|github_pat)_[a-z0-9_]{12,}\b/gi, "[redacted]")
+        .replace(/(authorization\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+        .replace(/(password|passwd|token|secret|api[_-]?key|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
+}
+function sanitizeForLog(value) {
+    if (typeof value === "string")
+        return redactString(value);
     if (!value || typeof value !== "object")
         return value;
     if (Array.isArray(value))
-        return value.map(sanitize);
+        return value.map(sanitizeForLog);
     const clean = {};
     for (const [key, raw] of Object.entries(value)) {
         if (/token|secret|password|api[_-]?key|cookie/i.test(key)) {
@@ -16,7 +28,7 @@ function sanitize(value) {
             clean[key] = { name: raw.name, message: raw.message, stack: raw.stack };
         }
         else {
-            clean[key] = sanitize(raw);
+            clean[key] = sanitizeForLog(raw);
         }
     }
     return clean;
@@ -26,7 +38,7 @@ function write(level, traceId, event, payload = {}) {
         level,
         traceId,
         event,
-        payload: sanitize(payload),
+        payload: sanitizeForLog(payload),
         at: new Date().toISOString(),
     };
     const line = JSON.stringify(entry);

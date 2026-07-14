@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-import { agentDir, configFile, memoryFile, repoDir, skillsDir, systemPromptFile } from "./paths";
+import { agentDir, configFile, memoryFile, systemPromptFile } from "./paths";
 import type { DesktopAppDefinition } from "../tools/computer/contracts";
 import { DesktopRegistry } from "../tools/computer/apps";
 
@@ -50,20 +50,20 @@ export type AgentConfig = {
   ai: AiProviderConfig;
   runtime?: {
     commandTimeoutMs?: number;
+    runDeadlineMs?: number;
     timezone?: string;
     locale?: string;
+  };
+  logging?: {
+    rawAiInteractions?: boolean;
+    rawAiRetentionDays?: number;
   };
   schedules?: ScheduledCheckConfig[];
   desktop?: {
     apps?: DesktopAppDefinition[];
   };
   permissions: {
-    workspaceRoot: string;
-    allowedReadRoots: string[];
-    allowedWriteRoots: string[];
-    deniedPaths: string[];
     desktopAppIds?: string[];
-    desktopCaptureRequiresConfirmation?: boolean;
     browser?: BrowserPermissionConfig;
   };
   browser?: BrowserResourceConfig;
@@ -80,11 +80,14 @@ export type BrowserPermissionConfig = {
 };
 
 export type ScheduledCheckConfig = {
+  /** Stable schedule identifier. This is also the persisted schedule ID. */
   name: string;
   label?: string;
   command: string;
   /** Standard 5-field cron expression, e.g. "0 17 * * 1-5" (Mon–Fri at 17:00). */
   cron: string;
+  /** IANA timezone for this schedule. Defaults to runtime.timezone. */
+  timezone?: string;
   enabled?: boolean;
   delivery?: "telegram" | "silent";
   notifyOnChangeOnly?: boolean;
@@ -136,18 +139,19 @@ const defaultConfig: AgentConfig = {
   },
   runtime: {
     commandTimeoutMs: 10 * 60 * 1000,
+    runDeadlineMs: 30 * 60 * 1000,
     timezone: "Asia/Ho_Chi_Minh",
     locale: "vi-VN",
+  },
+  logging: {
+    rawAiInteractions: true,
+    rawAiRetentionDays: 14,
   },
   schedules: [],
   desktop: {
     apps: [],
   },
   permissions: {
-    workspaceRoot: repoDir,
-    allowedReadRoots: [repoDir],
-    allowedWriteRoots: [agentDir, skillsDir],
-    deniedPaths: ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
     browser: DEFAULT_BROWSER_PERMISSIONS,
   },
   browser: DEFAULT_BROWSER_RESOURCE_CONFIG,
@@ -222,6 +226,10 @@ export function loadAgentConfig(): AgentConfig {
       ...defaultConfig.runtime,
       ...config.runtime,
     },
+    logging: {
+      ...defaultConfig.logging,
+      ...config.logging,
+    },
     schedules: config.schedules || defaultConfig.schedules,
     desktop: {
       ...defaultConfig.desktop,
@@ -252,6 +260,10 @@ export function loadAgentConfig(): AgentConfig {
     },
   };
 
+  if (typeof merged.runtime.runDeadlineMs === "number" && merged.runtime.runDeadlineMs <= 0) {
+    throw new Error("Invalid config: runtime.runDeadlineMs must be positive");
+  }
+
   // Expand ~ home directory symbol in profilesRoot
   const rawRoot = merged.browser.profilesRoot || "~/.my-agent/browser/profiles";
   const resolvedRoot = rawRoot.startsWith("~/")
@@ -262,8 +274,6 @@ export function loadAgentConfig(): AgentConfig {
   // Validate the merged browser configuration
   validateBrowserConfig(merged.browser);
 
-  const resolveFromAgent = (candidate: string): string =>
-    path.isAbsolute(candidate) ? candidate : path.resolve(agentDir, candidate);
   const desktopApps = new DesktopRegistry(merged.desktop.apps || []).list();
   return {
     ...merged,
@@ -273,10 +283,6 @@ export function loadAgentConfig(): AgentConfig {
     },
     permissions: {
       ...merged.permissions,
-      workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
-      allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
-      allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
-      deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
       desktopAppIds: desktopApps.map((app) => app.id),
       browser: merged.permissions.browser,
     },

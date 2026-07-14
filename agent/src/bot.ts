@@ -14,6 +14,7 @@ import { TelegramClient } from "./telegram/client";
 import { loadTelegramConfig } from "./telegram/config";
 import { formatDate } from "./utils";
 import { loadAgentConfig } from "./config/app";
+import { stopRunningCommand, waitForRunningCommandStop } from "./commands";
 import { seedScheduledJobsFromConfig, ScheduledCheckRunner } from "./scheduler";
 import { browserService } from "./browser/browser-service";
 
@@ -52,6 +53,7 @@ async function poll(): Promise<void> {
 
   seedScheduledJobsFromConfig(agentConfig.schedules || []);
   globalScheduledRunner = new ScheduledCheckRunner(
+    telegramConfig.allowedUserId,
     telegramConfig.allowedChatId,
     (text) => telegram.sendMessage(telegramConfig.allowedChatId, text),
     agentConfig.runtime?.commandTimeoutMs,
@@ -138,6 +140,11 @@ async function handleShutdown(signal: NodeJS.Signals) {
   try {
     if (globalScheduledRunner) {
       globalScheduledRunner.stop();
+    }
+    const stopped = stopRunningCommand();
+    if (stopped.stopped) {
+      log.info("system-shutdown", "bot.shutdown.command_stop_requested", { traceId: stopped.traceId });
+      await waitForRunningCommandStop();
     }
     const result = await browserService.shutdown();
     log.info("system-shutdown", "bot.shutdown.completed", result);

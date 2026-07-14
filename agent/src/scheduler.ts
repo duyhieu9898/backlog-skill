@@ -3,18 +3,18 @@ import crypto from "node:crypto";
 import { loadAgentConfig, type ScheduledCheckConfig } from "./config/app";
 import { nextAfter, validateCron } from "./cron";
 import {
-  commandPreviewDigest,
   loadCommandCatalog,
-  previewCommand,
-  runTrackedCommand,
   withCommandInput,
   type AgentCommand,
   type CommandCatalog,
 } from "./commands";
 import { generateTraceId } from "./logging/trace";
 import { log } from "./logging/logger";
+import { AgentRuntime, type ScheduledToolContext } from "./runtime/agentRuntime";
 import {
   claimDueScheduledJob,
+  deleteRuntimeScheduledJob,
+  disableRemovedConfigScheduledJobs,
   getScheduledJob,
   listDueScheduledJobs,
   listScheduledJobs,
@@ -23,7 +23,6 @@ import {
   recordScheduledRun,
   setJsonState,
   updateScheduledJobState,
-  upsertPendingConfirmation,
   upsertScheduledJob,
   type ScheduledJobRow,
   type ScheduledRunRow,
@@ -31,9 +30,13 @@ import {
 import { tailLines } from "./utils";
 
 export type ScheduledCheck = {
+  /** Stable persisted schedule ID; currently identical to name for compatibility. */
+  id: string;
   name: string;
+  source: "config" | "runtime";
   label: string;
   cron: string;
+  timezone: string;
   enabled: boolean;
   delivery: "telegram" | "silent";
   notifyOnChangeOnly: boolean;
@@ -64,6 +67,7 @@ export type SchedulerNotifier = (text: string) => Promise<void>;
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_TICK_MS = 30_000;
 let configSeeded = false;
+const schedulerRuntime = new AgentRuntime();
 
 function hashOutput(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -78,13 +82,17 @@ export function seedScheduledJobsFromConfig(
   configs: ScheduledCheckConfig[] = loadAgentConfig().schedules || [],
   catalog: CommandCatalog = loadCommandCatalog(),
 ): void {
+  const activeNames: string[] = [];
   for (const config of configs) {
     const check = normalizeScheduledCheck(config, catalog);
+    activeNames.push(check.name);
     upsertScheduledJob({
       name: check.name,
+      source: "config",
       label: check.label,
       commandName: check.command.name || check.command.label,
       cronExpr: check.cron,
+      timezone: check.timezone,
       enabled: check.enabled,
       delivery: check.delivery,
       notifyOnChangeOnly: check.notifyOnChangeOnly,
@@ -92,6 +100,7 @@ export function seedScheduledJobsFromConfig(
       nextRunAt: nextRunAtFor(check),
     });
   }
+  disableRemovedConfigScheduledJobs(activeNames);
 }
 
 function ensureScheduledJobsSeeded(
@@ -131,21 +140,58 @@ export function normalizeScheduledCheck(
 
   const command = catalog.byAlias[config.command.toLowerCase()];
   if (!command) throw new Error(`Scheduled check ${name} references unknown command: ${config.command}`);
-  if (command.requiresConfirmation || command.externalSideEffect) {
-    throw new Error(`Scheduled check ${name} must reference a read-only command.`);
-  }
   validatePrepareEffect(name, config.prepareEffect, catalog);
+  const timezone = config.timezone?.trim() || loadAgentConfig().runtime?.timezone || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
+  } catch {
+    throw new Error(`Scheduled check ${name} has invalid timezone: ${timezone}`);
+  }
 
   return {
+    id: name,
     name,
+    source: "config",
     label: config.label?.trim() || command.label,
     cron: config.cron,
+    timezone,
     enabled: config.enabled === true,
     delivery: config.delivery || "telegram",
     notifyOnChangeOnly: config.notifyOnChangeOnly === true,
     prepareEffect: config.prepareEffect,
     command,
   };
+}
+
+export function createRuntimeSchedule(
+  config: ScheduledCheckConfig,
+  catalog: CommandCatalog = loadCommandCatalog(),
+): ScheduledCheck {
+  const existing = getScheduledJob(config.name.trim());
+  if (existing) {
+    throw new Error(existing.source === "config"
+      ? `Schedule ${config.name} is owned by config.json.`
+      : `Schedule ${config.name} already exists.`);
+  }
+  const check = normalizeScheduledCheck({ ...config, enabled: config.enabled ?? true }, catalog);
+  upsertScheduledJob({
+    name: check.name,
+    source: "runtime",
+    label: check.label,
+    commandName: check.command.name || check.command.label,
+    cronExpr: check.cron,
+    timezone: check.timezone,
+    enabled: check.enabled,
+    delivery: check.delivery,
+    notifyOnChangeOnly: check.notifyOnChangeOnly,
+    prepareEffect: check.prepareEffect,
+    nextRunAt: nextRunAtFor(check),
+  });
+  return { ...check, source: "runtime" };
+}
+
+export function removeRuntimeSchedule(name: string): boolean {
+  return deleteRuntimeScheduledJob(name);
 }
 
 function validatePrepareEffect(
@@ -156,14 +202,8 @@ function validatePrepareEffect(
   if (!prepareEffect) return;
   const prepare = catalog.byAlias[prepareEffect.prepareCommand.toLowerCase()];
   if (!prepare) throw new Error(`Scheduled check ${name} references unknown prepare command.`);
-  if (prepare.requiresConfirmation || prepare.externalSideEffect) {
-    throw new Error(`Scheduled check ${name} prepare command must be read-only.`);
-  }
   const effect = catalog.byAlias[prepareEffect.effectCommand.toLowerCase()];
   if (!effect) throw new Error(`Scheduled check ${name} references unknown effect command.`);
-  if (!effect.requiresConfirmation && !effect.externalSideEffect) {
-    throw new Error(`Scheduled check ${name} effect command must require confirmation.`);
-  }
 }
 
 function scheduledCheckFromRow(row: ScheduledJobRow, catalog: CommandCatalog): ScheduledCheck {
@@ -171,9 +211,12 @@ function scheduledCheckFromRow(row: ScheduledJobRow, catalog: CommandCatalog): S
   if (!command) throw new Error(`Scheduled check ${row.name} references unknown command: ${row.command_name}`);
   if (!row.cron_expr) throw new Error(`Scheduled check ${row.name} has no cron expression stored.`);
   return {
+    id: row.name,
     name: row.name,
+    source: row.source === "runtime" ? "runtime" : "config",
     label: row.label,
     cron: row.cron_expr,
+    timezone: row.timezone || loadAgentConfig().runtime?.timezone || "UTC",
     enabled: row.enabled === 1,
     delivery: row.delivery === "silent" ? "silent" : "telegram",
     notifyOnChangeOnly: row.notify_on_change_only === 1,
@@ -250,7 +293,7 @@ export function findScheduledCheck(name: string, checks = loadScheduledChecks())
 export function nextRunAtFor(
   check: ScheduledCheck,
   from = new Date(),
-  timeZone = loadAgentConfig().runtime?.timezone || "UTC",
+  timeZone = check.timezone || loadAgentConfig().runtime?.timezone || "UTC",
 ): string | null {
   if (!check.enabled) return null;
   return nextAfter(check.cron, from, timeZone);
@@ -259,18 +302,23 @@ export function nextRunAtFor(
 
 export async function runScheduledCheck(input: {
   check: ScheduledCheck;
+  /** The configured owner that may approve a newly-discovered scheduled effect. */
+  principalId: string;
   chatId: string;
   defaultTimeoutMs?: number;
   notify?: SchedulerNotifier;
   forceNotify?: boolean;
   leaseOwner?: string;
+  runtime?: AgentRuntime;
 }): Promise<ScheduledCheckResult> {
   if (!getScheduledJob(input.check.name)) {
     upsertScheduledJob({
       name: input.check.name,
+      source: input.check.source,
       label: input.check.label,
       commandName: input.check.command.name || input.check.command.label,
       cronExpr: input.check.cron,
+      timezone: input.check.timezone,
       enabled: input.check.enabled,
       delivery: input.check.delivery,
       notifyOnChangeOnly: input.check.notifyOnChangeOnly,
@@ -285,124 +333,122 @@ export async function runScheduledCheck(input: {
     commandName: input.check.command.name,
   });
 
-  let output = "";
-  let exitCode = 1;
-  let status: "success" | "failed" = "failed";
-  try {
-    const result = await runTrackedCommand({
+  return (input.runtime || schedulerRuntime).executeScheduled({
+    runId: traceId,
+    scheduleId: input.check.id,
+    principalId: input.principalId,
+    chatId: input.chatId,
+    userRequest: `Run configured schedule ${input.check.name}: ${input.check.label}.`,
+    defaultTimeoutMs: input.defaultTimeoutMs,
+  }, async (tools) => {
+    let output = "";
+    let exitCode = 1;
+    let status: "success" | "failed" = "failed";
+    try {
+    const result = await tools.runCommand(input.check.command);
+    const data = result.data as { output?: string; exitCode?: number; signal?: string } | undefined;
+    output = data?.output || result.summary;
+    exitCode = data?.exitCode ?? (result.ok ? 0 : 1);
+    status = result.ok && !data?.signal ? "success" : "failed";
+    } catch (error) {
+      output = error instanceof Error ? error.message : String(error);
+    }
+
+    if (status === "success" && input.check.prepareEffect) {
+      const effect = await runConfiguredEffect(input.check, tools);
+      output = `${output}\n\n${effect.output}`.trim();
+      if (!effect.ok) {
+        status = "failed";
+        exitCode = effect.exitCode;
+      }
+    }
+
+    const outputTail = tailLines(output, 20).slice(-2000);
+    const outputDigest = hashOutput(output);
+    const finishedAt = nowIso();
+    const previous = getScheduledJob(input.check.name);
+    const unchanged = previous?.last_output_digest === outputDigest;
+    const shouldNotify =
+      input.check.delivery === "telegram" &&
+      input.notify !== undefined &&
+      (input.forceNotify || status === "failed" || !input.check.notifyOnChangeOnly || !unchanged);
+    let notificationSent = false;
+    const notification = formatScheduledCheckResult({
+      name: input.check.name,
+      label: input.check.label,
       traceId,
-      chatId: input.chatId,
-      action: input.check.command,
-      defaultTimeoutMs: input.defaultTimeoutMs,
+      status,
+      exitCode,
+      outputTail: summarizeOutput(output, outputTail),
+      outputDigest,
+      notificationSent: false,
+      finishedAt,
     });
-    output = result.output;
-    exitCode = result.exitCode;
-    status = result.exitCode === 0 && !result.signal ? "success" : "failed";
-  } catch (error) {
-    output = error instanceof Error ? error.message : String(error);
-  }
 
-  const outputTail = tailLines(output, 20).slice(-2000);
-  const outputDigest = hashOutput(output);
-  const finishedAt = nowIso();
-  const previous = getScheduledJob(input.check.name);
-  const unchanged = previous?.last_output_digest === outputDigest;
-  const shouldNotify =
-    input.check.delivery === "telegram" &&
-    input.notify !== undefined &&
-    (input.forceNotify || status === "failed" || !input.check.notifyOnChangeOnly || !unchanged);
-  let notificationSent = false;
-  let notification = formatScheduledCheckResult({
-    name: input.check.name,
-    label: input.check.label,
-    traceId,
-    status,
-    exitCode,
-    outputTail: summarizeOutput(output, outputTail),
-    outputDigest,
-    notificationSent: false,
-    finishedAt,
+    if (shouldNotify) {
+      await input.notify!(notification);
+      notificationSent = true;
+    }
+
+    const scheduledResult: ScheduledCheckResult = {
+      name: input.check.name,
+      label: input.check.label,
+      traceId,
+      status,
+      exitCode,
+      outputTail,
+      outputDigest,
+      notificationSent,
+      finishedAt,
+    };
+    const nextRunAt = nextRunAtFor(input.check);
+    recordScheduledRun({
+      jobName: input.check.name,
+      leaseOwner: input.leaseOwner,
+      traceId,
+      status,
+      exitCode,
+      outputTail,
+      outputDigest,
+      notificationSent,
+      startedAt,
+      finishedAt,
+      nextRunAt,
+    });
+    setJsonState("runtime_state", "lastScheduledRun", scheduledResult);
+    log.info(traceId, status === "success" ? "schedule.completed" : "schedule.failed", scheduledResult);
+    return scheduledResult;
   });
-
-  if (status === "success" && input.check.prepareEffect && shouldNotify) {
-    const preview = await buildEffectPreview(input.check, traceId, input.chatId, input.defaultTimeoutMs);
-    if (preview) notification = `${notification}\n\n${preview}`;
-  }
-
-  if (shouldNotify) {
-    await input.notify!(notification);
-    notificationSent = true;
-  }
-
-  const scheduledResult: ScheduledCheckResult = {
-    name: input.check.name,
-    label: input.check.label,
-    traceId,
-    status,
-    exitCode,
-    outputTail,
-    outputDigest,
-    notificationSent,
-    finishedAt,
-  };
-  const nextRunAt = nextRunAtFor(input.check);
-  recordScheduledRun({
-    jobName: input.check.name,
-    leaseOwner: input.leaseOwner,
-    traceId,
-    status,
-    exitCode,
-    outputTail,
-    outputDigest,
-    notificationSent,
-    startedAt,
-    finishedAt,
-    nextRunAt,
-  });
-  setJsonState("runtime_state", "lastScheduledRun", scheduledResult);
-  log.info(traceId, status === "success" ? "schedule.completed" : "schedule.failed", scheduledResult);
-  return scheduledResult;
 }
 
-async function buildEffectPreview(
+async function runConfiguredEffect(
   check: ScheduledCheck,
-  traceId: string,
-  chatId: string,
-  defaultTimeoutMs?: number,
-): Promise<string | null> {
-  if (!check.prepareEffect) return null;
+  tools: ScheduledToolContext,
+): Promise<{ ok: boolean; exitCode: number; output: string }> {
+  if (!check.prepareEffect) return { ok: true, exitCode: 0, output: "" };
   const catalog = loadCommandCatalog();
   const prepare = catalog.byAlias[check.prepareEffect.prepareCommand.toLowerCase()];
   const effect = catalog.byAlias[check.prepareEffect.effectCommand.toLowerCase()];
-  if (!prepare || !effect) return null;
+  if (!prepare || !effect) return { ok: false, exitCode: 1, output: "Configured schedule effect is unavailable." };
   const preparedAction = withCommandInput(prepare, check.prepareEffect.prepareInput ?? {});
-  const result = await runTrackedCommand({
-    traceId,
-    chatId,
-    action: preparedAction,
-    defaultTimeoutMs,
-  });
-  if (result.exitCode !== 0) return `Effect preview failed for ${check.prepareEffect.effectCommand}.`;
+  const result = await tools.runCommand(preparedAction);
+  const commandData = result.data as { output?: string; exitCode?: number } | undefined;
+  if (!result.ok || commandData?.exitCode !== 0) {
+    return { ok: false, exitCode: commandData?.exitCode ?? 1, output: `Scheduled prepare step failed for ${check.prepareEffect.effectCommand}: ${commandData?.output || result.summary}` };
+  }
 
-  const effectInput = JSON.parse(result.output);
+  let effectInput: unknown;
+  try { effectInput = JSON.parse(commandData?.output || ""); } catch {
+    return { ok: false, exitCode: 1, output: `Scheduled prepare step returned invalid JSON for ${check.prepareEffect.effectCommand}.` };
+  }
   const effectAction = withCommandInput(effect, effectInput);
-  const preview = previewCommand(effectAction, defaultTimeoutMs);
-  const digest = commandPreviewDigest(preview);
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-  upsertPendingConfirmation({
-    chatId,
-    traceId,
-    commandName: effectAction.name || effectAction.label,
-    payload: { action: effectAction, preview, digest },
-    expiresAt,
-  });
-  return [
-    `Prepared follow-up preview: ${effectAction.label}`,
-    `createDates: ${JSON.stringify(effectInput.createDates || [])}`,
-    `skippedDates: ${JSON.stringify(effectInput.skippedDates || [])}`,
-    `Approval: ${digest.slice(0, 12)}`,
-    `Gõ: confirm ${effectAction.name || effectAction.label} ${digest.slice(0, 12)}`,
-  ].join("\n");
+  const effectResult = await tools.runCommand(effectAction);
+  const effectData = effectResult.data as { output?: string; exitCode?: number } | undefined;
+  return {
+    ok: effectResult.ok && effectData?.exitCode === 0,
+    exitCode: effectData?.exitCode ?? (effectResult.ok ? 0 : 1),
+    output: `Scheduled effect ${effectAction.label}: ${effectData?.output || effectResult.summary}`,
+  };
 }
 
 function summarizeOutput(output: string, fallback: string): string {
@@ -477,7 +523,7 @@ export function applyScheduleUpdate(input: {
       const expr = String(input.value);
       const cronError = validateCron(expr);
       if (cronError) return `Invalid cron expression: ${cronError}`;
-      const timeZone = loadAgentConfig().runtime?.timezone || "UTC";
+      const timeZone = row.timezone || loadAgentConfig().runtime?.timezone || "UTC";
       const nextRunAt = row.enabled ? nextAfter(expr, new Date(), timeZone) : null;
       updateScheduledJobState({
         name: input.name,
@@ -505,6 +551,7 @@ export class ScheduledCheckRunner {
   private readonly runnerId = `scheduler-${process.pid}-${Math.random().toString(16).slice(2)}`;
 
   constructor(
+    private readonly principalId: string,
     private readonly chatId: string,
     private readonly notify: SchedulerNotifier,
     private readonly defaultTimeoutMs?: number,
@@ -552,6 +599,7 @@ export class ScheduledCheckRunner {
   ): Promise<ScheduledCheckResult> {
     return runScheduledCheck({
       check,
+      principalId: this.principalId,
       chatId: this.chatId,
       defaultTimeoutMs: this.defaultTimeoutMs,
       notify: this.notify,

@@ -2,52 +2,48 @@ import { loadAgentConfig } from "../config/app";
 import {
   loadCommandCatalog,
   commandPreviewDigest,
-  evaluateCommandPermission,
   previewCommand,
-  runTrackedCommand,
   stopRunningCommand,
   type AgentCommand,
 } from "../commands";
-import { ContextHydrator } from "../context/hydrator";
-import { Compactor } from "../context/compactor";
 import { log } from "../logging/logger";
 import {
-  deletePendingConfirmation,
   getScheduledJob,
-  getPendingConfirmation,
-  insertChatMessage,
-  nowIso,
-  upsertPendingConfirmation,
+  finishRun,
   resetSession,
 } from "../storage/repositories";
 import type { SkillRegistry } from "../skills/registry";
 import type { StandardMessage } from "../types/messages";
 import { AgentToolLoop } from "../tools/loop";
+import { ApprovalService } from "../security/approvalService";
+import { AgentRuntime } from "../runtime/agentRuntime";
 import { handleDebugCommand, isDebugCommand } from "./debugCommands";
 import { presentCommandResult } from "./presenter";
 import {
   applyScheduleUpdate,
+  createRuntimeSchedule,
   findScheduledCheck,
   formatScheduleDetails,
   formatScheduleHistory,
   formatScheduledCheckResult,
   formatScheduleList,
   loadScheduledChecks,
+  removeRuntimeSchedule,
   runScheduledCheck,
   scheduleUpdatePreview,
 } from "../scheduler";
 
 export class Router {
-  private readonly hydrator: ContextHydrator;
-  private readonly compactor = new Compactor();
   private readonly commandTimeoutMs: number;
   private readonly chatLocks = new Map<string, Promise<void>>();
+  private readonly approvals = new ApprovalService();
+  private readonly runtime: AgentRuntime;
 
   constructor(
     private readonly registry: SkillRegistry,
     private readonly toolLoop = new AgentToolLoop(),
   ) {
-    this.hydrator = new ContextHydrator(registry);
+    this.runtime = new AgentRuntime(registry, this.toolLoop);
     this.commandTimeoutMs = loadAgentConfig().runtime?.commandTimeoutMs || 10 * 60 * 1000;
   }
 
@@ -74,30 +70,8 @@ export class Router {
       provider: message.provider,
       chatId: message.chatId,
     });
-    insertChatMessage({
-      chatId: message.chatId,
-      userId: message.userId,
-      role: "user",
-      content: message.text,
-      traceId: message.traceId,
-    });
-
-    let reply: string;
     try {
-      reply = await this.routeInner(message, onReplyMarkup, onArtifact);
-      insertChatMessage({
-        chatId: message.chatId,
-        userId: "agent",
-        role: "assistant",
-        content: reply,
-        traceId: message.traceId,
-      });
-
-      // Tóm tắt lịch sử chạy ngầm (background compaction)
-      this.compactor.compactIfNeeded(message.chatId).catch((err) => {
-        log.error(message.traceId, "compaction.trigger.failed", { error: err });
-      });
-
+      const reply = await this.runtime.execute(message, (signal) => this.routeInner(message, onReplyMarkup, onArtifact, signal));
       log.info(message.traceId, "route.completed", {});
       return reply;
     } catch (error) {
@@ -106,15 +80,17 @@ export class Router {
     }
   }
 
-  private async routeInner(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void): Promise<string> {
+  private async routeInner(message: StandardMessage, onReplyMarkup?: (markup: unknown) => void, onArtifact?: (artifactId: string) => void, signal?: AbortSignal): Promise<string> {
     const text = message.text.trim();
     const normalized = text.toLowerCase();
 
     if (normalized === "/stop") {
+      const cancelledRunId = this.runtime.cancelActiveRun(message.chatId);
       const result = stopRunningCommand();
-      if (!result.stopped) return "Không có lệnh nào đang chạy.";
-      log.info(message.traceId, "command.stop.requested", { runningTraceId: result.traceId });
-      return `Đã yêu cầu dừng lệnh đang chạy (traceId: ${result.traceId}).`;
+      const runId = result.traceId || cancelledRunId;
+      if (!runId) return "Không có run hoặc lệnh nào đang chạy.";
+      log.info(message.traceId, "run.stop.requested", { runningTraceId: result.traceId, runId });
+      return `Đã yêu cầu dừng run đang chạy (traceId: ${runId}).`;
     }
 
     if (normalized === "/reset") {
@@ -143,10 +119,32 @@ export class Router {
       if (!check) return `Scheduled check not found: ${name}`;
       const result = await runScheduledCheck({
         check,
+        principalId: message.userId,
         chatId: message.chatId,
         defaultTimeoutMs: this.commandTimeoutMs,
       });
       return formatScheduledCheckResult(result);
+    }
+
+    const runtimeSchedule = this.parseRuntimeSchedule(normalized);
+    if (runtimeSchedule) {
+      try {
+        if (runtimeSchedule.action === "add") {
+          const check = createRuntimeSchedule({
+            name: runtimeSchedule.name,
+            command: runtimeSchedule.command,
+            cron: runtimeSchedule.cron,
+            enabled: true,
+          });
+          return `Created runtime schedule ${check.name} (${check.cron}) for ${check.command.name}.`;
+        }
+        if (!removeRuntimeSchedule(runtimeSchedule.name)) {
+          return `Runtime schedule not found: ${runtimeSchedule.name}. Config schedules must be removed from config.json.`;
+        }
+        return `Deleted runtime schedule ${runtimeSchedule.name}.`;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
     }
 
     const scheduleUpdate = this.parseScheduleUpdate(normalized);
@@ -156,12 +154,10 @@ export class Router {
       const versionedScheduleUpdate = { ...scheduleUpdate, expectedVersion: row.version };
       const { preview, digest } = scheduleUpdatePreview(versionedScheduleUpdate);
       const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
-      upsertPendingConfirmation({
-        chatId: message.chatId,
-        traceId: message.traceId,
-        commandName: `schedule.${scheduleUpdate.action}.${scheduleUpdate.name}`,
-        payload: { scheduleUpdate: versionedScheduleUpdate, preview, digest },
-        expiresAt,
+      const pending = this.approvals.create({
+        runId: message.traceId, principalId: message.userId, chatId: message.chatId,
+        description: `Cho phép cập nhật schedule ${scheduleUpdate.name} trong run này.`,
+        actionDigest: digest, payload: { scheduleUpdate: versionedScheduleUpdate }, expiresAt,
       });
 
       if (onReplyMarkup) {
@@ -169,8 +165,10 @@ export class Router {
           inline_keyboard: [
             [
               {
-                text: `✅ Xác nhận Update Schedule`,
-                callback_data: `confirm schedule.${scheduleUpdate.action}.${scheduleUpdate.name} ${digest.slice(0, 12)}`,
+                text: "✅ Approve", callback_data: `approve ${pending.short_id}`,
+              },
+              {
+                text: "❌ Reject", callback_data: `reject ${pending.short_id}`,
               },
             ],
           ],
@@ -183,8 +181,8 @@ export class Router {
         `Name: ${scheduleUpdate.name}`,
         `Version: ${row.version}`,
         scheduleUpdate.value === undefined ? "" : `Value: ${scheduleUpdate.value}`,
-        `Approval: ${digest.slice(0, 12)}`,
-        `Gõ: confirm schedule.${scheduleUpdate.action}.${scheduleUpdate.name} ${digest.slice(0, 12)}`,
+        `Approval ID: ${pending.short_id}`,
+        `Gõ: approve ${pending.short_id} hoặc reject ${pending.short_id}`,
       ].filter(Boolean).join("\n");
     }
 
@@ -197,44 +195,45 @@ export class Router {
       return handleDebugCommand(text, this.registry);
     }
 
-    const toolConfirmed = await this.toolLoop.consumeConfirmation(message, onArtifact, onReplyMarkup);
-    if (toolConfirmed) return toolConfirmed;
-    const confirmed = await this.consumeConfirmation(message);
-    if (confirmed) return confirmed;
+    const toolScopedApproval = await this.toolLoop.consumeScopedApproval(message, onArtifact, onReplyMarkup);
+    if (toolScopedApproval) return toolScopedApproval;
+    const scopedApproval = await this.consumeScopedApproval(message, signal);
+    if (scopedApproval) return scopedApproval;
 
     const catalog = loadCommandCatalog();
     const action = catalog.byAlias[normalized];
     if (action) {
-      await this.cancelPending(message.chatId);
-      return this.prepareOrRun(message, action, onReplyMarkup);
+      return this.prepareOrRun(message, action, onReplyMarkup, signal);
     }
 
     if (normalized.startsWith("/")) {
       return `Lệnh không tồn tại. Danh sách lệnh hỗ trợ:\n\n${handleDebugCommand("/commands", this.registry)}`;
     }
 
-    const context = this.hydrator.hydrate(message);
-    return this.toolLoop.run(message, context.prompt, onReplyMarkup, onArtifact);
+    return this.runtime.runAgent(message, onReplyMarkup, onArtifact, signal);
   }
 
   private async prepareOrRun(
     message: StandardMessage,
     action: AgentCommand,
     onReplyMarkup?: (markup: unknown) => void,
+    signal?: AbortSignal,
   ): Promise<string> {
-    const decision = evaluateCommandPermission(action);
-    if (decision.outcome === "deny") {
-      return `Từ chối [${decision.reasonCode}]: ${decision.reason}`;
+    const prepared = this.runtime.prepareCommand(action, this.commandTimeoutMs, message.text);
+    if (prepared.blocked) {
+      return `Từ chối [${prepared.blocked.code}]: ${prepared.blocked.summary}`;
     }
-    if (decision.outcome === "confirm") {
+    if (prepared.requiresConfirmation) {
       const preview = previewCommand(action, this.commandTimeoutMs);
-      const digest = commandPreviewDigest(preview);
+      const digest = prepared.digest;
       const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
-      upsertPendingConfirmation({
+      const pending = this.approvals.create({
+        runId: message.traceId,
+        principalId: message.userId,
         chatId: message.chatId,
-        traceId: message.traceId,
-        commandName: action.name || action.label,
-        payload: { action, preview, digest },
+        description: `Cho phép chạy ${action.label} trong run này.`,
+        actionDigest: digest,
+        payload: { action, preview },
         expiresAt,
       });
 
@@ -243,8 +242,12 @@ export class Router {
           inline_keyboard: [
             [
               {
-                text: `✅ Xác nhận: ${action.label}`,
-                callback_data: `confirm ${action.name || action.label} ${digest.slice(0, 12)}`,
+                text: "✅ Approve",
+                callback_data: `approve ${pending.short_id}`,
+              },
+              {
+                text: "❌ Reject",
+                callback_data: `reject ${pending.short_id}`,
               },
             ],
           ],
@@ -257,102 +260,51 @@ export class Router {
         `Args: ${JSON.stringify(preview.args)}`,
         `Cwd: ${preview.cwd}`,
         `Timeout: ${preview.timeoutMs} ms`,
-        `Approval: ${digest.slice(0, 12)}`,
-        `Gõ: confirm ${action.name || action.label} ${digest.slice(0, 12)}`,
+        `Phạm vi: Cho phép chạy ${action.label} trong run này.`,
+        `Approval ID: ${pending.short_id}`,
+        `Gõ: approve ${pending.short_id} hoặc reject ${pending.short_id}`,
       ].join("\n");
     }
 
-    return this.run(message, action, false);
+    return this.run(message, action, false, signal);
   }
 
-  private async consumeConfirmation(message: StandardMessage): Promise<string | null> {
-    const text = message.text.trim().toLowerCase();
-
-    // Check if it's a confirmation message
-    const isShortConfirm = text === "y" || text === "yes" || text === "confirm";
-    const matchTokenOnly = text.match(/^confirm\s+([a-f0-9]{12})$/);
-    const matchFull = text.match(/^confirm\s+(\S+)\s+([a-f0-9]{12})$/);
-
-    if (!isShortConfirm && !matchTokenOnly && !matchFull) {
-      if (text.startsWith("confirm")) {
-        return "Confirmation cần command name và approval token từ preview, hoặc chỉ cần gõ 'confirm', 'y', 'yes'.";
-      }
-      return null;
-    }
-
-    const pending = getPendingConfirmation(message.chatId);
-    if (!pending) {
-      if (text.startsWith("confirm") || text === "y" || text === "yes") {
-        return "Không có confirmation nào đang chờ.";
-      }
-      return null;
-    }
-
-    if (pending.expires_at <= nowIso()) {
-      deletePendingConfirmation(message.chatId);
-      return "Confirmation đã hết hạn. Gửi lại command để tạo confirmation mới.";
-    }
-
-    let payload: {
-      action: AgentCommand;
-      preview: ReturnType<typeof previewCommand>;
-      digest: string;
-      scheduleUpdate?: ReturnType<Router["parseScheduleUpdate"]>;
-    };
-    let recomputedDigest: string;
+  private async consumeScopedApproval(message: StandardMessage, signal?: AbortSignal): Promise<string | null> {
+    const match = message.text.trim().toLowerCase().match(/^(approve|reject)\s+([a-f0-9]{8})$/);
+    if (!match) return null;
+    const candidate = this.approvals.get(match[2], message.userId, message.chatId);
+    if (!candidate) return "Approval không tồn tại, đã hết hạn, hoặc không còn hợp lệ.";
+    let payload: { action?: AgentCommand; preview?: ReturnType<typeof previewCommand>; scheduleUpdate?: ReturnType<Router["parseScheduleUpdate"]> & { expectedVersion: number } };
     try {
-      payload = JSON.parse(pending.payload_json) as typeof payload;
+      payload = JSON.parse(candidate.payload_json) as typeof payload;
       if (payload.scheduleUpdate) {
-        recomputedDigest = scheduleUpdatePreview(payload.scheduleUpdate).digest;
-        if (payload.digest !== recomputedDigest) {
-          throw new Error("Pending schedule update digest mismatch.");
-        }
-
-        // Match check
-        if (matchFull) {
-          if (pending.command_name.toLowerCase() !== matchFull[1] || payload.digest.slice(0, 12) !== matchFull[2]) {
-            return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
-          }
-        } else if (matchTokenOnly) {
-          if (payload.digest.slice(0, 12) !== matchTokenOnly[1]) {
-            return `Confirmation token không khớp.`;
-          }
-        }
-        // If isShortConfirm (just "confirm", "y", "yes"), we auto-match without token check.
-
-        deletePendingConfirmation(message.chatId);
-        return applyScheduleUpdate(payload.scheduleUpdate);
+        const digest = scheduleUpdatePreview(payload.scheduleUpdate).digest;
+        const pending = this.approvals.resolve({ shortId: match[2], principalId: message.userId, chatId: message.chatId, actionDigest: digest, approve: match[1] === "approve" });
+        if (!pending) return "Approval không tồn tại, đã hết hạn, hoặc action đã thay đổi.";
+        if (match[1] === "reject") return "Đã từ chối action đang chờ.";
+        const result = applyScheduleUpdate(payload.scheduleUpdate);
+        finishRun(pending.run_id, "completed");
+        return result;
       }
-
-      if (!payload.action || !payload.preview || typeof payload.digest !== "string") {
-        throw new Error("Pending confirmation payload is incomplete.");
-      }
-      recomputedDigest = commandPreviewDigest(previewCommand(payload.action, this.commandTimeoutMs));
-      if (payload.digest !== recomputedDigest || commandPreviewDigest(payload.preview) !== recomputedDigest) {
-        throw new Error("Pending confirmation digest mismatch.");
-      }
+      if (!payload.action) return null;
+    } catch {
+      return "Approval không còn hợp lệ.";
+    }
+    const digest = commandPreviewDigest(previewCommand(payload.action, this.commandTimeoutMs));
+    const pending = this.approvals.resolve({
+      shortId: match[2], principalId: message.userId, chatId: message.chatId,
+      actionDigest: digest, approve: match[1] === "approve",
+    });
+    if (!pending) return "Approval không tồn tại, đã hết hạn, hoặc không còn hợp lệ.";
+    if (match[1] === "reject") return "Đã từ chối action đang chờ.";
+    try {
+      const result = await this.run(message, payload.action, true, signal);
+      finishRun(pending.run_id, "completed");
+      return result;
     } catch (error) {
-      deletePendingConfirmation(message.chatId);
-      log.warn(message.traceId, "confirmation.integrity_failed", {
-        commandName: pending.command_name,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return "Confirmation không còn hợp lệ vì action đã thay đổi. Gửi lại command để tạo preview mới.";
+      finishRun(pending.run_id, "failed", error instanceof Error ? error.message : String(error));
+      throw error;
     }
-
-    // Match check for commands
-    if (matchFull) {
-      if (pending.command_name.toLowerCase() !== matchFull[1] || payload.digest.slice(0, 12) !== matchFull[2]) {
-        return `Confirmation không khớp. Dùng đúng command và approval token trong preview.`;
-      }
-    } else if (matchTokenOnly) {
-      if (payload.digest.slice(0, 12) !== matchTokenOnly[1]) {
-        return `Confirmation token không khớp.`;
-      }
-    }
-
-    deletePendingConfirmation(message.chatId);
-    return this.run(message, payload.action, true);
   }
 
   private parseScheduleUpdate(
@@ -373,29 +325,45 @@ export class Router {
     return null;
   }
 
-  private async cancelPending(chatId: string): Promise<void> {
-    if (getPendingConfirmation(chatId)) deletePendingConfirmation(chatId);
+  private parseRuntimeSchedule(
+    normalized: string,
+  ): { action: "add"; name: string; cron: string; command: string } | { action: "delete"; name: string } | null {
+    const parts = normalized.split(/\s+/);
+    if (parts[0] !== "/schedule") return null;
+    if (parts[1] === "delete" && parts[2] && parts.length === 3) {
+      return { action: "delete", name: parts[2] };
+    }
+    // /schedule add <name> <minute> <hour> <day-of-month> <month> <day-of-week> <command>
+    if (parts[1] === "add" && parts.length === 9) {
+      return { action: "add", name: parts[2], cron: parts.slice(3, 8).join(" "), command: parts[8] };
+    }
+    return null;
   }
 
   private async run(
     message: StandardMessage,
     action: AgentCommand,
     confirmationGranted = false,
+    signal?: AbortSignal,
   ): Promise<string> {
-    const result = await runTrackedCommand({
+    const prepared = this.runtime.prepareCommand(action, this.commandTimeoutMs, message.text);
+    if (prepared.blocked) throw new Error(`Permission deny: ${prepared.blocked.summary}`);
+    const result = await this.runtime.runCommand(action, {
+      runId: message.traceId,
       traceId: message.traceId,
       chatId: message.chatId,
-      action,
       defaultTimeoutMs: this.commandTimeoutMs,
       confirmationGranted,
+      userIntent: message.text,
+      signal,
     });
-    const ok = result.exitCode === 0 && !result.signal;
+    const data = result.data as { exitCode?: number; signal?: string; output?: string } | undefined;
     return presentCommandResult({
       label: action.label,
       traceId: message.traceId,
-      ok,
-      exit: String(result.exitCode || result.signal || "unknown"),
-      output: result.output,
+      ok: result.ok,
+      exit: String(data?.exitCode ?? data?.signal ?? "unknown"),
+      output: data?.output || result.summary,
     });
   }
 }

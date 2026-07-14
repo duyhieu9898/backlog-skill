@@ -139,7 +139,7 @@ function handleDebugCommand(text, registry) {
             `🔄 current: ${currentRun ? JSON.stringify(currentRun) : "none"}`,
             "",
             "📋 Operations:",
-            `  ├─ 🗳️ pending confirmations: ${(0, repositories_1.countPendingConfirmations)()}`,
+            `  ├─ 🗳️ pending approvals: ${(0, repositories_1.countPendingApprovals)()}`,
             `  ├─ ⚙️ loaded commands: ${catalog.allow.length}`,
             `  ├─ 🧩 loaded skills: ${registry.listSkills().length}`,
             `  └─ ⚠️ skill registry errors: ${registry.listErrors().length}`,

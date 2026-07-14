@@ -18,6 +18,7 @@ const client_1 = require("./telegram/client");
 const config_1 = require("./telegram/config");
 const utils_1 = require("./utils");
 const app_1 = require("./config/app");
+const commands_1 = require("./commands");
 const scheduler_1 = require("./scheduler");
 const browser_service_1 = require("./browser/browser-service");
 (0, env_1.loadEnv)(node_path_1.default.join(paths_1.agentDir, ".env"));
@@ -48,7 +49,7 @@ async function poll() {
         offset = await initializeOffset();
     }
     (0, scheduler_1.seedScheduledJobsFromConfig)(agentConfig.schedules || []);
-    globalScheduledRunner = new scheduler_1.ScheduledCheckRunner(telegramConfig.allowedChatId, (text) => telegram.sendMessage(telegramConfig.allowedChatId, text), agentConfig.runtime?.commandTimeoutMs);
+    globalScheduledRunner = new scheduler_1.ScheduledCheckRunner(telegramConfig.allowedUserId, telegramConfig.allowedChatId, (text) => telegram.sendMessage(telegramConfig.allowedChatId, text), agentConfig.runtime?.commandTimeoutMs);
     globalScheduledRunner.start();
     while (true) {
         try {
@@ -122,6 +123,11 @@ async function handleShutdown(signal) {
     try {
         if (globalScheduledRunner) {
             globalScheduledRunner.stop();
+        }
+        const stopped = (0, commands_1.stopRunningCommand)();
+        if (stopped.stopped) {
+            logger_1.log.info("system-shutdown", "bot.shutdown.command_stop_requested", { traceId: stopped.traceId });
+            await (0, commands_1.waitForRunningCommandStop)();
         }
         const result = await browser_service_1.browserService.shutdown();
         logger_1.log.info("system-shutdown", "bot.shutdown.completed", result);

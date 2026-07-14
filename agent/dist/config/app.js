@@ -49,18 +49,19 @@ const defaultConfig = {
     },
     runtime: {
         commandTimeoutMs: 10 * 60 * 1000,
+        runDeadlineMs: 30 * 60 * 1000,
         timezone: "Asia/Ho_Chi_Minh",
         locale: "vi-VN",
+    },
+    logging: {
+        rawAiInteractions: true,
+        rawAiRetentionDays: 14,
     },
     schedules: [],
     desktop: {
         apps: [],
     },
     permissions: {
-        workspaceRoot: paths_1.repoDir,
-        allowedReadRoots: [paths_1.repoDir],
-        allowedWriteRoots: [paths_1.agentDir, paths_1.skillsDir],
-        deniedPaths: ["/etc", "/usr", "/bin", "/boot", "/proc", "/sys", "/dev"],
         browser: DEFAULT_BROWSER_PERMISSIONS,
     },
     browser: exports.DEFAULT_BROWSER_RESOURCE_CONFIG,
@@ -134,6 +135,10 @@ function loadAgentConfig() {
             ...defaultConfig.runtime,
             ...config.runtime,
         },
+        logging: {
+            ...defaultConfig.logging,
+            ...config.logging,
+        },
         schedules: config.schedules || defaultConfig.schedules,
         desktop: {
             ...defaultConfig.desktop,
@@ -163,6 +168,9 @@ function loadAgentConfig() {
             profiles: config.browser?.profiles ?? defaultConfig.browser?.profiles ?? {},
         },
     };
+    if (typeof merged.runtime.runDeadlineMs === "number" && merged.runtime.runDeadlineMs <= 0) {
+        throw new Error("Invalid config: runtime.runDeadlineMs must be positive");
+    }
     // Expand ~ home directory symbol in profilesRoot
     const rawRoot = merged.browser.profilesRoot || "~/.my-agent/browser/profiles";
     const resolvedRoot = rawRoot.startsWith("~/")
@@ -171,7 +179,6 @@ function loadAgentConfig() {
     merged.browser.profilesRoot = resolvedRoot;
     // Validate the merged browser configuration
     validateBrowserConfig(merged.browser);
-    const resolveFromAgent = (candidate) => node_path_1.default.isAbsolute(candidate) ? candidate : node_path_1.default.resolve(paths_1.agentDir, candidate);
     const desktopApps = new apps_1.DesktopRegistry(merged.desktop.apps || []).list();
     return {
         ...merged,
@@ -181,10 +188,6 @@ function loadAgentConfig() {
         },
         permissions: {
             ...merged.permissions,
-            workspaceRoot: resolveFromAgent(merged.permissions.workspaceRoot),
-            allowedReadRoots: merged.permissions.allowedReadRoots.map(resolveFromAgent),
-            allowedWriteRoots: merged.permissions.allowedWriteRoots.map(resolveFromAgent),
-            deniedPaths: merged.permissions.deniedPaths.map(resolveFromAgent),
             desktopAppIds: desktopApps.map((app) => app.id),
             browser: merged.permissions.browser,
         },

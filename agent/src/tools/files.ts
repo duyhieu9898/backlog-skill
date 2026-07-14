@@ -109,6 +109,9 @@ export class FileTools {
     }
 
     if (decision.outcome === "confirm") {
+      if (action.kind === "file.read" || action.kind === "file.list" || action.kind === "file.exists") {
+        return { ok: false, code: decision.reasonCode, summary: decision.reason };
+      }
       const preview = this.previewNormalized(decision.action as FileMutationAction);
       log.info(context.traceId, "file.confirmation_required", {
         kind: action.kind,

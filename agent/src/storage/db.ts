@@ -11,6 +11,7 @@ export function getDb(): Database.Database {
     fs.mkdirSync(dataDir, { recursive: true });
     db = new Database(sqliteFile);
     db.pragma("journal_mode = WAL");
+    db.pragma("busy_timeout = 5000");
     initializeSchema(db);
   }
 
@@ -83,13 +84,71 @@ export function initializeSchema(database = getDb()): void {
     CREATE INDEX IF NOT EXISTS idx_command_runs_started
       ON command_runs(started_at DESC);
 
-    CREATE TABLE IF NOT EXISTS pending_confirmations (
-      chat_id TEXT PRIMARY KEY,
+    -- P0 cutover: approvals are rows scoped to an owner, chat, run, expiry,
+    -- and action digest. The former one-row-per-chat confirmation protocol is
+    -- deliberately removed rather than kept as a fallback.
+    DROP TABLE IF EXISTS pending_confirmations;
+
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      principal_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      user_request TEXT NOT NULL,
+      status TEXT NOT NULL,
       trace_id TEXT NOT NULL,
-      command_name TEXT NOT NULL,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_approvals (
+      id TEXT PRIMARY KEY,
+      short_id TEXT NOT NULL UNIQUE,
+      run_id TEXT NOT NULL,
+      principal_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      action_digest TEXT NOT NULL,
       payload_json TEXT NOT NULL,
+      status TEXT NOT NULL,
       expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pending_approvals_owner
+      ON pending_approvals(principal_id, chat_id, status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS run_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      tool_name TEXT NOT NULL,
+      call_json TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(run_id, ordinal)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_run_steps_run_ordinal
+      ON run_steps(run_id, ordinal ASC);
+
+    CREATE TABLE IF NOT EXISTS approval_grants (
+      id TEXT PRIMARY KEY,
+      principal_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      run_id TEXT,
+      session_id TEXT,
+      schedule_id TEXT,
+      risk_categories_json TEXT,
+      resource_hints_json TEXT,
+      command_hints_json TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT,
+      revoked_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS runtime_state (
@@ -100,11 +159,13 @@ export function initializeSchema(database = getDb()): void {
 
     CREATE TABLE IF NOT EXISTS scheduled_jobs (
       name TEXT PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'config',
       label TEXT NOT NULL,
       command_name TEXT NOT NULL,
       interval_minutes INTEGER NOT NULL,
       daily_at TEXT,
       cron_expr TEXT,
+      timezone TEXT NOT NULL DEFAULT 'UTC',
       enabled INTEGER NOT NULL,
       delivery TEXT NOT NULL,
       notify_on_change_only INTEGER NOT NULL,
@@ -162,6 +223,12 @@ function migrateScheduledJobs(): void {
   }
   if (!columns.has("cron_expr")) {
     db!.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN cron_expr TEXT`).run();
+  }
+  if (!columns.has("source")) {
+    db!.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'config'`).run();
+  }
+  if (!columns.has("timezone")) {
+    db!.prepare(`ALTER TABLE scheduled_jobs ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'`).run();
   }
 }
 

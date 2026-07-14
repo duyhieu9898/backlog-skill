@@ -12,6 +12,12 @@ exports.insertTraceEvent = insertTraceEvent;
 exports.listTraceEvents = listTraceEvents;
 exports.getLastFailedToolEvent = getLastFailedToolEvent;
 exports.getActiveSessionId = getActiveSessionId;
+exports.createRun = createRun;
+exports.finishRun = finishRun;
+exports.setRunStatus = setRunStatus;
+exports.getRun = getRun;
+exports.appendRunStep = appendRunStep;
+exports.listRunSteps = listRunSteps;
 exports.resetSession = resetSession;
 exports.insertChatMessage = insertChatMessage;
 exports.listRecentChat = listRecentChat;
@@ -20,13 +26,17 @@ exports.finishCommandRun = finishCommandRun;
 exports.getLastCommandRun = getLastCommandRun;
 exports.getLastFailedCommandRun = getLastFailedCommandRun;
 exports.listRecentCommandRuns = listRecentCommandRuns;
-exports.upsertPendingConfirmation = upsertPendingConfirmation;
-exports.getPendingConfirmation = getPendingConfirmation;
-exports.deletePendingConfirmation = deletePendingConfirmation;
-exports.countPendingConfirmations = countPendingConfirmations;
+exports.createPendingApproval = createPendingApproval;
+exports.getPendingApproval = getPendingApproval;
+exports.countPendingApprovals = countPendingApprovals;
+exports.resolvePendingApproval = resolvePendingApproval;
+exports.createApprovalGrant = createApprovalGrant;
+exports.listActiveApprovalGrants = listActiveApprovalGrants;
 exports.upsertScheduledJob = upsertScheduledJob;
+exports.disableRemovedConfigScheduledJobs = disableRemovedConfigScheduledJobs;
 exports.listScheduledJobs = listScheduledJobs;
 exports.getScheduledJob = getScheduledJob;
+exports.deleteRuntimeScheduledJob = deleteRuntimeScheduledJob;
 exports.listDueScheduledJobs = listDueScheduledJobs;
 exports.claimDueScheduledJob = claimDueScheduledJob;
 exports.updateScheduledJobState = updateScheduledJobState;
@@ -96,6 +106,33 @@ function getActiveSessionId(chatId) {
     const sessionId = getJsonState("runtime_state", key);
     return sessionId || "default";
 }
+function createRun(input) {
+    const now = nowIso();
+    (0, db_1.getDb)().prepare(`INSERT INTO runs (id, session_id, principal_id, channel, user_request, status, trace_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)`).run(input.id, input.session_id, input.principal_id, input.channel, input.user_request, input.trace_id, now, now);
+}
+function finishRun(id, status, error) {
+    const now = nowIso();
+    (0, db_1.getDb)().prepare(`UPDATE runs SET status = ?, error = ?, updated_at = ?, completed_at = ? WHERE id = ?`).run(status, error || null, now, now, id);
+}
+function setRunStatus(id, status) {
+    (0, db_1.getDb)().prepare(`UPDATE runs SET status = ?, updated_at = ? WHERE id = ?`).run(status, nowIso(), id);
+}
+function getRun(id) {
+    return (0, db_1.getDb)().prepare(`SELECT * FROM runs WHERE id = ?`).get(id) || null;
+}
+function appendRunStep(input) {
+    const db = (0, db_1.getDb)();
+    const insert = db.transaction(() => {
+        const row = db.prepare(`SELECT COALESCE(MAX(ordinal), -1) AS ordinal FROM run_steps WHERE run_id = ?`).get(input.runId);
+        db.prepare(`INSERT INTO run_steps (run_id, ordinal, tool_name, call_json, result_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`).run(input.runId, row.ordinal + 1, input.toolName, JSON.stringify(input.call), JSON.stringify(input.result), nowIso());
+    });
+    insert();
+}
+function listRunSteps(runId) {
+    return (0, db_1.getDb)().prepare(`SELECT * FROM run_steps WHERE run_id = ? ORDER BY ordinal ASC`).all(runId);
+}
 function resetSession(chatId) {
     const key = `active_session:${chatId}`;
     const sessionId = (0, node_crypto_1.randomUUID)();
@@ -163,59 +200,93 @@ function listRecentCommandRuns(chatId, limit = 3) {
        LIMIT ?`)
         .all(chatId, limit);
 }
-function upsertPendingConfirmation(input) {
-    (0, db_1.getDb)()
-        .prepare(`INSERT INTO pending_confirmations
-       (chat_id, trace_id, command_name, payload_json, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(chat_id) DO UPDATE SET
-         trace_id = excluded.trace_id,
-         command_name = excluded.command_name,
-         payload_json = excluded.payload_json,
-         expires_at = excluded.expires_at,
-         created_at = excluded.created_at`)
-        .run(input.chatId, input.traceId, input.commandName, JSON.stringify(input.payload), input.expiresAt, nowIso());
+function createPendingApproval(input) {
+    (0, db_1.getDb)().prepare(`INSERT INTO pending_approvals
+     (id, short_id, run_id, principal_id, chat_id, description, action_digest, payload_json, status, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`).run(input.id, input.short_id, input.run_id, input.principal_id, input.chat_id, input.description, input.action_digest, input.payload_json, input.expires_at, nowIso());
 }
-function getPendingConfirmation(chatId) {
-    return ((0, db_1.getDb)()
-        .prepare(`SELECT * FROM pending_confirmations WHERE chat_id = ?`)
-        .get(chatId) || null);
+function getPendingApproval(shortId, principalId, chatId) {
+    return (0, db_1.getDb)().prepare(`SELECT * FROM pending_approvals WHERE short_id = ? AND principal_id = ? AND chat_id = ?`).get(shortId, principalId, chatId) || null;
 }
-function deletePendingConfirmation(chatId) {
-    (0, db_1.getDb)().prepare(`DELETE FROM pending_confirmations WHERE chat_id = ?`).run(chatId);
-}
-function countPendingConfirmations() {
+function countPendingApprovals() {
     const row = (0, db_1.getDb)()
-        .prepare(`SELECT COUNT(*) AS count FROM pending_confirmations WHERE expires_at > ?`)
+        .prepare(`SELECT COUNT(*) AS count FROM pending_approvals WHERE status = 'pending' AND expires_at > ?`)
         .get(nowIso());
     return row.count;
+}
+function resolvePendingApproval(id, status) {
+    (0, db_1.getDb)().prepare(`UPDATE pending_approvals SET status = ?, resolved_at = ? WHERE id = ? AND status = 'pending'`).run(status, nowIso(), id);
+}
+function createApprovalGrant(input) {
+    (0, db_1.getDb)().prepare(`INSERT INTO approval_grants
+       (id, principal_id, description, scope, run_id, session_id, schedule_id,
+        risk_categories_json, resource_hints_json, command_hints_json,
+        created_at, expires_at, revoked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`).run(input.id, input.principalId, input.description, input.scope, input.runId || null, input.sessionId || null, input.scheduleId || null, input.riskCategories ? JSON.stringify(input.riskCategories) : null, input.resourceHints ? JSON.stringify(input.resourceHints) : null, input.commandHints ? JSON.stringify(input.commandHints) : null, nowIso(), input.expiresAt || null);
+}
+function listActiveApprovalGrants(input) {
+    const now = nowIso();
+    return (0, db_1.getDb)().prepare(`SELECT * FROM approval_grants
+     WHERE principal_id = ?
+       AND revoked_at IS NULL
+       AND (expires_at IS NULL OR expires_at > ?)
+       AND (
+         (scope = 'run' AND run_id = ?)
+         OR (scope = 'session' AND session_id = ?)
+         OR (scope = 'schedule' AND schedule_id = ?)
+         OR scope = 'persistent'
+       )
+     ORDER BY created_at DESC`).all(input.principalId, now, input.runId || null, input.sessionId || null, input.scheduleId || null);
 }
 function upsertScheduledJob(input) {
     const now = nowIso();
     (0, db_1.getDb)()
         .prepare(`INSERT INTO scheduled_jobs
-       (name, label, command_name, interval_minutes, daily_at, cron_expr, enabled, delivery,
+       (name, source, label, command_name, interval_minutes, daily_at, cron_expr, timezone, enabled, delivery,
         notify_on_change_only, prepare_effect_json, next_run_at, created_at, updated_at)
-       VALUES (?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(name) DO UPDATE SET
          label = excluded.label,
          command_name = excluded.command_name,
          cron_expr = excluded.cron_expr,
+         timezone = excluded.timezone,
+         enabled = excluded.enabled,
+         delivery = excluded.delivery,
+         notify_on_change_only = excluded.notify_on_change_only,
          prepare_effect_json = excluded.prepare_effect_json,
          next_run_at = CASE
-           WHEN scheduled_jobs.enabled = 0
+           WHEN excluded.enabled = 0
              THEN NULL
            WHEN scheduled_jobs.cron_expr IS NOT excluded.cron_expr
+             OR scheduled_jobs.timezone IS NOT excluded.timezone
+             OR scheduled_jobs.enabled IS NOT excluded.enabled
              THEN excluded.next_run_at
            ELSE scheduled_jobs.next_run_at
          END,
          version = scheduled_jobs.version + 1,
          updated_at = excluded.updated_at
-       WHERE scheduled_jobs.label IS NOT excluded.label
+       WHERE scheduled_jobs.source = excluded.source
+         AND (scheduled_jobs.label IS NOT excluded.label
           OR scheduled_jobs.command_name IS NOT excluded.command_name
           OR scheduled_jobs.cron_expr IS NOT excluded.cron_expr
-          OR scheduled_jobs.prepare_effect_json IS NOT excluded.prepare_effect_json`)
-        .run(input.name, input.label, input.commandName, input.cronExpr, input.enabled ? 1 : 0, input.delivery, input.notifyOnChangeOnly ? 1 : 0, input.prepareEffect === undefined ? null : JSON.stringify(input.prepareEffect), input.nextRunAt ?? null, now, now);
+          OR scheduled_jobs.timezone IS NOT excluded.timezone
+          OR scheduled_jobs.enabled IS NOT excluded.enabled
+          OR scheduled_jobs.delivery IS NOT excluded.delivery
+          OR scheduled_jobs.notify_on_change_only IS NOT excluded.notify_on_change_only
+          OR scheduled_jobs.prepare_effect_json IS NOT excluded.prepare_effect_json)`)
+        .run(input.name, input.source || "config", input.label, input.commandName, input.cronExpr, input.timezone || "UTC", input.enabled ? 1 : 0, input.delivery, input.notifyOnChangeOnly ? 1 : 0, input.prepareEffect === undefined ? null : JSON.stringify(input.prepareEffect), input.nextRunAt ?? null, now, now);
+}
+/** Config is authoritative only for schedules it owns; runtime schedules are never touched. */
+function disableRemovedConfigScheduledJobs(activeNames) {
+    const now = nowIso();
+    const db = (0, db_1.getDb)();
+    const filter = activeNames.length > 0
+        ? `AND name NOT IN (${activeNames.map(() => "?").join(", ")})`
+        : "";
+    db.prepare(`UPDATE scheduled_jobs
+     SET enabled = 0, next_run_at = NULL, lease_owner = NULL, lease_until = NULL,
+         version = version + 1, updated_at = ?
+     WHERE source = 'config' AND enabled = 1 ${filter}`).run(now, ...activeNames);
 }
 function listScheduledJobs() {
     return (0, db_1.getDb)()
@@ -226,6 +297,12 @@ function getScheduledJob(name) {
     return ((0, db_1.getDb)()
         .prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`)
         .get(name) || null);
+}
+/** Runtime schedules are owned by their creator, never by config seeding. */
+function deleteRuntimeScheduledJob(name) {
+    return (0, db_1.getDb)()
+        .prepare(`DELETE FROM scheduled_jobs WHERE name = ? AND source = 'runtime'`)
+        .run(name).changes === 1;
 }
 function listDueScheduledJobs(now = nowIso()) {
     return (0, db_1.getDb)()

@@ -57,22 +57,70 @@ export type CommandRunRow = {
   error_message: string | null;
 };
 
-export type PendingConfirmationRow = {
+export type PendingApprovalRow = {
+  id: string;
+  short_id: string;
+  run_id: string;
+  principal_id: string;
   chat_id: string;
-  trace_id: string;
-  command_name: string;
+  description: string;
+  action_digest: string;
   payload_json: string;
+  status: "pending" | "approved" | "rejected" | "expired" | "invalidated";
   expires_at: string;
+  created_at: string;
+  resolved_at: string | null;
+};
+
+export type RunRow = {
+  id: string;
+  session_id: string;
+  principal_id: string;
+  channel: string;
+  user_request: string;
+  status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled";
+  trace_id: string;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type ApprovalGrantRow = {
+  id: string;
+  principal_id: string;
+  description: string;
+  scope: "run" | "session" | "schedule" | "persistent";
+  run_id: string | null;
+  session_id: string | null;
+  schedule_id: string | null;
+  risk_categories_json: string | null;
+  resource_hints_json: string | null;
+  command_hints_json: string | null;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+};
+
+export type RunStepRow = {
+  id: number;
+  run_id: string;
+  ordinal: number;
+  tool_name: string;
+  call_json: string;
+  result_json: string;
   created_at: string;
 };
 
 export type ScheduledJobRow = {
   name: string;
+  source: "config" | "runtime";
   label: string;
   command_name: string;
   interval_minutes: number;
   daily_at: string | null;
   cron_expr: string | null;
+  timezone: string;
   enabled: number;
   delivery: string;
   notify_on_change_only: number;
@@ -162,6 +210,43 @@ export function getActiveSessionId(chatId: string): string {
   const key = `active_session:${chatId}`;
   const sessionId = getJsonState<string>("runtime_state", key);
   return sessionId || "default";
+}
+
+export function createRun(input: Omit<RunRow, "status" | "error" | "created_at" | "updated_at" | "completed_at">): void {
+  const now = nowIso();
+  getDb().prepare(
+    `INSERT INTO runs (id, session_id, principal_id, channel, user_request, status, trace_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+  ).run(input.id, input.session_id, input.principal_id, input.channel, input.user_request, input.trace_id, now, now);
+}
+
+export function finishRun(id: string, status: Extract<RunRow["status"], "completed" | "failed" | "cancelled">, error?: string): void {
+  const now = nowIso();
+  getDb().prepare(`UPDATE runs SET status = ?, error = ?, updated_at = ?, completed_at = ? WHERE id = ?`).run(status, error || null, now, now, id);
+}
+
+export function setRunStatus(id: string, status: Extract<RunRow["status"], "running" | "waiting_approval">): void {
+  getDb().prepare(`UPDATE runs SET status = ?, updated_at = ? WHERE id = ?`).run(status, nowIso(), id);
+}
+
+export function getRun(id: string): RunRow | null {
+  return (getDb().prepare(`SELECT * FROM runs WHERE id = ?`).get(id) as RunRow | undefined) || null;
+}
+
+export function appendRunStep(input: { runId: string; toolName: string; call: unknown; result: unknown }): void {
+  const db = getDb();
+  const insert = db.transaction(() => {
+    const row = db.prepare(`SELECT COALESCE(MAX(ordinal), -1) AS ordinal FROM run_steps WHERE run_id = ?`).get(input.runId) as { ordinal: number };
+    db.prepare(
+      `INSERT INTO run_steps (run_id, ordinal, tool_name, call_json, result_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(input.runId, row.ordinal + 1, input.toolName, JSON.stringify(input.call), JSON.stringify(input.result), nowIso());
+  });
+  insert();
+}
+
+export function listRunSteps(runId: string): RunStepRow[] {
+  return getDb().prepare(`SELECT * FROM run_steps WHERE run_id = ? ORDER BY ordinal ASC`).all(runId) as RunStepRow[];
 }
 
 export function resetSession(chatId: string): string {
@@ -307,56 +392,91 @@ export function listRecentCommandRuns(chatId: string, limit = 3): CommandRunRow[
     .all(chatId, limit) as CommandRunRow[];
 }
 
-export function upsertPendingConfirmation(input: {
-  chatId: string;
-  traceId: string;
-  commandName: string;
-  payload: unknown;
-  expiresAt: string;
-}): void {
-  getDb()
-    .prepare(
-      `INSERT INTO pending_confirmations
-       (chat_id, trace_id, command_name, payload_json, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(chat_id) DO UPDATE SET
-         trace_id = excluded.trace_id,
-         command_name = excluded.command_name,
-         payload_json = excluded.payload_json,
-         expires_at = excluded.expires_at,
-         created_at = excluded.created_at`,
-    )
-    .run(
-      input.chatId,
-      input.traceId,
-      input.commandName,
-      JSON.stringify(input.payload),
-      input.expiresAt,
-      nowIso(),
-    );
+export function createPendingApproval(input: Omit<PendingApprovalRow, "status" | "created_at" | "resolved_at">): void {
+  getDb().prepare(
+    `INSERT INTO pending_approvals
+     (id, short_id, run_id, principal_id, chat_id, description, action_digest, payload_json, status, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+  ).run(input.id, input.short_id, input.run_id, input.principal_id, input.chat_id, input.description, input.action_digest, input.payload_json, input.expires_at, nowIso());
 }
 
-export function getPendingConfirmation(chatId: string): PendingConfirmationRow | null {
-  return (
-    (getDb()
-      .prepare(`SELECT * FROM pending_confirmations WHERE chat_id = ?`)
-      .get(chatId) as PendingConfirmationRow | undefined) || null
-  );
+export function getPendingApproval(shortId: string, principalId: string, chatId: string): PendingApprovalRow | null {
+  return (getDb().prepare(
+    `SELECT * FROM pending_approvals WHERE short_id = ? AND principal_id = ? AND chat_id = ?`,
+  ).get(shortId, principalId, chatId) as PendingApprovalRow | undefined) || null;
 }
 
-export function deletePendingConfirmation(chatId: string): void {
-  getDb().prepare(`DELETE FROM pending_confirmations WHERE chat_id = ?`).run(chatId);
-}
-
-export function countPendingConfirmations(): number {
+export function countPendingApprovals(): number {
   const row = getDb()
-    .prepare(`SELECT COUNT(*) AS count FROM pending_confirmations WHERE expires_at > ?`)
+    .prepare(`SELECT COUNT(*) AS count FROM pending_approvals WHERE status = 'pending' AND expires_at > ?`)
     .get(nowIso()) as { count: number };
   return row.count;
 }
 
+export function resolvePendingApproval(id: string, status: Extract<PendingApprovalRow["status"], "approved" | "rejected" | "expired" | "invalidated">): void {
+  getDb().prepare(`UPDATE pending_approvals SET status = ?, resolved_at = ? WHERE id = ? AND status = 'pending'`).run(status, nowIso(), id);
+}
+
+export function createApprovalGrant(input: {
+  id: string;
+  principalId: string;
+  description: string;
+  scope: ApprovalGrantRow["scope"];
+  runId?: string;
+  sessionId?: string;
+  scheduleId?: string;
+  riskCategories?: string[];
+  resourceHints?: string[];
+  commandHints?: string[];
+  expiresAt?: string;
+}): void {
+  getDb().prepare(
+    `INSERT INTO approval_grants
+       (id, principal_id, description, scope, run_id, session_id, schedule_id,
+        risk_categories_json, resource_hints_json, command_hints_json,
+        created_at, expires_at, revoked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+  ).run(
+    input.id,
+    input.principalId,
+    input.description,
+    input.scope,
+    input.runId || null,
+    input.sessionId || null,
+    input.scheduleId || null,
+    input.riskCategories ? JSON.stringify(input.riskCategories) : null,
+    input.resourceHints ? JSON.stringify(input.resourceHints) : null,
+    input.commandHints ? JSON.stringify(input.commandHints) : null,
+    nowIso(),
+    input.expiresAt || null,
+  );
+}
+
+export function listActiveApprovalGrants(input: {
+  principalId: string;
+  runId?: string;
+  sessionId?: string;
+  scheduleId?: string;
+}): ApprovalGrantRow[] {
+  const now = nowIso();
+  return getDb().prepare(
+    `SELECT * FROM approval_grants
+     WHERE principal_id = ?
+       AND revoked_at IS NULL
+       AND (expires_at IS NULL OR expires_at > ?)
+       AND (
+         (scope = 'run' AND run_id = ?)
+         OR (scope = 'session' AND session_id = ?)
+         OR (scope = 'schedule' AND schedule_id = ?)
+         OR scope = 'persistent'
+       )
+     ORDER BY created_at DESC`,
+  ).all(input.principalId, now, input.runId || null, input.sessionId || null, input.scheduleId || null) as ApprovalGrantRow[];
+}
+
 export function upsertScheduledJob(input: {
   name: string;
+  source?: "config" | "runtime";
   label: string;
   commandName: string;
   cronExpr: string;
@@ -364,39 +484,53 @@ export function upsertScheduledJob(input: {
   delivery: string;
   notifyOnChangeOnly: boolean;
   prepareEffect?: unknown;
+  timezone?: string;
   nextRunAt?: string | null;
 }): void {
   const now = nowIso();
   getDb()
     .prepare(
       `INSERT INTO scheduled_jobs
-       (name, label, command_name, interval_minutes, daily_at, cron_expr, enabled, delivery,
+       (name, source, label, command_name, interval_minutes, daily_at, cron_expr, timezone, enabled, delivery,
         notify_on_change_only, prepare_effect_json, next_run_at, created_at, updated_at)
-       VALUES (?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(name) DO UPDATE SET
          label = excluded.label,
          command_name = excluded.command_name,
          cron_expr = excluded.cron_expr,
+         timezone = excluded.timezone,
+         enabled = excluded.enabled,
+         delivery = excluded.delivery,
+         notify_on_change_only = excluded.notify_on_change_only,
          prepare_effect_json = excluded.prepare_effect_json,
          next_run_at = CASE
-           WHEN scheduled_jobs.enabled = 0
+           WHEN excluded.enabled = 0
              THEN NULL
            WHEN scheduled_jobs.cron_expr IS NOT excluded.cron_expr
+             OR scheduled_jobs.timezone IS NOT excluded.timezone
+             OR scheduled_jobs.enabled IS NOT excluded.enabled
              THEN excluded.next_run_at
            ELSE scheduled_jobs.next_run_at
          END,
          version = scheduled_jobs.version + 1,
          updated_at = excluded.updated_at
-       WHERE scheduled_jobs.label IS NOT excluded.label
+       WHERE scheduled_jobs.source = excluded.source
+         AND (scheduled_jobs.label IS NOT excluded.label
           OR scheduled_jobs.command_name IS NOT excluded.command_name
           OR scheduled_jobs.cron_expr IS NOT excluded.cron_expr
-          OR scheduled_jobs.prepare_effect_json IS NOT excluded.prepare_effect_json`,
+          OR scheduled_jobs.timezone IS NOT excluded.timezone
+          OR scheduled_jobs.enabled IS NOT excluded.enabled
+          OR scheduled_jobs.delivery IS NOT excluded.delivery
+          OR scheduled_jobs.notify_on_change_only IS NOT excluded.notify_on_change_only
+          OR scheduled_jobs.prepare_effect_json IS NOT excluded.prepare_effect_json)`,
     )
     .run(
       input.name,
+      input.source || "config",
       input.label,
       input.commandName,
       input.cronExpr,
+      input.timezone || "UTC",
       input.enabled ? 1 : 0,
       input.delivery,
       input.notifyOnChangeOnly ? 1 : 0,
@@ -405,6 +539,21 @@ export function upsertScheduledJob(input: {
       now,
       now,
     );
+}
+
+/** Config is authoritative only for schedules it owns; runtime schedules are never touched. */
+export function disableRemovedConfigScheduledJobs(activeNames: string[]): void {
+  const now = nowIso();
+  const db = getDb();
+  const filter = activeNames.length > 0
+    ? `AND name NOT IN (${activeNames.map(() => "?").join(", ")})`
+    : "";
+  db.prepare(
+    `UPDATE scheduled_jobs
+     SET enabled = 0, next_run_at = NULL, lease_owner = NULL, lease_until = NULL,
+         version = version + 1, updated_at = ?
+     WHERE source = 'config' AND enabled = 1 ${filter}`,
+  ).run(now, ...activeNames);
 }
 
 export function listScheduledJobs(): ScheduledJobRow[] {
@@ -419,6 +568,13 @@ export function getScheduledJob(name: string): ScheduledJobRow | null {
       .prepare(`SELECT * FROM scheduled_jobs WHERE name = ?`)
       .get(name) as ScheduledJobRow | undefined) || null
   );
+}
+
+/** Runtime schedules are owned by their creator, never by config seeding. */
+export function deleteRuntimeScheduledJob(name: string): boolean {
+  return getDb()
+    .prepare(`DELETE FROM scheduled_jobs WHERE name = ? AND source = 'runtime'`)
+    .run(name).changes === 1;
 }
 
 export function listDueScheduledJobs(now = nowIso()): ScheduledJobRow[] {
@@ -589,5 +745,3 @@ export function markMessagesAsCompacted(messageIds: number[], compactedSessionId
      WHERE id IN (${placeholders})`,
   ).run(compactedSessionId, ...messageIds);
 }
-
-
