@@ -1,5 +1,13 @@
 # E01 Local Operator Core
 
+> Migration notice (2026-07-14): This epic records the pre-cutover delivery
+> history. Its allowlisted-command, fixed-root, and per-action confirmation
+> language is not the current product contract. Use
+> [ADR 0017](../../../decisions/0017-trusted-local-default-allow-cutover.md)
+> and `docs/ARCHITECTURE.md` for the trusted-local default-allow model. Keep
+> the evidence below as historical proof; reconcile individual stories as they
+> are touched.
+
 ## Goal
 
 Build a small local personal operator for this repo: Telegram is the chat

@@ -1,5 +1,10 @@
 # US-004 Allowlisted Command Tools
 
+> Migration notice: historical baseline only. `commands.json` entries are now
+> optional named shortcuts; they are not the permission authority. The current
+> contract is arbitrary command execution through `ToolGateway`, contextual
+> policy, scoped approval when necessary, and destructive denial (ADR 0017).
+
 ## Status
 
 in_progress

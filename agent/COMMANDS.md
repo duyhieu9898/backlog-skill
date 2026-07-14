@@ -1,6 +1,8 @@
 # Command Naming
 
-This document records the command naming convention used by `agent/commands.json`.
+This document records the naming convention for optional command shortcuts in
+`agent/commands.json`. They improve discoverability and structured skill input;
+they are not the primary permission boundary.
 
 ## Format
 
@@ -44,12 +46,15 @@ Use lowercase words and underscores only when the action needs multiple words.
 - `linux.logs`
 - `linux.all`
 
-## Allowlist Notes
+## Shortcut Notes
 
-- Fixed commands use an exact `argv` array and run without a shell.
-- Wildcard and model-provided raw-shell commands are unsupported.
+- Prefer fixed commands with an exact `argv` array. `command.run` also supports
+  owner-relevant arbitrary argv and, where required, a shell command.
+- Every invocation crosses `ToolGateway`; policy evaluates the actual command,
+  arguments, cwd, target, intent, approval, and impact instead of shortcut
+  membership alone.
 - Skill commands must use a cwd matching their `skillSlug`; stale entries fail catalog loading.
-- Commands that write external data or delete data set both
-  `requiresConfirmation: true` and `externalSideEffect: true`.
-- Commands referenced by `config.json` scheduled checks must be read-only:
-  `requiresConfirmation: false` and `externalSideEffect: false`.
+- Shortcut metadata may communicate expected risk, but significant actions use
+  scoped task approval and clearly destructive actions are denied.
+- Configured schedules are pre-approved for their declared objective and still
+  pass through the runtime gateway on each execution.

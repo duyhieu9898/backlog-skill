@@ -1,5 +1,10 @@
 # E02 Desktop Agent
 
+> Migration notice (2026-07-14): Use ADR 0017 and `docs/ARCHITECTURE.md` for
+> the current approval model. Desktop actions remain typed, gateway-routed,
+> observable, and artifact-backed, but ordinary requested automation does not
+> require a confirmation for every capture, click, or keypress.
+
 ## Goal
 
 Extend the local operator with safe desktop observation and control: capture a
@@ -20,7 +25,7 @@ create parallel policy, logging, state, confirmation, or delivery paths.
 | Concern | Shared owner and rule |
 | --- | --- |
 | Authority | `PermissionPolicy` remains the only allow/confirm/deny boundary for typed desktop actions. |
-| Confirmation | Reuse the existing digest-bound `pending_confirmations` flow; do not add a desktop-specific approval store. |
+| Approval | Reuse `ApprovalService` and persisted scoped approvals; do not add a desktop-specific approval store. |
 | Trace | Every action reuses the request `traceId` and emits existing `trace_events` with a common desktop event envelope. |
 | Raw provider logs | Continue the independent `ai-interactions` JSONL store only for provider wire payloads; desktop stories must not duplicate it. |
 | Artifacts | Artifact bytes live in the local artifact store; SQLite retains only metadata, expiry, owner chat, source trace, and delivery state. |

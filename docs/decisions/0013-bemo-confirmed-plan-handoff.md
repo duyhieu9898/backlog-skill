@@ -6,6 +6,9 @@ Date: 2026-07-06
 
 Superseded
 
+The historical handoff is additionally superseded by the scoped-approval model
+in [ADR 0017](0017-trusted-local-default-allow-cutover.md).
+
 ## Context
 
 The existing Bemo create script consumes every record in a mutable shared JSON

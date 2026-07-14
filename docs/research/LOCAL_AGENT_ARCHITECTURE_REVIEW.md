@@ -1,5 +1,11 @@
 # Local Agent Architecture Review
 
+> Historical review (pre-ADR 0017): This analysis informed the original
+> workspace/allowlist hardening work. Its recommendations about workspace-only
+> access and sandbox-first hardening are not the current architecture contract.
+> Refer to `docs/ARCHITECTURE.md` and ADR 0017 for the trusted-local,
+> application-guardrail model.
+
 ## Purpose
 
 This review compares the current local operator architecture with patterns used

@@ -4,7 +4,11 @@ Date: 2026-07-06
 
 ## Status
 
-Accepted
+Superseded in part by [ADR 0017](0017-trusted-local-default-allow-cutover.md).
+
+Fixed argv and a reduced environment remain preferred command-execution
+mechanics. They are no longer a command-authority boundary: arbitrary argv and
+necessary shell commands are evaluated contextually at `ToolGateway`.
 
 ## Context
 

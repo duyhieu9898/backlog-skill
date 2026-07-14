@@ -1,5 +1,10 @@
 # US-005 Preview And Confirmation Flow
 
+> Migration notice: the `pending_confirmations` and copied-token protocol below
+> is historical. The current contract is `pending_approvals`, Telegram
+> Approve/Reject buttons, CLI `approve|reject <short-id>`, and backend-only
+> digest binding as specified by ADR 0017.
+
 ## Status
 
 in_progress

@@ -4,7 +4,11 @@ Date: 2026-07-10
 
 ## Status
 
-Accepted
+Superseded in part by [ADR 0017](0017-trusted-local-default-allow-cutover.md).
+
+Typed desktop adapters, artifacts, and trace ownership remain current. The
+digest-bound confirmation store is replaced by `ApprovalService`; ordinary
+desktop automation is default-allow rather than per-action confirmation.
 
 ## Context
 

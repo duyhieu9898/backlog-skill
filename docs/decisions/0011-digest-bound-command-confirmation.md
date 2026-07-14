@@ -4,7 +4,11 @@ Date: 2026-07-06
 
 ## Status
 
-Accepted
+Superseded by [ADR 0017](0017-trusted-local-default-allow-cutover.md).
+
+The digest remains a backend-only binding to pending action, owner/chat, run,
+expiry, and action content. The user now approves a short pending ID and task
+scope through Telegram buttons or CLI, not a copied digest token.
 
 ## Context
 

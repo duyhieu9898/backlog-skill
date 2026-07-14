@@ -4,7 +4,12 @@ Date: 2026-07-07
 
 ## Status
 
-Accepted
+Superseded in part by [ADR 0017](0017-trusted-local-default-allow-cutover.md).
+
+The generic tool-loop boundary remains valid. Its allowlisted-command,
+single-call confirmation, and stop-after-confirmation assumptions are replaced
+by `AgentRuntime`, `ToolGateway`, persisted scoped approvals, and continuation
+within the approved task.
 
 ## Context
 

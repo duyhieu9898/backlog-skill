@@ -4,7 +4,12 @@ Date: 2026-07-03
 
 ## Status
 
-Accepted
+Superseded in part by [ADR 0017](0017-trusted-local-default-allow-cutover.md).
+
+The central-policy boundary remains valid. Workspace roots, blanket denial of
+ordinary project paths, and confirmation-by-mutation are no longer the current
+authority model; ADR 0017 defines contextual default allow, scoped approval,
+and destructive denial.
 
 ## Context
 

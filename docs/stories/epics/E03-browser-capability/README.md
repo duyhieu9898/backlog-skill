@@ -1,5 +1,10 @@
 # E03 Browser Capability
 
+> Migration notice (2026-07-14): Browser policy uses the trusted-local model
+> in ADR 0017. Routine navigation and UI steps are default-allow; approval is
+> scoped to significant new external effects or sensitive/high-impact actions,
+> not individual clicks.
+
 ## Goal
 
 Provide a robust, multi-step browser automation capability matching the OpenClaw architecture: the skill guides the model, the browser tool provides a typed action contract, the browser service manages Playwright/Chromium instances, and the orchestrator loop manages multi-step execution.
@@ -15,7 +20,7 @@ All browser activities are policy-gated and reuse the following existing agent c
 | Concern | Shared owner and rule |
 | --- | --- |
 | Authority | `PermissionPolicy` remains the sole boundary for authorizing actions and requesting human confirmation. |
-| Confirmation | Reuse the digest-bound `pending_confirmations` flow; no browser-specific approval tables or mechanisms. |
+| Approval | Reuse `ApprovalService` and persisted scoped approvals; no browser-specific approval tables or mechanisms. |
 | Trace | Every browser tool call propagates the active `traceId` and logs structured trace events. |
 | Artifacts | Screenshots are saved as local images in `ArtifactStore`; SQLite persists metadata and delivery details. |
 | Loop Integration | The agent loop in `loop.ts` is updated to handle browser-specific codes to render and feed screenshots back to the AI. |
