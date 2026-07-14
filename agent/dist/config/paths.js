@@ -16,7 +16,9 @@ exports.botLog = node_path_1.default.join(exports.logDir, "agent.log");
 exports.aiInteractionDir = node_path_1.default.join(exports.logDir, "ai-interactions");
 exports.aiInteractionIndex = node_path_1.default.join(exports.aiInteractionDir, "index.jsonl");
 exports.commandsFile = node_path_1.default.join(exports.agentDir, "commands.json");
-exports.configFile = node_path_1.default.join(exports.agentDir, "config.json");
+exports.configFile = process.env.AGENT_CONFIG_FILE
+    ? node_path_1.default.resolve(process.env.AGENT_CONFIG_FILE)
+    : node_path_1.default.join(exports.agentDir, "config.json");
 exports.systemPromptFile = node_path_1.default.join(exports.agentDir, "prompts", "system.md");
 exports.memoryFile = node_path_1.default.join(exports.agentDir, "prompts", "MEMORY.md");
 exports.sqliteFile = node_path_1.default.join(exports.dataDir, "agent.sqlite");

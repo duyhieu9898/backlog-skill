@@ -68,7 +68,7 @@ const defaultConfig = {
 function validateBrowserConfig(browser) {
     if (!browser)
         return;
-    const { cleanup, shutdown, profilesRoot } = browser;
+    const { cleanup, shutdown, profilesRoot, profiles } = browser;
     if (cleanup) {
         if (typeof cleanup.sweepMinutes === "number" && cleanup.sweepMinutes <= 0) {
             throw new Error("Invalid config: sweepMinutes must be > 0");
@@ -94,6 +94,18 @@ function validateBrowserConfig(browser) {
     if (profilesRoot) {
         if (!node_path_1.default.isAbsolute(profilesRoot)) {
             throw new Error("Invalid config: profilesRoot must resolve to an absolute path");
+        }
+    }
+    if (profiles) {
+        for (const [name, profileSpec] of Object.entries(profiles)) {
+            if (profileSpec.mode === "cdp") {
+                if (!profileSpec.endpoint) {
+                    throw new Error(`Invalid config: CDP profile "${name}" must have an endpoint`);
+                }
+                if (typeof profileSpec.endpoint !== "string" || profileSpec.endpoint.trim() === "") {
+                    throw new Error(`Invalid config: CDP profile "${name}" endpoint must be a non-empty string`);
+                }
+            }
         }
     }
 }

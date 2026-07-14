@@ -1,3 +1,6 @@
+const path = require("node:path");
+process.env.AGENT_CONFIG_FILE = path.join(__dirname, "config.browser-safety.json");
+
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { browserService } = require("../dist/browser/browser-service");

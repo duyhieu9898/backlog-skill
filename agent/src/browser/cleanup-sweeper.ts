@@ -1,6 +1,6 @@
 import { loadAgentConfig } from "../config/app";
 import { refStore } from "./ref-store";
-import type { ManagedPlaywrightBrowserService } from "./managed-playwright-service";
+import { BaseBrowserService } from "./base-browser-service";
 import { BrowserError } from "./errors";
 import { log } from "../logging/logger";
 
@@ -26,7 +26,7 @@ export class BrowserCleanupSweeper {
   private sweepInProgress = false;
   private readonly traceId = "browser-cleanup";
 
-  constructor(private readonly service: ManagedPlaywrightBrowserService) {
+  constructor(private readonly service: BaseBrowserService) {
     this.service.sweeper = this;
   }
 

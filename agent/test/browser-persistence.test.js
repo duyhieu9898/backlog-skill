@@ -1,8 +1,10 @@
+const path = require("node:path");
+process.env.AGENT_CONFIG_FILE = path.join(__dirname, "config.browser-persistence.json");
+
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const http = require("node:http");
 const fs = require("node:fs");
-const path = require("node:path");
 
 const { browserService } = require("../dist/browser/browser-service");
 
@@ -18,7 +20,7 @@ test("browser persistence, isolation, and quotas", async (t) => {
   const testUrl = `http://localhost:${port}/`;
   console.log("Local HTTP server started at", testUrl);
 
-  const configPath = path.resolve(__dirname, "../config.json");
+  const { configFile: configPath } = require("../dist/config/paths");
   let originalConfigStr = null;
   if (fs.existsSync(configPath)) {
     originalConfigStr = fs.readFileSync(configPath, "utf8");

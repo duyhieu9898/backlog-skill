@@ -34,6 +34,8 @@ export type BrowserShutdownConfig = {
 
 export type BrowserProfileConfig = {
   persistent?: boolean;
+  mode?: "managed" | "cdp";
+  endpoint?: string;
 };
 
 export type BrowserResourceConfig = {
@@ -153,7 +155,7 @@ const defaultConfig: AgentConfig = {
 
 function validateBrowserConfig(browser: any) {
   if (!browser) return;
-  const { cleanup, shutdown, profilesRoot } = browser;
+  const { cleanup, shutdown, profilesRoot, profiles } = browser;
   if (cleanup) {
     if (typeof cleanup.sweepMinutes === "number" && cleanup.sweepMinutes <= 0) {
       throw new Error("Invalid config: sweepMinutes must be > 0");
@@ -179,6 +181,18 @@ function validateBrowserConfig(browser: any) {
   if (profilesRoot) {
     if (!path.isAbsolute(profilesRoot)) {
       throw new Error("Invalid config: profilesRoot must resolve to an absolute path");
+    }
+  }
+  if (profiles) {
+    for (const [name, profileSpec] of Object.entries(profiles) as [string, any][]) {
+      if (profileSpec.mode === "cdp") {
+        if (!profileSpec.endpoint) {
+          throw new Error(`Invalid config: CDP profile "${name}" must have an endpoint`);
+        }
+        if (typeof profileSpec.endpoint !== "string" || profileSpec.endpoint.trim() === "") {
+          throw new Error(`Invalid config: CDP profile "${name}" endpoint must be a non-empty string`);
+        }
+      }
     }
   }
 }
