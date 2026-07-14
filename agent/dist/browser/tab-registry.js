@@ -27,6 +27,9 @@ class TabRegistry {
             createdAt: Date.now(),
             lastUsedAt: Date.now(),
             active: true,
+            activeOperationCount: 0,
+            closeRequested: false,
+            closing: false,
         });
         return targetId;
     }
@@ -37,6 +40,9 @@ class TabRegistry {
             return record;
         }
         return undefined;
+    }
+    getAllRecords() {
+        return Array.from(this.records.values());
     }
     list(profile) {
         return Array.from(this.records.values())
@@ -76,6 +82,10 @@ class TabRegistry {
         for (const record of this.records.values()) {
             if (record.profile === profile) {
                 record.active = (record.targetId === targetId);
+                if (record.active) {
+                    record.lastFocusedAt = Date.now();
+                    record.lastUsedAt = Date.now();
+                }
             }
         }
     }
@@ -102,6 +112,24 @@ class TabRegistry {
                 this.records.delete(id);
             }
         }
+    }
+    acquireLease(targetId, profile) {
+        const record = this.get(targetId, profile);
+        if (!record) {
+            throw new Error(`Tab ${targetId} not found in profile ${profile}`);
+        }
+        record.activeOperationCount++;
+        record.lastUsedAt = Date.now();
+        let released = false;
+        return {
+            release: () => {
+                if (!released) {
+                    record.activeOperationCount = Math.max(0, record.activeOperationCount - 1);
+                    record.lastUsedAt = Date.now();
+                    released = true;
+                }
+            }
+        };
     }
 }
 exports.TabRegistry = TabRegistry;

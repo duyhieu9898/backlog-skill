@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { loadAgentConfig } from "../config/app";
 
 export type LocatorDescriptor = {
   role?: string;
@@ -10,8 +11,11 @@ export type LocatorDescriptor = {
 
 export type SnapshotRecord = {
   snapshotId: string;
+  profileName: string;
   targetId: string;
   createdAt: number;
+  lastAccessedAt: number;
+  expiresAt: number;
   refs: Map<string, LocatorDescriptor>;
   url?: string;
 };
@@ -20,12 +24,19 @@ export class RefStore {
   private sessions = new Map<string, SnapshotRecord>();
   private latestSnapshots = new Map<string, string>(); // targetId -> snapshotId
 
-  createSnapshot(targetId: string, url?: string): string {
+  createSnapshot(targetId: string, profileName: string, url?: string): string {
     const snapshotId = `snap_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const config = loadAgentConfig();
+    const ttlMinutes = config.browser?.cleanup?.snapshotTtlMinutes ?? 10;
+    const expiresAt = Date.now() + ttlMinutes * 60 * 1000;
+
     const record: SnapshotRecord = {
       snapshotId,
+      profileName,
       targetId,
       createdAt: Date.now(),
+      lastAccessedAt: Date.now(),
+      expiresAt,
       refs: new Map(),
       url,
     };
@@ -35,7 +46,7 @@ export class RefStore {
   }
 
   saveRef(snapshotId: string, refId: string, locator: LocatorDescriptor): void {
-    const session = this.sessions.get(snapshotId);
+    const session = this.getRecord(snapshotId);
     if (!session) {
       throw new Error(`Snapshot session ${snapshotId} not found`);
     }
@@ -43,21 +54,40 @@ export class RefStore {
   }
 
   getRef(snapshotId: string, refId: string): LocatorDescriptor | undefined {
-    const session = this.sessions.get(snapshotId);
+    const session = this.getRecord(snapshotId);
     return session?.refs.get(refId);
   }
 
   getRecord(snapshotId: string): SnapshotRecord | undefined {
-    return this.sessions.get(snapshotId);
+    const session = this.sessions.get(snapshotId);
+    if (session) {
+      if (session.expiresAt <= Date.now()) {
+        this.sessions.delete(snapshotId);
+        if (this.latestSnapshots.get(session.targetId) === snapshotId) {
+          this.latestSnapshots.delete(session.targetId);
+        }
+        return undefined;
+      }
+      session.lastAccessedAt = Date.now();
+      return session;
+    }
+    return undefined;
   }
 
   getLatestSnapshotId(targetId: string): string | undefined {
-    return this.latestSnapshots.get(targetId);
+    const snapshotId = this.latestSnapshots.get(targetId);
+    if (!snapshotId) return undefined;
+    
+    // Check if it's expired
+    const record = this.getRecord(snapshotId);
+    if (!record) return undefined;
+    
+    return snapshotId;
   }
 
   getLatestSnapshot(targetId: string): SnapshotRecord | undefined {
     const snapshotId = this.getLatestSnapshotId(targetId);
-    return snapshotId ? this.sessions.get(snapshotId) : undefined;
+    return snapshotId ? this.getRecord(snapshotId) : undefined;
   }
 
   clear(targetId: string): void {
@@ -71,6 +101,38 @@ export class RefStore {
       this.sessions.delete(id);
     }
     this.latestSnapshots.delete(targetId);
+  }
+
+  clearProfile(profileName: string): void {
+    const idsToRemove: string[] = [];
+    for (const [snapshotId, record] of this.sessions.entries()) {
+      if (record.profileName === profileName) {
+        idsToRemove.push(snapshotId);
+      }
+    }
+    for (const id of idsToRemove) {
+      this.sessions.delete(id);
+    }
+    for (const [targetId, snapId] of this.latestSnapshots.entries()) {
+      if (idsToRemove.includes(snapId)) {
+        this.latestSnapshots.delete(targetId);
+      }
+    }
+  }
+
+  pruneExpired(): string[] {
+    const now = Date.now();
+    const prunedIds: string[] = [];
+    for (const [snapshotId, record] of this.sessions.entries()) {
+      if (record.expiresAt <= now) {
+        prunedIds.push(snapshotId);
+        this.sessions.delete(snapshotId);
+        if (this.latestSnapshots.get(record.targetId) === snapshotId) {
+          this.latestSnapshots.delete(record.targetId);
+        }
+      }
+    }
+    return prunedIds;
   }
 }
 

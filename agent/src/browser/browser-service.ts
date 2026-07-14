@@ -1,6 +1,25 @@
 import type { BrowserTab, BrowserArtifact, BrowserSnapshot, BrowserActionRequest } from "./types";
 import { ManagedPlaywrightBrowserService } from "./managed-playwright-service";
 
+export type ShutdownOptions = {
+  gracefulTimeoutMs?: number;
+  forceKillTimeoutMs?: number;
+};
+
+export type BrowserShutdownResult = {
+  startedAt: number;
+  completedAt: number;
+
+  closedProfiles: string[];
+  forcedProfiles: string[];
+
+  errors: Array<{
+    profileName: string;
+    code: string;
+    message: string;
+  }>;
+};
+
 export interface BrowserService {
   start(profile?: string): Promise<{ running: boolean; profile: string }>;
   stop(profile?: string): Promise<void>;
@@ -16,7 +35,11 @@ export interface BrowserService {
     targetId: string,
     options?: { fullPage?: boolean; chatId?: string; traceId?: string }
   ): Promise<BrowserArtifact>;
-  shutdown(): Promise<void>;
+  shutdown(options?: ShutdownOptions): Promise<BrowserShutdownResult>;
+
+  startProfile(profileName: string): Promise<void>;
+  shutdownProfile(profileName: string, options?: ShutdownOptions): Promise<void>;
+  isShuttingDown(): boolean;
 }
 
 export const browserService: BrowserService = new ManagedPlaywrightBrowserService();

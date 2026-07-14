@@ -19,6 +19,7 @@ const config_1 = require("./telegram/config");
 const utils_1 = require("./utils");
 const app_1 = require("./config/app");
 const scheduler_1 = require("./scheduler");
+const browser_service_1 = require("./browser/browser-service");
 (0, env_1.loadEnv)(node_path_1.default.join(paths_1.agentDir, ".env"));
 const telegramConfig = (0, config_1.loadTelegramConfig)();
 const telegram = new client_1.TelegramClient(telegramConfig);
@@ -32,6 +33,7 @@ async function initializeOffset() {
     console.log(`Initialized Telegram offset at ${offset}. Old messages were skipped.`);
     return offset;
 }
+let globalScheduledRunner = null;
 async function poll() {
     let offset = (0, state_1.readOffset)();
     console.log("Agent started with an allowlisted Telegram chat.");
@@ -46,8 +48,8 @@ async function poll() {
         offset = await initializeOffset();
     }
     (0, scheduler_1.seedScheduledJobsFromConfig)(agentConfig.schedules || []);
-    const scheduledRunner = new scheduler_1.ScheduledCheckRunner(telegramConfig.allowedChatId, (text) => telegram.sendMessage(telegramConfig.allowedChatId, text), agentConfig.runtime?.commandTimeoutMs);
-    scheduledRunner.start();
+    globalScheduledRunner = new scheduler_1.ScheduledCheckRunner(telegramConfig.allowedChatId, (text) => telegram.sendMessage(telegramConfig.allowedChatId, text), agentConfig.runtime?.commandTimeoutMs);
+    globalScheduledRunner.start();
     while (true) {
         try {
             const updates = await telegram.getUpdates(offset, telegramConfig.pollTimeoutSeconds);
@@ -110,3 +112,31 @@ async function poll() {
     }
 }
 poll();
+let shutdownStarted = false;
+async function handleShutdown(signal) {
+    if (shutdownStarted)
+        return;
+    shutdownStarted = true;
+    logger_1.log.info("system-shutdown", "bot.shutdown.started", { signal });
+    console.log(`\nReceived ${signal}, initiating graceful shutdown...`);
+    try {
+        if (globalScheduledRunner) {
+            globalScheduledRunner.stop();
+        }
+        const result = await browser_service_1.browserService.shutdown();
+        logger_1.log.info("system-shutdown", "bot.shutdown.completed", result);
+        console.log("Graceful shutdown completed successfully.");
+        process.exit(0);
+    }
+    catch (error) {
+        logger_1.log.error("system-shutdown", "bot.shutdown.failed", { error });
+        console.error("Graceful shutdown failed:", error);
+        process.exit(1);
+    }
+}
+process.once("SIGTERM", () => {
+    void handleShutdown("SIGTERM");
+});
+process.once("SIGINT", () => {
+    void handleShutdown("SIGINT");
+});

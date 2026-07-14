@@ -9,7 +9,13 @@ export type TabRecord = {
   profile: string;
   createdAt: number;
   lastUsedAt: number;
-  active: boolean;
+  lastFocusedAt?: number;
+  active: boolean; // representing isActiveTab
+
+  activeOperationCount: number;
+  protectedUntil?: number;
+  closeRequested: boolean;
+  closing: boolean;
 };
 
 export class TabRegistry {
@@ -41,6 +47,9 @@ export class TabRegistry {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       active: true,
+      activeOperationCount: 0,
+      closeRequested: false,
+      closing: false,
     });
 
     return targetId;
@@ -53,6 +62,10 @@ export class TabRegistry {
       return record;
     }
     return undefined;
+  }
+
+  getAllRecords(): TabRecord[] {
+    return Array.from(this.records.values());
   }
 
   list(profile: string): BrowserTab[] {
@@ -95,6 +108,10 @@ export class TabRegistry {
     for (const record of this.records.values()) {
       if (record.profile === profile) {
         record.active = (record.targetId === targetId);
+        if (record.active) {
+          record.lastFocusedAt = Date.now();
+          record.lastUsedAt = Date.now();
+        }
       }
     }
   }
@@ -126,5 +143,24 @@ export class TabRegistry {
         this.records.delete(id);
       }
     }
+  }
+
+  acquireLease(targetId: string, profile: string): { release(): void } {
+    const record = this.get(targetId, profile);
+    if (!record) {
+      throw new Error(`Tab ${targetId} not found in profile ${profile}`);
+    }
+    record.activeOperationCount++;
+    record.lastUsedAt = Date.now();
+    let released = false;
+    return {
+      release: () => {
+        if (!released) {
+          record.activeOperationCount = Math.max(0, record.activeOperationCount - 1);
+          record.lastUsedAt = Date.now();
+          released = true;
+        }
+      }
+    };
   }
 }

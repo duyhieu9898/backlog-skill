@@ -15,6 +15,7 @@ import { loadTelegramConfig } from "./telegram/config";
 import { formatDate } from "./utils";
 import { loadAgentConfig } from "./config/app";
 import { seedScheduledJobsFromConfig, ScheduledCheckRunner } from "./scheduler";
+import { browserService } from "./browser/browser-service";
 
 loadEnv(path.join(agentDir, ".env"));
 
@@ -32,6 +33,8 @@ async function initializeOffset(): Promise<number> {
   return offset;
 }
 
+let globalScheduledRunner: ScheduledCheckRunner | null = null;
+
 async function poll(): Promise<void> {
   let offset = readOffset();
   console.log("Agent started with an allowlisted Telegram chat.");
@@ -48,12 +51,12 @@ async function poll(): Promise<void> {
   }
 
   seedScheduledJobsFromConfig(agentConfig.schedules || []);
-  const scheduledRunner = new ScheduledCheckRunner(
+  globalScheduledRunner = new ScheduledCheckRunner(
     telegramConfig.allowedChatId,
     (text) => telegram.sendMessage(telegramConfig.allowedChatId, text),
     agentConfig.runtime?.commandTimeoutMs,
   );
-  scheduledRunner.start();
+  globalScheduledRunner.start();
 
   while (true) {
     try {
@@ -122,3 +125,35 @@ async function poll(): Promise<void> {
 }
 
 poll();
+
+let shutdownStarted = false;
+
+async function handleShutdown(signal: NodeJS.Signals) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+
+  log.info("system-shutdown", "bot.shutdown.started", { signal });
+  console.log(`\nReceived ${signal}, initiating graceful shutdown...`);
+
+  try {
+    if (globalScheduledRunner) {
+      globalScheduledRunner.stop();
+    }
+    const result = await browserService.shutdown();
+    log.info("system-shutdown", "bot.shutdown.completed", result);
+    console.log("Graceful shutdown completed successfully.");
+    process.exit(0);
+  } catch (error) {
+    log.error("system-shutdown", "bot.shutdown.failed", { error });
+    console.error("Graceful shutdown failed:", error);
+    process.exit(1);
+  }
+}
+
+process.once("SIGTERM", () => {
+  void handleShutdown("SIGTERM");
+});
+
+process.once("SIGINT", () => {
+  void handleShutdown("SIGINT");
+});
