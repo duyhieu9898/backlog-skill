@@ -34,6 +34,7 @@ const MATCH_STOP_WORDS = new Set([
   "skill",
   "the",
   "this",
+  "thu",
   "tool",
   "tools",
   "using",

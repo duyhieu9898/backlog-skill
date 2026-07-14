@@ -25,6 +25,7 @@ import os from "node:os";
 import path from "node:path";
 import type { DesktopToolAction, FileToolAction, ToolResult, BrowserToolAction } from "./contracts";
 import { browserService } from "../browser/browser-service";
+import { BrowserError } from "../browser/errors";
 import { validateJsonSchema, type JsonSchema } from "./schema";
 
 export type PreparedToolCall = {
@@ -608,12 +609,43 @@ export class ToolExecutor {
           }
           case "browser.act": {
             const tab = await browserService.act(profile, actionArgs.targetId, actionArgs.request);
-            return { ok: true, code: "BROWSER_ACTION_COMPLETED", summary: `Action ${actionArgs.request.kind} completed.`, data: { target: tab } };
+            let screenshotArtifact;
+            try {
+              screenshotArtifact = await browserService.screenshot(profile, actionArgs.targetId, {
+                chatId: input.chatId,
+                traceId: input.traceId
+              });
+            } catch (err) {
+              // Ignore screenshot failure if action succeeded
+            }
+            return {
+              ok: true,
+              code: "BROWSER_ACTION_COMPLETED",
+              summary: `Action ${actionArgs.request.kind} completed.`,
+              data: {
+                target: tab,
+                artifactId: screenshotArtifact?.id,
+                artifact: screenshotArtifact ? {
+                  id: screenshotArtifact.id,
+                  type: "image",
+                  mimeType: "image/png",
+                  path: screenshotArtifact.path
+                } : undefined
+              }
+            };
           }
           default:
             return { ok: false, code: "UNKNOWN_BROWSER_ACTION", summary: `Unknown action kind: ${(action as any).kind}` };
         }
       } catch (error) {
+        if (error instanceof BrowserError) {
+          return {
+            ok: false,
+            code: error.code,
+            summary: error.message,
+            data: { retryable: error.retryable }
+          };
+        }
         return { ok: false, code: "BROWSER_ERROR", summary: error instanceof Error ? error.message : String(error) };
       }
     }

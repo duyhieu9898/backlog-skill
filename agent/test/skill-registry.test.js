@@ -22,7 +22,7 @@ test("SkillRegistry scans current repository skills with stable metadata", () =>
   const registry = new SkillRegistry(repoSkillsDir);
   const skills = registry.listSkills();
 
-  assert.deepEqual(skills.map((skill) => skill.slug), ["bemo", "debug-skill", "gmail", "linux-janitor"]);
+  assert.deepEqual(skills.map((skill) => skill.slug), ["bemo", "browser", "debug-skill", "gmail", "linux-janitor"]);
   assert.equal(registry.listErrors().length, 0);
   for (const skill of skills) {
     assert.equal(path.isAbsolute(skill.baseDir), true);
@@ -120,6 +120,6 @@ test("default SkillRegistry resolves repository skills outside the service cwd",
   );
   const skills = JSON.parse(output);
 
-  assert.deepEqual(skills.map((skill) => skill.slug), ["bemo", "debug-skill", "gmail", "linux-janitor"]);
+  assert.deepEqual(skills.map((skill) => skill.slug), ["bemo", "browser", "debug-skill", "gmail", "linux-janitor"]);
   assert.ok(skills.every((skill) => skill.baseDir.startsWith(path.resolve(repoSkillsDir))));
 });

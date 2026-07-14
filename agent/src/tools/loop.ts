@@ -13,6 +13,8 @@ import type { ToolResult } from "./contracts";
 import { ArtifactStore } from "../artifacts/store";
 import { createModelImage } from "./media/image-context";
 import fs from "node:fs";
+import crypto from "node:crypto";
+import { refStore } from "../browser/ref-store";
 
 const MAX_TOOL_STEPS = 8;
 const MAX_IDENTICAL_FAILURES = 2;
@@ -159,15 +161,121 @@ export class AgentToolLoop {
           traceId: message.traceId,
           chatId: message.chatId,
         });
-        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
-          onArtifact?.((result.data as { artifactId: string }).artifactId);
+
+        let finalResult = result;
+        let finalCall = response.toolCall;
+
+        if (!result.ok && result.code === "STALE_ELEMENT_REF" && response.toolCall.name === "browser") {
+          const actionArgs = response.toolCall.arguments as Record<string, any>;
+          if (actionArgs?.action === "act") {
+            log.info(message.traceId, "ai.tool.stale_ref_retry", {
+              toolName: response.toolCall.name,
+              ref: actionArgs.request?.ref,
+            });
+
+            // 1. Push the failed step first so the trace is complete
+            steps.push({
+              call: response.toolCall,
+              result,
+              image: modelImageForResult(result, message.chatId),
+            });
+
+            // 2. Schedule and run a new snapshot step
+            const profile = actionArgs.profile;
+            const targetId = actionArgs.targetId;
+
+            const snapshotCall: AiToolCall = {
+              name: "browser",
+              arguments: {
+                action: "snapshot",
+                profile,
+                targetId,
+              },
+            };
+
+            const snapshotPrepared = this.executor.prepare(snapshotCall, message.traceId, tools, message.chatId);
+            const snapshotResult = await this.executor.execute(snapshotPrepared, {
+              traceId: message.traceId,
+              chatId: message.chatId,
+            });
+
+            if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(snapshotResult.code) && typeof (snapshotResult.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
+              onArtifact?.((snapshotResult.data as { artifactId: string }).artifactId);
+            }
+
+            steps.push({
+              call: snapshotCall,
+              result: snapshotResult,
+              image: modelImageForResult(snapshotResult, message.chatId),
+            });
+
+            // 3. Resolve the new reference in the new snapshot
+            let newRef: string | undefined = undefined;
+            let newSnapshotId: string | undefined = undefined;
+
+            if (snapshotResult.ok && snapshotResult.data) {
+              const snapshotData = (snapshotResult.data as any).snapshot;
+              newSnapshotId = snapshotData?.snapshotId;
+              if (newSnapshotId) {
+                const oldSnapshotId = actionArgs.request?.snapshotId;
+                const oldRef = actionArgs.request?.ref;
+                const descriptor = refStore.getRef(oldSnapshotId, oldRef);
+                const newRecord = refStore.getRecord(newSnapshotId);
+
+                if (descriptor && newRecord) {
+                  for (const [refId, desc] of newRecord.refs.entries()) {
+                    if (desc.role === descriptor.role && desc.name === descriptor.name) {
+                      newRef = refId;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+
+            // 4. Retry the target action exactly once
+            const retryCall: AiToolCall = {
+              name: "browser",
+              arguments: {
+                ...response.toolCall.arguments,
+                request: {
+                  ...actionArgs.request,
+                  ref: newRef || actionArgs.request?.ref,
+                  snapshotId: newSnapshotId || actionArgs.request?.snapshotId,
+                },
+              },
+            };
+
+            const retryPrepared = this.executor.prepare(retryCall, message.traceId, tools, message.chatId);
+            const retryResult = await this.executor.execute(retryPrepared, {
+              traceId: message.traceId,
+              chatId: message.chatId,
+            });
+
+            finalResult = retryResult;
+            finalCall = retryCall;
+
+            if (!retryResult.ok) {
+              // Retry failed, push to steps and return failure to user immediately
+              steps.push({
+                call: retryCall,
+                result: retryResult,
+                image: modelImageForResult(retryResult, message.chatId),
+              });
+              return `Browser action retry failed: ${retryResult.summary}`;
+            }
+          }
         }
-        steps.push({ call: response.toolCall, result, image: modelImageForResult(result, message.chatId) });
+
+        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(finalResult.code) && typeof (finalResult.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
+          onArtifact?.((finalResult.data as { artifactId: string }).artifactId);
+        }
+        steps.push({ call: finalCall, result: finalResult, image: modelImageForResult(finalResult, message.chatId) });
         log.info(message.traceId, "ai.tool.completed", {
           step: index,
-          toolName: response.toolCall.name,
-          ok: result.ok,
-          code: result.code,
+          toolName: finalCall.name,
+          ok: finalResult.ok,
+          code: finalResult.code,
         });
         if (!result.ok) {
           const key = failureKey(response.toolCall, result);
@@ -262,7 +370,7 @@ export class AgentToolLoop {
       chatId: message.chatId,
       confirmationGranted: true,
     });
-    if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
+    if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(result.code) && typeof (result.data as { artifactId?: unknown } | undefined)?.artifactId === "string") {
       onArtifact?.((result.data as { artifactId: string }).artifactId);
     }
     log.info(message.traceId, "ai.tool.confirmed", {

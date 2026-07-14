@@ -31,8 +31,8 @@ export function validateCron(expr: string): string | null {
  * Returns null if no upcoming run is found.
  */
 export function nextAfter(expr: string, from: Date, timeZone: string): string | null {
-  const job = new Cron(expr, { timezone: timeZone, paused: true, startAt: from });
-  const next = job.nextRun();
+  const job = new Cron(expr, { timezone: timeZone, paused: true });
+  const next = job.nextRun(from);
   return next ? next.toISOString() : null;
 }
 

@@ -33,7 +33,7 @@ function validateCron(expr) {
  * Returns null if no upcoming run is found.
  */
 function nextAfter(expr, from, timeZone) {
-    const job = new croner_1.Cron(expr, { timezone: timeZone, paused: true, startAt: from });
-    const next = job.nextRun();
+    const job = new croner_1.Cron(expr, { timezone: timeZone, paused: true });
+    const next = job.nextRun(from);
     return next ? next.toISOString() : null;
 }

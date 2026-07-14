@@ -11,6 +11,7 @@ const executor_1 = require("./executor");
 const store_1 = require("../artifacts/store");
 const image_context_1 = require("./media/image-context");
 const node_fs_1 = __importDefault(require("node:fs"));
+const ref_store_1 = require("../browser/ref-store");
 const MAX_TOOL_STEPS = 8;
 const MAX_IDENTICAL_FAILURES = 2;
 function formatResult(result) {
@@ -128,15 +129,105 @@ class AgentToolLoop {
                     traceId: message.traceId,
                     chatId: message.chatId,
                 });
-                if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof result.data?.artifactId === "string") {
-                    onArtifact?.(result.data.artifactId);
+                let finalResult = result;
+                let finalCall = response.toolCall;
+                if (!result.ok && result.code === "STALE_ELEMENT_REF" && response.toolCall.name === "browser") {
+                    const actionArgs = response.toolCall.arguments;
+                    if (actionArgs?.action === "act") {
+                        logger_1.log.info(message.traceId, "ai.tool.stale_ref_retry", {
+                            toolName: response.toolCall.name,
+                            ref: actionArgs.request?.ref,
+                        });
+                        // 1. Push the failed step first so the trace is complete
+                        steps.push({
+                            call: response.toolCall,
+                            result,
+                            image: modelImageForResult(result, message.chatId),
+                        });
+                        // 2. Schedule and run a new snapshot step
+                        const profile = actionArgs.profile;
+                        const targetId = actionArgs.targetId;
+                        const snapshotCall = {
+                            name: "browser",
+                            arguments: {
+                                action: "snapshot",
+                                profile,
+                                targetId,
+                            },
+                        };
+                        const snapshotPrepared = this.executor.prepare(snapshotCall, message.traceId, tools, message.chatId);
+                        const snapshotResult = await this.executor.execute(snapshotPrepared, {
+                            traceId: message.traceId,
+                            chatId: message.chatId,
+                        });
+                        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(snapshotResult.code) && typeof snapshotResult.data?.artifactId === "string") {
+                            onArtifact?.(snapshotResult.data.artifactId);
+                        }
+                        steps.push({
+                            call: snapshotCall,
+                            result: snapshotResult,
+                            image: modelImageForResult(snapshotResult, message.chatId),
+                        });
+                        // 3. Resolve the new reference in the new snapshot
+                        let newRef = undefined;
+                        let newSnapshotId = undefined;
+                        if (snapshotResult.ok && snapshotResult.data) {
+                            const snapshotData = snapshotResult.data.snapshot;
+                            newSnapshotId = snapshotData?.snapshotId;
+                            if (newSnapshotId) {
+                                const oldSnapshotId = actionArgs.request?.snapshotId;
+                                const oldRef = actionArgs.request?.ref;
+                                const descriptor = ref_store_1.refStore.getRef(oldSnapshotId, oldRef);
+                                const newRecord = ref_store_1.refStore.getRecord(newSnapshotId);
+                                if (descriptor && newRecord) {
+                                    for (const [refId, desc] of newRecord.refs.entries()) {
+                                        if (desc.role === descriptor.role && desc.name === descriptor.name) {
+                                            newRef = refId;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // 4. Retry the target action exactly once
+                        const retryCall = {
+                            name: "browser",
+                            arguments: {
+                                ...response.toolCall.arguments,
+                                request: {
+                                    ...actionArgs.request,
+                                    ref: newRef || actionArgs.request?.ref,
+                                    snapshotId: newSnapshotId || actionArgs.request?.snapshotId,
+                                },
+                            },
+                        };
+                        const retryPrepared = this.executor.prepare(retryCall, message.traceId, tools, message.chatId);
+                        const retryResult = await this.executor.execute(retryPrepared, {
+                            traceId: message.traceId,
+                            chatId: message.chatId,
+                        });
+                        finalResult = retryResult;
+                        finalCall = retryCall;
+                        if (!retryResult.ok) {
+                            // Retry failed, push to steps and return failure to user immediately
+                            steps.push({
+                                call: retryCall,
+                                result: retryResult,
+                                image: modelImageForResult(retryResult, message.chatId),
+                            });
+                            return `Browser action retry failed: ${retryResult.summary}`;
+                        }
+                    }
                 }
-                steps.push({ call: response.toolCall, result, image: modelImageForResult(result, message.chatId) });
+                if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(finalResult.code) && typeof finalResult.data?.artifactId === "string") {
+                    onArtifact?.(finalResult.data.artifactId);
+                }
+                steps.push({ call: finalCall, result: finalResult, image: modelImageForResult(finalResult, message.chatId) });
                 logger_1.log.info(message.traceId, "ai.tool.completed", {
                     step: index,
-                    toolName: response.toolCall.name,
-                    ok: result.ok,
-                    code: result.code,
+                    toolName: finalCall.name,
+                    ok: finalResult.ok,
+                    code: finalResult.code,
                 });
                 if (!result.ok) {
                     const key = failureKey(response.toolCall, result);
@@ -226,7 +317,7 @@ class AgentToolLoop {
             chatId: message.chatId,
             confirmationGranted: true,
         });
-        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED"].includes(result.code) && typeof result.data?.artifactId === "string") {
+        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(result.code) && typeof result.data?.artifactId === "string") {
             onArtifact?.(result.data.artifactId);
         }
         logger_1.log.info(message.traceId, "ai.tool.confirmed", {
