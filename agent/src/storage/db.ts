@@ -1,14 +1,15 @@
 import fs from "node:fs";
+import path from "node:path";
 
 import Database from "better-sqlite3";
 
-import { dataDir, sqliteFile } from "../config/paths";
+import { sqliteFile } from "../config/paths";
 
 let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
   if (!db) {
-    fs.mkdirSync(dataDir, { recursive: true });
+    fs.mkdirSync(path.dirname(sqliteFile), { recursive: true });
     db = new Database(sqliteFile);
     db.pragma("journal_mode = WAL");
     db.pragma("busy_timeout = 5000");

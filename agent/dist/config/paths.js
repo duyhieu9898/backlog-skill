@@ -21,4 +21,6 @@ exports.configFile = process.env.AGENT_CONFIG_FILE
     : node_path_1.default.join(exports.agentDir, "config.json");
 exports.systemPromptFile = node_path_1.default.join(exports.agentDir, "prompts", "system.md");
 exports.memoryFile = node_path_1.default.join(exports.agentDir, "prompts", "MEMORY.md");
-exports.sqliteFile = node_path_1.default.join(exports.dataDir, "agent.sqlite");
+exports.sqliteFile = process.env.AGENT_DB_FILE
+    ? node_path_1.default.resolve(process.env.AGENT_DB_FILE)
+    : node_path_1.default.join(exports.dataDir, "agent.sqlite");

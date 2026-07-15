@@ -7,12 +7,13 @@ exports.getDb = getDb;
 exports.initializeSchema = initializeSchema;
 exports.closeDb = closeDb;
 const node_fs_1 = __importDefault(require("node:fs"));
+const node_path_1 = __importDefault(require("node:path"));
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const paths_1 = require("../config/paths");
 let db = null;
 function getDb() {
     if (!db) {
-        node_fs_1.default.mkdirSync(paths_1.dataDir, { recursive: true });
+        node_fs_1.default.mkdirSync(node_path_1.default.dirname(paths_1.sqliteFile), { recursive: true });
         db = new better_sqlite3_1.default(paths_1.sqliteFile);
         db.pragma("journal_mode = WAL");
         db.pragma("busy_timeout = 5000");
