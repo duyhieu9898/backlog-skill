@@ -137,18 +137,36 @@ in this phase. The resulting definition is still resolved and authorized by
 `ToolGateway` before `ToolExecutor` invokes it. This provides a small,
 type-checked lifecycle without creating a second execution path.
 
+## Progress
+
+- **P1.1 — ToolRegistry** (commit `a24a98b`): added `src/tools/registry.ts` and
+  `src/tools/register-tools.ts`, `ensureToolsRegistered()` from the
+  `ToolGateway` constructor, and `authorize()` of custom tools by
+  `ToolRiskLevel` (routine/sensitive/destructive). Built-in tools are unchanged;
+  the registry is empty by default. Covered by `test/custom-tools.test.js`.
+- **P1.2 — Extended approval matching** (commit `1a9ccdb`): `covers()` now
+  matches an `ActionProfile` (family, risk category, resource/command hints)
+  against active grants within scope, via `security/actionProfile.ts` and the
+  shared `security/policy-patterns.ts`. `resolve()` populates real grant fields
+  from the profile; `revokeApprovalGrant` added. Legacy grants
+  (`["approved-action"]`, no resourceHints) remain backward-compatible and
+  browser confirmations stay fingerprint-bound (never widen). Covered by
+  `test/approval-matching.test.js`.
+
 ## Follow-Up
 
 ### P1: Close the core authority model
 
-1. Implement the source-managed custom `ToolRegistry` and
-   `src/tools/register-tools.ts`, with explicit `registerTool(...)` calls.
-   Resolve custom tools through `ToolGateway` before `ToolExecutor`; test
-   routine, sensitive, and destructive custom-tool definitions.
-2. Extend approval matching beyond a tool-name hint: match the current task,
-   action family, risk category, relevant resource/command hints, and scope.
-   Exercise `run`, `session`, `schedule`, and persistent grants, expiry, and
-   revocation without asking again for equivalent in-scope steps.
+1. ✅ Done (commit `a24a98b`) — see Progress. Implement the source-managed
+   custom `ToolRegistry` and `src/tools/register-tools.ts`, with explicit
+   `registerTool(...)` calls. Resolve custom tools through `ToolGateway` before
+   `ToolExecutor`; test routine, sensitive, and destructive custom-tool
+   definitions.
+2. ✅ Done (commit `1a9ccdb`) — see Progress. Extend approval matching beyond a
+   tool-name hint: match the current task, action family, risk category,
+   relevant resource/command hints, and scope. Exercise `run`, `session`,
+   `schedule`, and persistent grants, expiry, and revocation without asking
+   again for equivalent in-scope steps.
 3. Prove persisted approval pause/resume across a process restart, including
    stale digest invalidation, replay/refusal handling, rejection, and continued
    tool-loop execution after approval.
