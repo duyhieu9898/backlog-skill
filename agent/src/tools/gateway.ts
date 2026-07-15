@@ -8,6 +8,7 @@ import { browserConfirmationStore } from "../security/browser-confirmation";
 import { computeActionFingerprint } from "../browser/action-policy";
 import { ToolExecutor, buildBrowserActionPolicyContext, computerController, type PreparedToolCall } from "./executor";
 import { ensureToolsRegistered } from "./register-tools";
+import { deriveActionProfile } from "../security/actionProfile";
 
 /**
  * The only runtime entry point for LLM-originated tool calls.
@@ -25,8 +26,19 @@ export class ToolGateway {
     return this.executor.definitions(scope);
   }
 
-  prepare(call: AiToolCall, traceId: string, definitions?: AiToolDefinition[], chatId?: string, userIntent?: string, approvalGranted = false): PreparedToolCall {
+  /** Resolve, validate, and attach an action profile — without authorizing. */
+  prepareRaw(call: AiToolCall, traceId: string, definitions?: AiToolDefinition[], chatId?: string): PreparedToolCall {
     const prepared = this.executor.prepare(call, traceId, definitions, chatId);
+    return { ...prepared, profile: deriveActionProfile(prepared) };
+  }
+
+  /** Authorize an already-prepared call (e.g. after checking grant coverage). */
+  authorizePrepared(prepared: PreparedToolCall, chatId?: string): PreparedToolCall {
+    return this.authorize(prepared, chatId);
+  }
+
+  prepare(call: AiToolCall, traceId: string, definitions?: AiToolDefinition[], chatId?: string, userIntent?: string, approvalGranted = false): PreparedToolCall {
+    const prepared = this.prepareRaw(call, traceId, definitions, chatId);
     return this.authorize({ ...prepared, userIntent, approvalGranted }, chatId);
   }
 

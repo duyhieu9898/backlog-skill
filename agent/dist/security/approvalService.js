@@ -41,15 +41,23 @@ class ApprovalService {
         }
         (0, repositories_1.resolvePendingApproval)(pending.id, input.approve ? "approved" : "rejected");
         if (input.approve) {
-            const hints = approvalHints(pending.payload_json);
+            const profile = readProfile(pending.payload_json);
+            const isBrowser = profile?.family === "browser" || readCallName(pending.payload_json) === "browser";
+            // Browser confirmations stay snapshot/fingerprint-bound (browserConfirmationStore);
+            // a DB grant must never widen to every browser operation in the scope.
+            const commandHints = isBrowser ? [] : (profile?.commandHints || approvalHints(pending.payload_json));
+            const scope = input.scope || "run";
             (0, repositories_1.createApprovalGrant)({
                 id: node_crypto_1.default.randomUUID(),
                 principalId: pending.principal_id,
                 description: pending.description,
-                scope: "run",
-                runId: pending.run_id,
-                riskCategories: ["approved-action"],
-                commandHints: hints,
+                scope,
+                runId: scope === "run" ? pending.run_id : undefined,
+                sessionId: scope === "session" ? input.sessionId : undefined,
+                scheduleId: scope === "schedule" ? input.scheduleId : undefined,
+                riskCategories: profile && !isBrowser ? [profile.riskCategory] : ["approved-action"],
+                resourceHints: isBrowser ? undefined : profile?.resourceHints,
+                commandHints,
                 expiresAt: pending.expires_at,
             });
             (0, repositories_1.setRunStatus)(pending.run_id, "running");
@@ -59,13 +67,37 @@ class ApprovalService {
         return pending;
     }
     covers(input) {
-        return (0, repositories_1.listActiveApprovalGrants)({ principalId: input.principalId, runId: input.runId }).some((grant) => {
-            const hints = parseHints(grant.command_hints_json);
-            return hints.includes(input.actionKey) || hints.includes("*");
-        });
+        return (0, repositories_1.listActiveApprovalGrants)({
+            principalId: input.principalId,
+            runId: input.runId,
+            sessionId: input.sessionId,
+            scheduleId: input.scheduleId,
+        }).some((grant) => grantMatches(grant, input.profile));
+    }
+    revoke(grantId) {
+        (0, repositories_1.revokeApprovalGrant)(grantId);
     }
 }
 exports.ApprovalService = ApprovalService;
+function grantMatches(grant, profile) {
+    const riskCats = parseHints(grant.risk_categories_json);
+    // Gate 1 — risk: empty grant list or the backward-compat "approved-action"
+    // wildcard matches any risk; otherwise the action's risk must be listed.
+    const riskOK = riskCats.length === 0 || riskCats.includes("*") || riskCats.includes("approved-action") || riskCats.includes(profile.riskCategory);
+    if (!riskOK)
+        return false;
+    // Gate 2 — command family: empty grant hints NEVER match. This is what keeps
+    // a browser confirmation (which stores no commandHints) from widening into a
+    // general grant. "*" or an overlap with the action's commandHints is required.
+    const cmdHints = parseHints(grant.command_hints_json);
+    const cmdOK = cmdHints.includes("*") || cmdHints.some((hint) => profile.commandHints.includes(hint));
+    if (!cmdOK)
+        return false;
+    // Gate 3 — resource area: empty grant hints match all (backward-compat with
+    // grants that never captured a resource). "*" or overlap otherwise.
+    const resHints = parseHints(grant.resource_hints_json);
+    return resHints.length === 0 || resHints.includes("*") || resHints.some((hint) => profile.resourceHints.includes(hint));
+}
 function parseHints(value) {
     try {
         const parsed = JSON.parse(value || "[]");
@@ -90,4 +122,22 @@ function approvalHints(payloadJson) {
         // A malformed payload cannot broaden an approval grant.
     }
     return [];
+}
+function readProfile(payloadJson) {
+    try {
+        const payload = JSON.parse(payloadJson);
+        return payload.profile;
+    }
+    catch {
+        return undefined;
+    }
+}
+function readCallName(payloadJson) {
+    try {
+        const payload = JSON.parse(payloadJson);
+        return typeof payload.call?.name === "string" ? payload.call.name : undefined;
+    }
+    catch {
+        return undefined;
+    }
 }

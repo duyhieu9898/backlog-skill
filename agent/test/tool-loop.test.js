@@ -418,6 +418,14 @@ test("AgentToolLoop stops after one retry of the identical failure", async () =>
   };
   const failingExecutor = {
     definitions: () => [],
+    prepareRaw: (call) => ({
+      call,
+      key: call.name,
+      digest: "test-digest",
+      preview: call.name,
+      requiresConfirmation: false,
+    }),
+    authorizePrepared: (prepared) => prepared,
     prepare: (call) => ({
       call,
       key: call.name,

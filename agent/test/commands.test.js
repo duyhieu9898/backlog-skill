@@ -323,8 +323,12 @@ test("approved action creates a persisted run grant that covers only its action 
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   });
   assert.ok(service.resolve({ shortId: pending.short_id, principalId, chatId, actionDigest: digest, approve: true }));
-  assert.equal(service.covers({ principalId, runId, actionKey: "file.write" }), true);
-  assert.equal(service.covers({ principalId, runId, actionKey: "command.run" }), false);
+  // Legacy payload (no profile) resolves to a backward-compatible grant whose
+  // riskCategories=["approved-action"] (wildcard) and commandHints=["file.write"].
+  const fileProfile = { family: "file", riskCategory: "routine", resourceHints: [], commandHints: ["file.write"] };
+  const commandProfile = { family: "command", riskCategory: "routine", resourceHints: [], commandHints: ["command.run"] };
+  assert.equal(service.covers({ principalId, runId, profile: fileProfile }), true);
+  assert.equal(service.covers({ principalId, runId, profile: commandProfile }), false);
 });
 
 test("command preview exposes fixed argv, cwd, timeout, and risk", () => {

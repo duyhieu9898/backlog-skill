@@ -32,6 +32,7 @@ exports.countPendingApprovals = countPendingApprovals;
 exports.resolvePendingApproval = resolvePendingApproval;
 exports.createApprovalGrant = createApprovalGrant;
 exports.listActiveApprovalGrants = listActiveApprovalGrants;
+exports.revokeApprovalGrant = revokeApprovalGrant;
 exports.upsertScheduledJob = upsertScheduledJob;
 exports.disableRemovedConfigScheduledJobs = disableRemovedConfigScheduledJobs;
 exports.listScheduledJobs = listScheduledJobs;
@@ -237,6 +238,9 @@ function listActiveApprovalGrants(input) {
          OR scope = 'persistent'
        )
      ORDER BY created_at DESC`).all(input.principalId, now, input.runId || null, input.sessionId || null, input.scheduleId || null);
+}
+function revokeApprovalGrant(id) {
+    (0, db_1.getDb)().prepare(`UPDATE approval_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).run(nowIso(), id);
 }
 function upsertScheduledJob(input) {
     const now = nowIso();

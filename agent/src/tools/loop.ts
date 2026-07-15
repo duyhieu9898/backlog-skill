@@ -1,10 +1,11 @@
 import { AiRouter } from "../brain/router";
-import type { AiPromptContext, AiToolCall, AiToolStep } from "../brain/provider";
+import type { AiPromptContext, AiToolCall, AiToolDefinition, AiToolStep } from "../brain/provider";
 import { log } from "../logging/logger";
 import type { StandardMessage } from "../types/messages";
 import { ToolGateway } from "./gateway";
 import { ApprovalService } from "../security/approvalService";
-import { appendRunStep, finishRun } from "../storage/repositories";
+import { appendRunStep, finishRun, getActiveSessionId } from "../storage/repositories";
+import type { ActionProfile } from "../security/actionProfile";
 import type { ToolResult } from "./contracts";
 import { ArtifactStore } from "../artifacts/store";
 import { createModelImage } from "./media/image-context";
@@ -20,6 +21,7 @@ type PendingAiTool = {
   call: AiToolCall;
   digest: string;
   preview: string;
+  profile?: ActionProfile;
   /**
    * The confirmation message is not the user's task. Keep the original model
    * context so approving one action can resume the same tool loop instead of
@@ -94,6 +96,22 @@ export class AgentToolLoop {
     private readonly gateway = new ToolGateway(),
   ) {}
 
+  /** Prepare, then authorize with grant coverage derived from the action profile. */
+  private prepareAuthorized(
+    call: AiToolCall,
+    message: StandardMessage,
+    runId: string,
+    sessionId: string,
+    tools?: AiToolDefinition[],
+    userMessage?: string,
+  ) {
+    const raw = this.gateway.prepareRaw(call, message.traceId, tools, message.chatId);
+    const approvalGranted = raw.profile
+      ? this.approvals.covers({ principalId: message.userId, runId, sessionId, profile: raw.profile })
+      : false;
+    return this.gateway.authorizePrepared({ ...raw, userIntent: userMessage, approvalGranted }, message.chatId);
+  }
+
   async run(
     message: StandardMessage,
     context: AiPromptContext,
@@ -107,6 +125,7 @@ export class AgentToolLoop {
     const steps: AiToolStep[] = [...initialSteps];
     const failures = new Map<string, number>();
     const tools = this.gateway.definitions(context.toolScope);
+    const sessionId = getActiveSessionId(message.chatId);
 
     for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
       if (signal?.aborted) return "Run cancelled.";
@@ -123,12 +142,7 @@ export class AgentToolLoop {
         toolName: response.toolCall.name,
       });
       try {
-        const grantCoversAction = this.approvals.covers({
-          principalId: message.userId,
-          runId,
-          actionKey: response.toolCall.name,
-        });
-        const prepared = this.gateway.prepare(response.toolCall, message.traceId, tools, message.chatId, userMessage, grantCoversAction);
+        const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, tools, userMessage);
         if (prepared.requiresConfirmation) {
           const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
           const pending: PendingAiTool = {
@@ -136,6 +150,7 @@ export class AgentToolLoop {
             call: prepared.call,
             digest: prepared.digest,
             preview: prepared.preview,
+            profile: prepared.profile,
             continuation: {
               userMessage,
               context,
@@ -208,7 +223,7 @@ export class AgentToolLoop {
               },
             };
 
-            const snapshotPrepared = this.gateway.prepare(snapshotCall, message.traceId, tools, message.chatId, userMessage, this.approvals.covers({ principalId: message.userId, runId, actionKey: snapshotCall.name }));
+            const snapshotPrepared = this.prepareAuthorized(snapshotCall, message, runId, sessionId, tools, userMessage);
             const snapshotResult = await this.gateway.execute(snapshotPrepared, {
               traceId: message.traceId,
               chatId: message.chatId,
@@ -262,7 +277,7 @@ export class AgentToolLoop {
               },
             };
 
-            const retryPrepared = this.gateway.prepare(retryCall, message.traceId, tools, message.chatId, userMessage, this.approvals.covers({ principalId: message.userId, runId, actionKey: retryCall.name }));
+            const retryPrepared = this.prepareAuthorized(retryCall, message, runId, sessionId, tools, userMessage);
             const retryResult = await this.gateway.execute(retryPrepared, {
               traceId: message.traceId,
               chatId: message.chatId,
@@ -351,14 +366,8 @@ export class AgentToolLoop {
     if (payload.kind !== "ai-tool") return null;
     let prepared;
     try {
-      prepared = this.gateway.prepare(
-        payload.call,
-        message.traceId,
-        undefined,
-        message.chatId,
-        payload.continuation?.userMessage,
-        this.approvals.covers({ principalId: message.userId, runId: candidate.run_id, actionKey: payload.call.name }),
-      );
+      const resumeSessionId = getActiveSessionId(message.chatId);
+      prepared = this.prepareAuthorized(payload.call, message, candidate.run_id, resumeSessionId, undefined, payload.continuation?.userMessage);
     } catch { return "Approval không còn hợp lệ."; }
     const pending = this.approvals.resolve({ shortId: match[2], principalId: message.userId, chatId: message.chatId, actionDigest: prepared.digest, approve: match[1] === "approve" });
     if (!pending) return "Approval không tồn tại, đã hết hạn, hoặc action đã thay đổi.";

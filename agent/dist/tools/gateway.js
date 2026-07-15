@@ -9,6 +9,7 @@ const browser_confirmation_1 = require("../security/browser-confirmation");
 const action_policy_1 = require("../browser/action-policy");
 const executor_1 = require("./executor");
 const register_tools_1 = require("./register-tools");
+const actionProfile_1 = require("../security/actionProfile");
 /**
  * The only runtime entry point for LLM-originated tool calls.
  *
@@ -25,8 +26,17 @@ class ToolGateway {
     definitions(scope) {
         return this.executor.definitions(scope);
     }
-    prepare(call, traceId, definitions, chatId, userIntent, approvalGranted = false) {
+    /** Resolve, validate, and attach an action profile — without authorizing. */
+    prepareRaw(call, traceId, definitions, chatId) {
         const prepared = this.executor.prepare(call, traceId, definitions, chatId);
+        return { ...prepared, profile: (0, actionProfile_1.deriveActionProfile)(prepared) };
+    }
+    /** Authorize an already-prepared call (e.g. after checking grant coverage). */
+    authorizePrepared(prepared, chatId) {
+        return this.authorize(prepared, chatId);
+    }
+    prepare(call, traceId, definitions, chatId, userIntent, approvalGranted = false) {
+        const prepared = this.prepareRaw(call, traceId, definitions, chatId);
         return this.authorize({ ...prepared, userIntent, approvalGranted }, chatId);
     }
     prepareCommand(action, defaultTimeoutMs, userIntent, approvalGranted = false) {

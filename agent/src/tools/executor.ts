@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import type { DesktopToolAction, FileToolAction, ToolResult, BrowserToolAction } from "./contracts";
 import { toolRegistry, type ToolRiskLevel } from "./registry";
+import type { ActionProfile } from "../security/actionProfile";
 import { browserService } from "../browser/browser-service";
 import { BrowserError } from "../browser/errors";
 import { validateJsonSchema, type JsonSchema } from "./schema";
@@ -46,6 +47,7 @@ export type PreparedToolCall = {
   userIntent?: string;
   approvalGranted?: boolean;
   customTool?: { name: string; risk: ToolRiskLevel };
+  profile?: ActionProfile;
 };
 
 const emptyObjectSchema: JsonSchema = {

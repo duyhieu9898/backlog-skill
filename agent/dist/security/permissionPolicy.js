@@ -10,12 +10,7 @@ const node_path_1 = __importDefault(require("node:path"));
 const contracts_1 = require("../tools/contracts");
 const url_policy_1 = require("../browser/url-policy");
 const action_policy_1 = require("../browser/action-policy");
-const SECRET_FILE_PATTERNS = [
-    /^\.env(?:\..+)?$/i,
-    /^(?:credentials?|secrets?)(?:\..+)?$/i,
-    /^(?:id_rsa|id_ed25519)(?:\.pub)?$/i,
-    /\.(?:pem|key|p12|pfx)$/i,
-];
+const policy_patterns_1 = require("./policy-patterns");
 function nearestExistingPath(candidate) {
     let current = candidate;
     const suffix = [];
@@ -35,26 +30,13 @@ function canonicalizePolicyPath(candidate) {
     const { existing, suffix } = nearestExistingPath(absolute);
     return node_path_1.default.join(node_fs_1.default.realpathSync(existing), ...suffix);
 }
-function isSecretLike(candidate) {
-    return SECRET_FILE_PATTERNS.some((pattern) => pattern.test(node_path_1.default.basename(candidate)));
-}
-function isClearlyDestructiveCommand(action) {
-    const command = [action.executable || "", ...(action.args || []), action.shellCommand || ""].join(" ").toLowerCase();
-    return /\brm\s+-[^\n]*r[^\n]*\s+\/(?:\s|$)|\brm\s+-[^\n]*r[^\n]*\s+\/\*|\brm\s+-[^\n]*r[^\n]*\s+\/home(?:\s|$)|\bmkfs\b|\b(?:dd|cat)\b[^\n]*(?:of=)?\/dev\/(?:sd|nvme|vd)|\b(?:grub-install|update-grub)\b|\b(?:fork\s*bomb|:\(\)\s*\{\s*:\|:\s*&\s*\})|\b(?:curl|wget)\b[^\n|]*\|\s*(?:ba)?sh\b/.test(command);
-}
-function needsSystemApproval(action) {
-    const executable = node_path_1.default.basename(action.executable || "").toLowerCase();
-    const command = [action.executable || "", ...(action.args || []), action.shellCommand || ""].join(" ").toLowerCase();
-    return executable === "sudo" || ["apt", "apt-get", "snap", "systemctl", "service", "dpkg", "rpm"].includes(executable)
-        || /\b(?:sudo|apt(?:-get)?|snap|systemctl|service|dpkg|rpm)\b/.test(command);
-}
 /**
  * A clear owner request is approval for the exact task, including the ordinary
  * package/service steps needed to complete it. This is deliberately narrow:
  * it only relaxes the system-impact prompt, never the destructive deny rules.
  */
 function hasExplicitSystemIntent(action, userIntent) {
-    if (!userIntent || !needsSystemApproval(action))
+    if (!userIntent || !(0, policy_patterns_1.needsSystemApproval)(action))
         return false;
     const intent = userIntent.toLowerCase();
     const asksForSystemWork = /\b(?:install|uninstall|remove|configure|config|restart|start|stop|enable|disable|upgrade|update)\b|cài(?:\s+đặt)?|gỡ|cấu\s*hình|khởi\s*động|dừng|bật|tắt/.test(intent);
@@ -119,10 +101,10 @@ class PermissionPolicy {
             return this.evaluateBrowser(normalized, context);
         }
         const target = normalized.kind === "command.run" ? normalized.cwd : normalized.path;
-        if (normalized.kind === "command.run" && isClearlyDestructiveCommand(normalized)) {
+        if (normalized.kind === "command.run" && (0, policy_patterns_1.isClearlyDestructiveCommand)(normalized)) {
             return denied(normalized, "DENIED_PATH", "Command matches a clearly destructive pattern.");
         }
-        if (isSecretLike(target)) {
+        if ((0, policy_patterns_1.isSecretLike)(target)) {
             if (!context.confirmationGranted)
                 return { outcome: "confirm", reasonCode: "CONFIRMATION_REQUIRED", reason: `Sensitive path requires approval: ${target}`, action: normalized };
             return { outcome: "allow", reasonCode: "ALLOWED", reason: "Sensitive path approved for this task.", action: normalized };
@@ -134,7 +116,7 @@ class PermissionPolicy {
         }
         const explicitSystemIntent = normalized.kind === "command.run" && hasExplicitSystemIntent(normalized, context.userIntent);
         const needsConfirmation = normalized.kind === "command.run"
-            ? (normalized.requiresConfirmation || normalized.externalSideEffect || needsSystemApproval(normalized)) && !explicitSystemIntent
+            ? (normalized.requiresConfirmation || normalized.externalSideEffect || (0, policy_patterns_1.needsSystemApproval)(normalized)) && !explicitSystemIntent
             : false;
         if (needsConfirmation && !context.confirmationGranted) {
             return {

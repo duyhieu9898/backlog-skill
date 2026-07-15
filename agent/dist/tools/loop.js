@@ -70,10 +70,19 @@ class AgentToolLoop {
         this.ai = ai;
         this.gateway = gateway;
     }
+    /** Prepare, then authorize with grant coverage derived from the action profile. */
+    prepareAuthorized(call, message, runId, sessionId, tools, userMessage) {
+        const raw = this.gateway.prepareRaw(call, message.traceId, tools, message.chatId);
+        const approvalGranted = raw.profile
+            ? this.approvals.covers({ principalId: message.userId, runId, sessionId, profile: raw.profile })
+            : false;
+        return this.gateway.authorizePrepared({ ...raw, userIntent: userMessage, approvalGranted }, message.chatId);
+    }
     async run(message, context, onReplyMarkup, onArtifact, initialSteps = [], userMessage = message.text, runId = message.traceId, signal) {
         const steps = [...initialSteps];
         const failures = new Map();
         const tools = this.gateway.definitions(context.toolScope);
+        const sessionId = (0, repositories_1.getActiveSessionId)(message.chatId);
         for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
             if (signal?.aborted)
                 return "Run cancelled.";
@@ -91,12 +100,7 @@ class AgentToolLoop {
                 toolName: response.toolCall.name,
             });
             try {
-                const grantCoversAction = this.approvals.covers({
-                    principalId: message.userId,
-                    runId,
-                    actionKey: response.toolCall.name,
-                });
-                const prepared = this.gateway.prepare(response.toolCall, message.traceId, tools, message.chatId, userMessage, grantCoversAction);
+                const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, tools, userMessage);
                 if (prepared.requiresConfirmation) {
                     const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
                     const pending = {
@@ -104,6 +108,7 @@ class AgentToolLoop {
                         call: prepared.call,
                         digest: prepared.digest,
                         preview: prepared.preview,
+                        profile: prepared.profile,
                         continuation: {
                             userMessage,
                             context,
@@ -169,7 +174,7 @@ class AgentToolLoop {
                                 targetId,
                             },
                         };
-                        const snapshotPrepared = this.gateway.prepare(snapshotCall, message.traceId, tools, message.chatId, userMessage, this.approvals.covers({ principalId: message.userId, runId, actionKey: snapshotCall.name }));
+                        const snapshotPrepared = this.prepareAuthorized(snapshotCall, message, runId, sessionId, tools, userMessage);
                         const snapshotResult = await this.gateway.execute(snapshotPrepared, {
                             traceId: message.traceId,
                             chatId: message.chatId,
@@ -216,7 +221,7 @@ class AgentToolLoop {
                                 },
                             },
                         };
-                        const retryPrepared = this.gateway.prepare(retryCall, message.traceId, tools, message.chatId, userMessage, this.approvals.covers({ principalId: message.userId, runId, actionKey: retryCall.name }));
+                        const retryPrepared = this.prepareAuthorized(retryCall, message, runId, sessionId, tools, userMessage);
                         const retryResult = await this.gateway.execute(retryPrepared, {
                             traceId: message.traceId,
                             chatId: message.chatId,
@@ -309,7 +314,8 @@ class AgentToolLoop {
             return null;
         let prepared;
         try {
-            prepared = this.gateway.prepare(payload.call, message.traceId, undefined, message.chatId, payload.continuation?.userMessage, this.approvals.covers({ principalId: message.userId, runId: candidate.run_id, actionKey: payload.call.name }));
+            const resumeSessionId = (0, repositories_1.getActiveSessionId)(message.chatId);
+            prepared = this.prepareAuthorized(payload.call, message, candidate.run_id, resumeSessionId, undefined, payload.continuation?.userMessage);
         }
         catch {
             return "Approval không còn hợp lệ.";

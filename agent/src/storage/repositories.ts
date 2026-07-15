@@ -474,6 +474,10 @@ export function listActiveApprovalGrants(input: {
   ).all(input.principalId, now, input.runId || null, input.sessionId || null, input.scheduleId || null) as ApprovalGrantRow[];
 }
 
+export function revokeApprovalGrant(id: string): void {
+  getDb().prepare(`UPDATE approval_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).run(nowIso(), id);
+}
+
 export function upsertScheduledJob(input: {
   name: string;
   source?: "config" | "runtime";
