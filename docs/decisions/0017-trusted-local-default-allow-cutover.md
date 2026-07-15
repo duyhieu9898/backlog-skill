@@ -152,6 +152,13 @@ type-checked lifecycle without creating a second execution path.
   (`["approved-action"]`, no resourceHints) remain backward-compatible and
   browser confirmations stay fingerprint-bound (never widen). Covered by
   `test/approval-matching.test.js`.
+- **P1.3 — Persisted approval restart** (commit `c50ed31`): approvals now survive
+  a DB close/reopen (simulated process restart) and resume the tool loop. Added
+  an `AGENT_DB_FILE` env override in `config/paths.ts` (mirroring
+  `AGENT_CONFIG_FILE`) and made `getDb()` create the DB parent directory, so a
+  test can run against an isolated temp database. Covered by
+  `test/approval-restart.test.js`: approve-resume, reject-cancel, stale-digest
+  invalidation, and replay refusal — the last exercised across two restarts.
 
 ## Follow-Up
 
@@ -167,9 +174,10 @@ type-checked lifecycle without creating a second execution path.
    relevant resource/command hints, and scope. Exercise `run`, `session`,
    `schedule`, and persistent grants, expiry, and revocation without asking
    again for equivalent in-scope steps.
-3. Prove persisted approval pause/resume across a process restart, including
-   stale digest invalidation, replay/refusal handling, rejection, and continued
-   tool-loop execution after approval.
+3. ✅ Done (commit `c50ed31`) — see Progress. Prove persisted approval
+   pause/resume across a process restart, including stale digest invalidation,
+   replay/refusal handling, rejection, and continued tool-loop execution after
+   approval.
 
 ### P2: Reliability, audit, and migration proof
 
