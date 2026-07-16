@@ -137,6 +137,17 @@ in this phase. The resulting definition is still resolved and authorized by
 `ToolGateway` before `ToolExecutor` invokes it. This provides a small,
 type-checked lifecycle without creating a second execution path.
 
+P2.2 audited every side-effecting code path and confirmed the gateway boundary
+is intact: no adapter, scheduler, workflow, skill, or provider integration can
+execute a tool without crossing `ToolGateway`. Side effects that intentionally
+do NOT cross the gateway are: owner `/stop` and shutdown SIGTERM to an
+already-authorized tracked command (an interrupt channel, not execution
+authorization); `browserService.shutdown()` lifecycle teardown; the Telegram
+reply transport; LLM provider inference egress; `appendRawAiInteraction` disk
+logging (redacted, config-gated); and run/session/schedule SQLite bookkeeping.
+A regression test (`test/gateway-boundary.test.js`) locks the boundary against
+future drift.
+
 ## Progress
 
 - **P1.1 — ToolRegistry** (commit `a24a98b`): added `src/tools/registry.ts` and
@@ -170,6 +181,15 @@ type-checked lifecycle without creating a second execution path.
   preserved across the approval pause/resume boundary. Covered by
   `test/gateway-audit.test.js`: allow+executed, deny (no execution record),
   approval-requested pause, and approve-resume sharing one `toolCallId`.
+- **P2.2 — Side-effect bypass audit** (commit `4f75f15`): audited every
+  side-effecting code path (adapters, scheduler, workflows, skills, provider
+  integrations). No bypass found — `gatewayAuthorized: true` is set in exactly
+  one place (`tools/gateway.ts`), `ToolExecutor.execute` is called only from the
+  gateway, and `runTrackedCommand` only from the executor; every primitive
+  (command, file, browser, desktop, web.capture, custom tool) funnels through
+  the gateway. Skills are prompt-only; providers return a data structure the
+  loop dispatches via the gateway; scheduled prepare/effect runs through
+  `gateway.runCommand`. Locked by `test/gateway-boundary.test.js`.
 
 ## Follow-Up
 
@@ -195,8 +215,13 @@ type-checked lifecycle without creating a second execution path.
 1. ✅ Done (commits `a85917a` + `734a500`) — see Progress. Add/normalize gateway
    audit records for each allow, approval, deny, and execution result, with
    `traceId`, `sessionId`, `runId`, and `toolCallId`.
-2. Audit all side-effecting code paths to ensure adapters, scheduler,
-   workflows, skills, and provider integrations cannot bypass `ToolGateway`.
+2. ✅ Done (commit `4f75f15`) — see Progress. Audit all side-effecting code paths
+   to ensure adapters, scheduler, workflows, skills, and provider integrations
+   cannot bypass `ToolGateway`. No bypass found; boundary locked by
+   `test/gateway-boundary.test.js`. Intentional non-gateway side effects (owner
+   `/stop` SIGTERM, browser shutdown, Telegram reply transport, LLM inference
+   egress, redacted AI-interaction logging, SQLite bookkeeping) are documented
+   as lifecycle/observability, not execution authorization.
 3. Complete operational proof: per-session concurrency locking, cancellation
    through approval resume, deadline/retry behavior, artifact/log retention,
    and graceful shutdown/restart.
