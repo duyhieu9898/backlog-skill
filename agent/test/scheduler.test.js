@@ -2,6 +2,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
 
 const { buildCommandCatalog } = require("../dist/commands");
 const { Router } = require("../dist/core/router");

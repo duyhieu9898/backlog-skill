@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const { AgentRuntime } = require("../dist/runtime/agentRuntime");
 const { getRun } = require("../dist/storage/repositories");
+const { getRunningTraceId } = require("../dist/commands");
 
 test("AgentRuntime aborts an active run through AbortSignal and persists cancellation", async () => {
   const runtime = new AgentRuntime();
@@ -33,7 +34,10 @@ test("AgentRuntime aborts an active run through AbortSignal and persists cancell
     return result.summary;
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  for (let i = 0; i < 200 && getRunningTraceId() !== traceId; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(getRunningTraceId(), traceId, "runtime command should have started");
   assert.equal(runtime.cancelActiveRun(message.chatId), traceId);
   assert.equal(await run, "Run cancelled.");
   assert.equal(getRun(traceId).status, "cancelled");

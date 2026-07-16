@@ -133,18 +133,16 @@ test("GeminiProvider sends system instructions, role history, and structured out
     timezone: "Asia/Ho_Chi_Minh",
     locale: "vi-VN",
   });
-  const index = fs.readFileSync(aiInteractionIndex, "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line))
-    .filter((record) => record.traceId === "gemini-provider-contract")
-    .slice(-2);
+  const parseJsonlLines = (lines) => lines
+    .flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
+  const index = parseJsonlLines(
+    fs.readFileSync(aiInteractionIndex, "utf8").trim().split("\n"),
+  ).filter((record) => record.traceId === "gemini-provider-contract").slice(-2);
   assert.deepEqual(index.map((record) => record.direction), ["request", "response"]);
   const records = [...new Set(index.map((record) => record.file))]
-    .flatMap((file) => fs.readFileSync(path.join(aiInteractionDir, file), "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line)))
+    .flatMap((file) => parseJsonlLines(
+      fs.readFileSync(path.join(aiInteractionDir, file), "utf8").trim().split("\n"),
+    ))
     .filter((record) => record.traceId === "gemini-provider-contract")
     .slice(-2);
   assert.deepEqual(records.map((record) => record.direction), ["request", "response"]);

@@ -3,6 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
 
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 const { FileTools } = require("../dist/tools/files");

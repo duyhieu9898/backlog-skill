@@ -208,8 +208,9 @@ test("tracked command preserves non-zero exit code and stderr output", async () 
   assert.match(result.output, /agent-fail/);
 });
 
-test("permission policy defaults to allow, prompts for sensitive paths, and denies destructive commands", () => {
+test("permission policy defaults to allow, prompts for sensitive paths, and denies destructive commands", (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-policy-"));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const workspace = path.join(tmp, "workspace");
   const writable = path.join(workspace, "notes");
   const outside = path.join(tmp, "outside");
@@ -293,7 +294,7 @@ test("pending approval records expiry and stays bound to its owner", () => {
   assert.equal(stored.description, "Expired approval.");
   const wrongOwner = getPendingApproval(pending.short_id, "other-user", chatId);
   assert.equal(wrongOwner, null);
-  assert.equal(stored.expires_at <= new Date().toISOString(), true);
+  assert.ok(new Date(stored.expires_at).getTime() < Date.now(), "expiry is in the past");
 });
 
 test("multiple scoped approvals can coexist for one chat", () => {
@@ -388,8 +389,9 @@ test("command runner times out with a stable non-zero result", async () => {
 test("/stop interrupts an active tracked command without waiting for the chat lock", async () => {
   const chatId = `test-stop-${Date.now()}`;
   const router = new Router(new SkillRegistry(path.join(__dirname, "..", "..", "skills")));
+  const traceId = `test-stop-run-${Date.now()}`;
   const run = runTrackedCommand({
-    traceId: `test-stop-run-${Date.now()}`,
+    traceId,
     chatId,
     action: {
       name: "test.stop",
@@ -399,7 +401,10 @@ test("/stop interrupts an active tracked command without waiting for the chat lo
     },
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  for (let i = 0; i < 200 && getRunningTraceId() !== traceId; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(getRunningTraceId(), traceId, "tracked command should have started");
   const reply = await router.route({
     traceId: `test-stop-request-${Date.now()}`,
     provider: "telegram",

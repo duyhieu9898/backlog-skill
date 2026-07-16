@@ -72,7 +72,6 @@ test("CDP Browser Service", async (t) => {
         args: [`--remote-debugging-port=${port}`]
       });
       const cdpEndpoint = `http://127.0.0.1:${port}`;
-      assert.ok(cdpEndpoint);
 
       // 2. Configure the CDP profile with the cdpEndpoint in config.json
       const configData = {

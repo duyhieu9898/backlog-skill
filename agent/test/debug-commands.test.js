@@ -1,6 +1,8 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
 
 const {
   formatLastCommandError,
@@ -40,7 +42,7 @@ test("status, help, command, and skill output include required fields", () => {
   assert.match(status, /model:/);
   assert.match(status, /pending approvals:/);
   assert.match(status, /loaded commands: \d+/);
-  assert.match(status, /loaded skills: 5/);
+  assert.match(status, new RegExp(`loaded skills: ${registry.listSkills().length}`));
 
   const commands = handleDebugCommand("/commands", registry);
   assert.match(commands, /bemo/);

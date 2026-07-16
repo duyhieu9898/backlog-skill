@@ -7,8 +7,9 @@ const test = require("node:test");
 const { ArtifactStore } = require("../dist/artifacts/store");
 const { deliverResponse, presentArtifact } = require("../dist/core/presenter");
 
-test("artifact store keeps bytes locally and enforces owner, expiry, and cleanup", () => {
+test("artifact store keeps bytes locally and enforces owner, expiry, and cleanup", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-artifacts-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = new ArtifactStore(root);
   const artifact = store.create({ ownerChatId: "chat-a", sourceTraceId: "trace-a", mimeType: "text/plain", bytes: Buffer.from("hello") });
   assert.equal(fs.existsSync(artifact.local_path), true);
@@ -22,16 +23,18 @@ test("artifact store keeps bytes locally and enforces owner, expiry, and cleanup
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("artifact store rejects unsupported and oversized input", () => {
+test("artifact store rejects unsupported and oversized input", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-artifacts-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = new ArtifactStore(root);
   assert.throws(() => store.create({ ownerChatId: "chat", sourceTraceId: "trace", mimeType: "application/octet-stream", bytes: Buffer.from("x") }), /Unsupported/);
   assert.throws(() => store.create({ ownerChatId: "chat", sourceTraceId: "trace", mimeType: "text/plain", bytes: Buffer.alloc(10 * 1024 * 1024 + 1) }), /size/);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("presenter delivers an owned artifact once and marks it consumed only after upload", async () => {
+test("presenter delivers an owned artifact once and marks it consumed only after upload", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-artifacts-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = new ArtifactStore(root);
   const artifact = store.create({ ownerChatId: "chat-a", sourceTraceId: "trace", mimeType: "text/plain", bytes: Buffer.from("safe") });
   const sent = [];

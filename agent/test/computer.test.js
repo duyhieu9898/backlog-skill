@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
 
 const { DesktopRegistry } = require("../dist/tools/computer/apps");
 const { scrotScreenshotArgs, xdotoolWindowSearchArgs, LinuxX11DesktopAdapter, UnavailableDesktopAdapter } = require("../dist/tools/computer/linux-x11");

@@ -11,6 +11,13 @@ const { SkillRegistry } = require("../dist/skills/registry");
 
 const repoSkillsDir = path.join(__dirname, "..", "..", "skills");
 
+// Derive the expected skill slugs from the filesystem so this test does not go
+// stale whenever a skill is added or removed.
+const expectedSkillSlugs = fs.readdirSync(repoSkillsDir, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(repoSkillsDir, entry.name, "SKILL.md")))
+  .map((entry) => entry.name)
+  .sort();
+
 function writeSkill(root, slug, frontmatter, body = "# Skill\n") {
   const baseDir = path.join(root, slug);
   fs.mkdirSync(baseDir, { recursive: true });
@@ -22,7 +29,7 @@ test("SkillRegistry scans current repository skills with stable metadata", () =>
   const registry = new SkillRegistry(repoSkillsDir);
   const skills = registry.listSkills();
 
-  assert.deepEqual(skills.map((skill) => skill.slug), ["bemo", "browser", "debug-skill", "gmail", "linux-janitor"]);
+  assert.deepEqual(skills.map((skill) => skill.slug), expectedSkillSlugs);
   assert.equal(registry.listErrors().length, 0);
   for (const skill of skills) {
     assert.equal(path.isAbsolute(skill.baseDir), true);
@@ -120,6 +127,6 @@ test("default SkillRegistry resolves repository skills outside the service cwd",
   );
   const skills = JSON.parse(output);
 
-  assert.deepEqual(skills.map((skill) => skill.slug), ["bemo", "browser", "debug-skill", "gmail", "linux-janitor"]);
+  assert.deepEqual(skills.map((skill) => skill.slug), expectedSkillSlugs);
   assert.ok(skills.every((skill) => skill.baseDir.startsWith(path.resolve(repoSkillsDir))));
 });

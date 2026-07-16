@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
 process.env.ALLOW_DATA_URLS = "true";
 
 const { browserService } = require("../dist/browser/browser-service");
