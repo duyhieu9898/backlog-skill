@@ -241,7 +241,7 @@ test("deny decision is audited and produces no execution record", async (t) => {
   assert.equal(decisions[0].stage, "authorize");
   assert.equal(decisions[0].reasonCode, "CUSTOM_TOOL_BLOCKED");
   assert.equal(decisions[0].toolName, "test.custom.nuke");
-  assert.equal(decisions.length && executed.length, 0, "a denied call is not executed");
+  assert.equal(executed.length, 0, "a denied call is not executed");
 
   assert.equal(decisions[0].traceId, input.traceId);
   assert.equal(decisions[0].runId, input.traceId);
@@ -259,7 +259,7 @@ test("approval-requested decision is audited before the loop pauses", async (t) 
   });
 
   const preview = await buildLoop(root, marker, confirmProvider()).run(input, "context");
-  const shortId = preview.match(/Approval ID: ([a-f0-9]{8})/)[1];
+  assert.match(preview, /Approval ID/, "loop paused for approval");
 
   const events = gatewayEvents(input.traceId);
   const decisions = events.filter((e) => e.event === "gateway.decision");
@@ -273,7 +273,6 @@ test("approval-requested decision is audited before the loop pauses", async (t) 
   assert.equal(confirm[0].toolName, "command.test.create");
   assert.equal(executed.length, 1, "only the allowed prepare step executed before the pause");
   assert.equal(fs.existsSync(marker), false);
-  void shortId;
 });
 
 test("approval resume re-audits allow + executed with the same toolCallId", async (t) => {
