@@ -104,7 +104,10 @@ a manual adapter run), dispatches each scheduled command through the runtime's
 
 Graceful process shutdown stops the scheduler, requests termination of the
 active command process group, waits a bounded time for it to close, and then
-shuts down browser resources.
+shuts down browser resources. This sequence is extracted into
+`core/shutdown.ts` (`performGracefulShutdown`) behind injected dependencies so
+its ordering and short-circuit behavior can be tested without process-level
+side effects; `bot.ts` remains a thin entry point.
 
 The legacy `desktopCaptureRequiresConfirmation` switch was removed. A declared
 and available desktop capability is ordinary local automation and is allowed by
@@ -190,6 +193,24 @@ future drift.
   the gateway. Skills are prompt-only; providers return a data structure the
   loop dispatches via the gateway; scheduled prepare/effect runs through
   `gateway.runCommand`. Locked by `test/gateway-boundary.test.js`.
+- **P2.3 — Operational proof** (commits `e3b2388` + `100b0b5` + `c7a180d` +
+  `cf2d631`): completed the operational reliability proof and closed two real
+  gaps in "cancellation through approval resume". (1) `consumeScopedApproval`
+  now forwards the `AbortSignal` into the resumed tool loop, so `/stop` or a run
+  deadline can cancel a run mid-step after approval; the resumed run records
+  `cancelled` and the first approved action still completes. (2) `/stop` now
+  cancels still-pending approvals for a chat when no active run or command
+  exists, so a paused run need not wait for its approval to expire. Graceful
+  shutdown was extracted to `core/shutdown.ts` (`performGracefulShutdown`).
+  Newly covered behaviors that previously had no test: per-session concurrency
+  serialization (`test/concurrency.test.js`), run-deadline abort
+  (`test/run-deadline.test.js`), raw-AI retention pruning
+  (`test/ai-interaction-retention.test.js`), and `ScheduledCheckRunner`
+  lifecycle (`test/scheduler-runner.test.js`); plus
+  `test/approval-resume-cancel.test.js`, `test/stop-pending-approval.test.js`,
+  and `test/shutdown.test.js`. Retry (provider transient, browser stale-ref,
+  identical-failure circuit breaker), command timeout, artifact/snapshot
+  retention, and lease-based scheduler dedup were already covered.
 
 ## Follow-Up
 
@@ -222,9 +243,11 @@ future drift.
    `/stop` SIGTERM, browser shutdown, Telegram reply transport, LLM inference
    egress, redacted AI-interaction logging, SQLite bookkeeping) are documented
    as lifecycle/observability, not execution authorization.
-3. Complete operational proof: per-session concurrency locking, cancellation
-   through approval resume, deadline/retry behavior, artifact/log retention,
-   and graceful shutdown/restart.
+3. ✅ Done (commits `e3b2388` + `100b0b5` + `c7a180d` + `cf2d631`) — see
+   Progress. Complete operational proof: per-session concurrency serialization,
+   cancellation through approval resume (AbortSignal forwarded on resume; `/stop`
+   cancels paused approvals), deadline/retry behavior, artifact and raw-AI log
+   retention, and graceful shutdown/restart (extracted to `core/shutdown.ts`).
 4. Complete scheduler reliability proof: at-least-once lease handling,
    idempotent side effects where relevant, config removal, runtime-schedule
    persistence, and pause on behavior that exceeds pre-approved scope.
