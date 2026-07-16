@@ -30,6 +30,18 @@ import { validateJsonSchema, type JsonSchema } from "./schema";
 import type { BrowserActionPolicyContext } from "../browser/action-policy";
 import { refStore } from "../browser/ref-store";
 
+/**
+ * Correlation ids attached to every gateway audit record. Threading this through
+ * prepare -> authorize -> execute lets the gateway emit allow/approve/deny and
+ * execution-result records without changing authorize()'s decision signature.
+ */
+export type ToolAuditContext = {
+  traceId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+};
+
 export type PreparedToolCall = {
   call: AiToolCall;
   key: string;
@@ -48,6 +60,7 @@ export type PreparedToolCall = {
   approvalGranted?: boolean;
   customTool?: { name: string; risk: ToolRiskLevel };
   profile?: ActionProfile;
+  audit?: ToolAuditContext;
 };
 
 const emptyObjectSchema: JsonSchema = {

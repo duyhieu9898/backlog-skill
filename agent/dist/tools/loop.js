@@ -12,6 +12,7 @@ const repositories_1 = require("../storage/repositories");
 const store_1 = require("../artifacts/store");
 const image_context_1 = require("./media/image-context");
 const node_fs_1 = __importDefault(require("node:fs"));
+const node_crypto_1 = __importDefault(require("node:crypto"));
 const ref_store_1 = require("../browser/ref-store");
 const MAX_TOOL_STEPS = 8;
 const MAX_IDENTICAL_FAILURES = 2;
@@ -71,12 +72,17 @@ class AgentToolLoop {
         this.gateway = gateway;
     }
     /** Prepare, then authorize with grant coverage derived from the action profile. */
-    prepareAuthorized(call, message, runId, sessionId, tools, userMessage) {
+    prepareAuthorized(call, message, runId, sessionId, toolCallId, tools, userMessage, approvalGranted = false) {
         const raw = this.gateway.prepareRaw(call, message.traceId, tools, message.chatId);
-        const approvalGranted = raw.profile
+        const covered = raw.profile
             ? this.approvals.covers({ principalId: message.userId, runId, sessionId, profile: raw.profile })
             : false;
-        return this.gateway.authorizePrepared({ ...raw, userIntent: userMessage, approvalGranted }, message.chatId);
+        return this.gateway.authorizePrepared({
+            ...raw,
+            userIntent: userMessage,
+            approvalGranted: covered || approvalGranted,
+            audit: { traceId: message.traceId, sessionId, runId, toolCallId },
+        }, message.chatId);
     }
     async run(message, context, onReplyMarkup, onArtifact, initialSteps = [], userMessage = message.text, runId = message.traceId, signal) {
         const steps = [...initialSteps];
@@ -95,12 +101,13 @@ class AgentToolLoop {
                 return response.text;
             if (!response.toolCall)
                 throw new Error("AI response did not contain a valid outcome.");
+            const toolCallId = `tc_${node_crypto_1.default.randomUUID()}`;
             logger_1.log.info(message.traceId, "ai.tool.selected", {
                 step: index,
                 toolName: response.toolCall.name,
             });
             try {
-                const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, tools, userMessage);
+                const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, toolCallId, tools, userMessage);
                 if (prepared.requiresConfirmation) {
                     const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
                     const pending = {
@@ -109,6 +116,7 @@ class AgentToolLoop {
                         digest: prepared.digest,
                         preview: prepared.preview,
                         profile: prepared.profile,
+                        toolCallId,
                         continuation: {
                             userMessage,
                             context,
@@ -174,7 +182,7 @@ class AgentToolLoop {
                                 targetId,
                             },
                         };
-                        const snapshotPrepared = this.prepareAuthorized(snapshotCall, message, runId, sessionId, tools, userMessage);
+                        const snapshotPrepared = this.prepareAuthorized(snapshotCall, message, runId, sessionId, `tc_${node_crypto_1.default.randomUUID()}`, tools, userMessage);
                         const snapshotResult = await this.gateway.execute(snapshotPrepared, {
                             traceId: message.traceId,
                             chatId: message.chatId,
@@ -221,7 +229,7 @@ class AgentToolLoop {
                                 },
                             },
                         };
-                        const retryPrepared = this.prepareAuthorized(retryCall, message, runId, sessionId, tools, userMessage);
+                        const retryPrepared = this.prepareAuthorized(retryCall, message, runId, sessionId, `tc_${node_crypto_1.default.randomUUID()}`, tools, userMessage);
                         const retryResult = await this.gateway.execute(retryPrepared, {
                             traceId: message.traceId,
                             chatId: message.chatId,
@@ -315,7 +323,8 @@ class AgentToolLoop {
         let prepared;
         try {
             const resumeSessionId = (0, repositories_1.getActiveSessionId)(message.chatId);
-            prepared = this.prepareAuthorized(payload.call, message, candidate.run_id, resumeSessionId, undefined, payload.continuation?.userMessage);
+            const resumeToolCallId = payload.toolCallId ?? `tc_${node_crypto_1.default.randomUUID()}`;
+            prepared = this.prepareAuthorized(payload.call, message, candidate.run_id, resumeSessionId, resumeToolCallId, undefined, payload.continuation?.userMessage, match[1] === "approve");
         }
         catch {
             return "Approval không còn hợp lệ.";

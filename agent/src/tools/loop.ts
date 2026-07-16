@@ -22,6 +22,7 @@ type PendingAiTool = {
   digest: string;
   preview: string;
   profile?: ActionProfile;
+  toolCallId?: string;
   /**
    * The confirmation message is not the user's task. Keep the original model
    * context so approving one action can resume the same tool loop instead of
@@ -102,14 +103,24 @@ export class AgentToolLoop {
     message: StandardMessage,
     runId: string,
     sessionId: string,
+    toolCallId: string,
     tools?: AiToolDefinition[],
     userMessage?: string,
+    approvalGranted = false,
   ) {
     const raw = this.gateway.prepareRaw(call, message.traceId, tools, message.chatId);
-    const approvalGranted = raw.profile
+    const covered = raw.profile
       ? this.approvals.covers({ principalId: message.userId, runId, sessionId, profile: raw.profile })
       : false;
-    return this.gateway.authorizePrepared({ ...raw, userIntent: userMessage, approvalGranted }, message.chatId);
+    return this.gateway.authorizePrepared(
+      {
+        ...raw,
+        userIntent: userMessage,
+        approvalGranted: covered || approvalGranted,
+        audit: { traceId: message.traceId, sessionId, runId, toolCallId },
+      },
+      message.chatId,
+    );
   }
 
   async run(
@@ -137,12 +148,13 @@ export class AgentToolLoop {
       if (response.text) return response.text;
       if (!response.toolCall) throw new Error("AI response did not contain a valid outcome.");
 
+      const toolCallId = `tc_${crypto.randomUUID()}`;
       log.info(message.traceId, "ai.tool.selected", {
         step: index,
         toolName: response.toolCall.name,
       });
       try {
-        const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, tools, userMessage);
+        const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, toolCallId, tools, userMessage);
         if (prepared.requiresConfirmation) {
           const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
           const pending: PendingAiTool = {
@@ -151,6 +163,7 @@ export class AgentToolLoop {
             digest: prepared.digest,
             preview: prepared.preview,
             profile: prepared.profile,
+            toolCallId,
             continuation: {
               userMessage,
               context,
@@ -223,7 +236,7 @@ export class AgentToolLoop {
               },
             };
 
-            const snapshotPrepared = this.prepareAuthorized(snapshotCall, message, runId, sessionId, tools, userMessage);
+            const snapshotPrepared = this.prepareAuthorized(snapshotCall, message, runId, sessionId, `tc_${crypto.randomUUID()}`, tools, userMessage);
             const snapshotResult = await this.gateway.execute(snapshotPrepared, {
               traceId: message.traceId,
               chatId: message.chatId,
@@ -277,7 +290,7 @@ export class AgentToolLoop {
               },
             };
 
-            const retryPrepared = this.prepareAuthorized(retryCall, message, runId, sessionId, tools, userMessage);
+            const retryPrepared = this.prepareAuthorized(retryCall, message, runId, sessionId, `tc_${crypto.randomUUID()}`, tools, userMessage);
             const retryResult = await this.gateway.execute(retryPrepared, {
               traceId: message.traceId,
               chatId: message.chatId,
@@ -367,7 +380,8 @@ export class AgentToolLoop {
     let prepared;
     try {
       const resumeSessionId = getActiveSessionId(message.chatId);
-      prepared = this.prepareAuthorized(payload.call, message, candidate.run_id, resumeSessionId, undefined, payload.continuation?.userMessage);
+      const resumeToolCallId = payload.toolCallId ?? `tc_${crypto.randomUUID()}`;
+      prepared = this.prepareAuthorized(payload.call, message, candidate.run_id, resumeSessionId, resumeToolCallId, undefined, payload.continuation?.userMessage, match[1] === "approve");
     } catch { return "Approval không còn hợp lệ."; }
     const pending = this.approvals.resolve({ shortId: match[2], principalId: message.userId, chatId: message.chatId, actionDigest: prepared.digest, approve: match[1] === "approve" });
     if (!pending) return "Approval không tồn tại, đã hết hạn, hoặc action đã thay đổi.";

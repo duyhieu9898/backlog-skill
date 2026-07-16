@@ -9,6 +9,7 @@ const browser_confirmation_1 = require("../security/browser-confirmation");
 const action_policy_1 = require("../browser/action-policy");
 const executor_1 = require("./executor");
 const register_tools_1 = require("./register-tools");
+const logger_1 = require("../logging/logger");
 const actionProfile_1 = require("../security/actionProfile");
 /**
  * The only runtime entry point for LLM-originated tool calls.
@@ -39,10 +40,16 @@ class ToolGateway {
         const prepared = this.prepareRaw(call, traceId, definitions, chatId);
         return this.authorize({ ...prepared, userIntent, approvalGranted }, chatId);
     }
-    prepareCommand(action, defaultTimeoutMs, userIntent, approvalGranted = false) {
-        return this.authorize({ ...this.executor.prepareCommand(action, defaultTimeoutMs), userIntent, approvalGranted });
+    prepareCommand(action, defaultTimeoutMs, userIntent, approvalGranted = false, audit) {
+        return this.authorize({ ...this.executor.prepareCommand(action, defaultTimeoutMs), userIntent, approvalGranted, audit });
     }
+    /** Authorize, then emit the gateway decision audit record. */
     authorize(prepared, chatId) {
+        const result = this.authorizeCore(prepared, chatId);
+        this.auditDecision(result);
+        return result;
+    }
+    authorizeCore(prepared, chatId) {
         if (prepared.blocked)
             return prepared;
         if (prepared.customTool) {
@@ -137,9 +144,16 @@ class ToolGateway {
         }
         return prepared;
     }
-    execute(prepared, context) {
-        if (context.signal?.aborted)
-            return { ok: false, code: "RUN_CANCELLED", summary: "Run was cancelled before tool execution." };
+    async execute(prepared, context) {
+        if (context.signal?.aborted) {
+            const cancelled = { ok: false, code: "RUN_CANCELLED", summary: "Run was cancelled before tool execution." };
+            this.auditExecuted(prepared, cancelled);
+            return cancelled;
+        }
+        // A denied call was already audited as a deny decision at authorize(); it is
+        // not an execution result, so do not emit gateway.executed for it.
+        if (prepared.blocked)
+            return prepared.blocked;
         const approvalGranted = context.confirmationGranted || prepared.approvalGranted;
         if (prepared.desktopAction && prepared.computerInput) {
             const inputAction = prepared.computerInput.action;
@@ -148,8 +162,10 @@ class ToolGateway {
                 desktopStatus: (0, linux_x11_1.getDesktopAdapter)().getStatus(),
                 confirmationGranted: approvalGranted || leaseActive,
             });
-            if (decision.outcome !== "allow")
+            if (decision.outcome !== "allow") {
+                this.auditExecuteDeny(prepared, decision.reasonCode, decision.reason);
                 return { ok: false, code: decision.reasonCode, summary: decision.reason };
+            }
         }
         if (prepared.browserAction) {
             const args = prepared.call.arguments;
@@ -158,8 +174,10 @@ class ToolGateway {
                 browserContext,
                 confirmationGranted: approvalGranted,
             });
-            if (decision.outcome !== "allow")
+            if (decision.outcome !== "allow") {
+                this.auditExecuteDeny(prepared, decision.reasonCode, decision.reason);
                 return { ok: false, code: decision.reasonCode, summary: decision.reason };
+            }
             if (approvalGranted && prepared.actionFingerprint && browserContext) {
                 const confirmation = browser_confirmation_1.browserConfirmationStore.findAndConsume({
                     sessionId: browserContext.sessionId,
@@ -169,25 +187,88 @@ class ToolGateway {
                     snapshotId: browserContext.snapshotId,
                     actionFingerprint: (0, action_policy_1.computeActionFingerprint)(browserContext),
                 });
-                if (!confirmation.valid)
+                if (!confirmation.valid) {
+                    this.auditExecuteDeny(prepared, confirmation.code, confirmation.reason);
                     return { ok: false, code: confirmation.code, summary: confirmation.reason };
+                }
             }
         }
-        return this.executor.execute(prepared, {
+        const result = await this.executor.execute(prepared, {
             ...context,
             confirmationGranted: approvalGranted,
             userIntent: prepared.userIntent,
             gatewayAuthorized: true,
         });
+        this.auditExecuted(prepared, result);
+        return result;
     }
     async runCommand(action, context) {
-        const prepared = this.prepareCommand(action, context.defaultTimeoutMs, context.userIntent);
+        const audit = context.runId && context.sessionId && context.toolCallId
+            ? { traceId: context.traceId, sessionId: context.sessionId, runId: context.runId, toolCallId: context.toolCallId }
+            : undefined;
+        const prepared = this.prepareCommand(action, context.defaultTimeoutMs, context.userIntent, false, audit);
         if (prepared.blocked)
             return prepared.blocked;
         if (prepared.requiresConfirmation && !context.confirmationGranted) {
             return { ok: false, code: "CONFIRMATION_REQUIRED", summary: prepared.preview };
         }
         return this.execute(prepared, context);
+    }
+    /** Emit the authorize() decision (allow / confirm / deny). No-op without an audit context. */
+    auditDecision(prepared) {
+        const audit = prepared.audit;
+        if (!audit)
+            return;
+        const outcome = prepared.blocked ? "deny" : prepared.requiresConfirmation ? "confirm" : "allow";
+        logger_1.log.info(audit.traceId, "gateway.decision", {
+            traceId: audit.traceId,
+            sessionId: audit.sessionId,
+            runId: audit.runId,
+            toolCallId: audit.toolCallId,
+            outcome,
+            stage: "authorize",
+            toolName: prepared.call.name,
+            toolKey: prepared.key,
+            digest: prepared.digest,
+            reasonCode: prepared.blocked?.code,
+            reason: prepared.blocked?.summary,
+        });
+    }
+    /** Emit an execute() defense-in-depth deny. No-op without an audit context. */
+    auditExecuteDeny(prepared, code, summary) {
+        const audit = prepared.audit;
+        if (!audit)
+            return;
+        logger_1.log.info(audit.traceId, "gateway.decision", {
+            traceId: audit.traceId,
+            sessionId: audit.sessionId,
+            runId: audit.runId,
+            toolCallId: audit.toolCallId,
+            outcome: "deny",
+            stage: "execute_recheck",
+            toolName: prepared.call.name,
+            toolKey: prepared.key,
+            digest: prepared.digest,
+            reasonCode: code,
+            reason: summary,
+        });
+    }
+    /** Emit the execution result. No-op without an audit context. */
+    auditExecuted(prepared, result) {
+        const audit = prepared.audit;
+        if (!audit)
+            return;
+        logger_1.log.info(audit.traceId, "gateway.executed", {
+            traceId: audit.traceId,
+            sessionId: audit.sessionId,
+            runId: audit.runId,
+            toolCallId: audit.toolCallId,
+            ok: result.ok,
+            code: result.code,
+            summary: result.summary,
+            toolName: prepared.call.name,
+            toolKey: prepared.key,
+        });
     }
 }
 exports.ToolGateway = ToolGateway;

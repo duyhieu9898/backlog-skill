@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { ContextHydrator } from "../context/hydrator";
 import { Compactor } from "../context/compactor";
 import { log } from "../logging/logger";
@@ -148,6 +149,9 @@ export class AgentRuntime {
       confirmationGranted: input.confirmationGranted,
       userIntent: input.userIntent,
       signal: input.signal,
+      runId: input.runId,
+      sessionId: getActiveSessionId(input.chatId),
+      toolCallId: `tc_${crypto.randomUUID()}`,
     });
     appendRunStep({
       runId: input.runId,

@@ -1,6 +1,10 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentRuntime = void 0;
+const node_crypto_1 = __importDefault(require("node:crypto"));
 const hydrator_1 = require("../context/hydrator");
 const compactor_1 = require("../context/compactor");
 const logger_1 = require("../logging/logger");
@@ -102,6 +106,9 @@ class AgentRuntime {
             confirmationGranted: input.confirmationGranted,
             userIntent: input.userIntent,
             signal: input.signal,
+            runId: input.runId,
+            sessionId: (0, repositories_1.getActiveSessionId)(input.chatId),
+            toolCallId: `tc_${node_crypto_1.default.randomUUID()}`,
         });
         (0, repositories_1.appendRunStep)({
             runId: input.runId,
