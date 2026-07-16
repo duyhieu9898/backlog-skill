@@ -211,6 +211,23 @@ future drift.
   and `test/shutdown.test.js`. Retry (provider transient, browser stale-ref,
   identical-failure circuit breaker), command timeout, artifact/snapshot
   retention, and lease-based scheduler dedup were already covered.
+- **P2.4 — Scheduler reliability proof** (commit `4b239a4`): closed the remaining
+  scheduler-reliability gaps with `test/scheduler-reliability.test.js`.
+  At-least-once delivery: a runner that crashes after claiming a due job but
+  before recording its run leaves the lease held and `next_run_at` un-advanced;
+  a second runner cannot claim while the lease is live, but once the lease
+  expires the job is reclaimed and runs again (at-least-once, not at-most-once).
+  Idempotent run-state recording: `recordScheduledRun`'s `lease_owner` guard
+  refuses to re-advance `next_run_at` on a stale retry, so a duplicate record
+  appends a second `scheduled_runs` row without corrupting job state.
+  Pre-approved-scope refusal: a clearly destructive command (`rm -rf /`)
+  inside a configured scheduled run is denied by contextual policy at the
+  gateway regardless of the scheduled grant, so the run fails and the
+  destructive argv never executes. Runtime-schedule durability: a
+  runtime-owned schedule survives a DB close/reopen (simulated restart).
+  Lease-prevents-duplicate claim, config removal, runtime create/delete
+  semantics, and `ScheduledCheckRunner` lifecycle were already covered by
+  `test/scheduler.test.js` and `test/scheduler-runner.test.js`.
 
 ## Follow-Up
 
@@ -248,9 +265,14 @@ future drift.
    cancellation through approval resume (AbortSignal forwarded on resume; `/stop`
    cancels paused approvals), deadline/retry behavior, artifact and raw-AI log
    retention, and graceful shutdown/restart (extracted to `core/shutdown.ts`).
-4. Complete scheduler reliability proof: at-least-once lease handling,
-   idempotent side effects where relevant, config removal, runtime-schedule
-   persistence, and pause on behavior that exceeds pre-approved scope.
+4. ✅ Done (commit `4b239a4`) — see Progress. Complete scheduler reliability proof:
+   at-least-once lease handling (a crashed runner's expired lease is reclaimed),
+   idempotent run-state recording (stale retry does not double-advance
+   `next_run_at`), config removal and runtime create/delete semantics (already
+   covered), runtime-schedule persistence across a DB restart, and refusal of a
+   destructive command that exceeds the schedule's pre-approved scope. Covered by
+   `test/scheduler-reliability.test.js` plus existing `test/scheduler.test.js`
+   and `test/scheduler-runner.test.js`.
 5. Re-evaluate browser/CDP URL/private-host restrictions as guardrails rather
    than inherited sandbox boundaries, then align E03 acceptance criteria.
 6. Rename remaining active source/test terminology from “allowlist” to command
