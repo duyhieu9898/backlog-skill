@@ -21,6 +21,7 @@ const app_1 = require("./config/app");
 const commands_1 = require("./commands");
 const scheduler_1 = require("./scheduler");
 const browser_service_1 = require("./browser/browser-service");
+const shutdown_1 = require("./core/shutdown");
 (0, env_1.loadEnv)(node_path_1.default.join(paths_1.agentDir, ".env"));
 const telegramConfig = (0, config_1.loadTelegramConfig)();
 const telegram = new client_1.TelegramClient(telegramConfig);
@@ -121,15 +122,12 @@ async function handleShutdown(signal) {
     logger_1.log.info("system-shutdown", "bot.shutdown.started", { signal });
     console.log(`\nReceived ${signal}, initiating graceful shutdown...`);
     try {
-        if (globalScheduledRunner) {
-            globalScheduledRunner.stop();
-        }
-        const stopped = (0, commands_1.stopRunningCommand)();
-        if (stopped.stopped) {
-            logger_1.log.info("system-shutdown", "bot.shutdown.command_stop_requested", { traceId: stopped.traceId });
-            await (0, commands_1.waitForRunningCommandStop)();
-        }
-        const result = await browser_service_1.browserService.shutdown();
+        const result = await (0, shutdown_1.performGracefulShutdown)({
+            scheduler: globalScheduledRunner,
+            stopRunningCommand: commands_1.stopRunningCommand,
+            waitForRunningCommandStop: commands_1.waitForRunningCommandStop,
+            browserShutdown: () => browser_service_1.browserService.shutdown(),
+        });
         logger_1.log.info("system-shutdown", "bot.shutdown.completed", result);
         console.log("Graceful shutdown completed successfully.");
         process.exit(0);

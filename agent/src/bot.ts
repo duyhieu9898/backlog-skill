@@ -17,6 +17,7 @@ import { loadAgentConfig } from "./config/app";
 import { stopRunningCommand, waitForRunningCommandStop } from "./commands";
 import { seedScheduledJobsFromConfig, ScheduledCheckRunner } from "./scheduler";
 import { browserService } from "./browser/browser-service";
+import { performGracefulShutdown } from "./core/shutdown";
 
 loadEnv(path.join(agentDir, ".env"));
 
@@ -138,15 +139,12 @@ async function handleShutdown(signal: NodeJS.Signals) {
   console.log(`\nReceived ${signal}, initiating graceful shutdown...`);
 
   try {
-    if (globalScheduledRunner) {
-      globalScheduledRunner.stop();
-    }
-    const stopped = stopRunningCommand();
-    if (stopped.stopped) {
-      log.info("system-shutdown", "bot.shutdown.command_stop_requested", { traceId: stopped.traceId });
-      await waitForRunningCommandStop();
-    }
-    const result = await browserService.shutdown();
+    const result = await performGracefulShutdown({
+      scheduler: globalScheduledRunner,
+      stopRunningCommand,
+      waitForRunningCommandStop,
+      browserShutdown: () => browserService.shutdown(),
+    });
     log.info("system-shutdown", "bot.shutdown.completed", result);
     console.log("Graceful shutdown completed successfully.");
     process.exit(0);
