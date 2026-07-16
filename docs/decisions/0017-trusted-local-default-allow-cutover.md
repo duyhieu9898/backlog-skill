@@ -159,6 +159,17 @@ type-checked lifecycle without creating a second execution path.
   test can run against an isolated temp database. Covered by
   `test/approval-restart.test.js`: approve-resume, reject-cancel, stale-digest
   invalidation, and replay refusal — the last exercised across two restarts.
+- **P2.1 — Gateway audit records** (commits `a85917a` + `734a500`): the gateway
+  now emits a `gateway.decision` record for every allow / approval-requested /
+  deny and a `gateway.executed` record for the execution result, each carrying
+  `traceId`, `sessionId`, `runId`, and `toolCallId`. Records reuse the existing
+  structured logger and `trace_events` sink; redaction is unchanged. A
+  `ToolAuditContext` is threaded through `PreparedToolCall.audit` so
+  `authorize()` and `execute()` emit without changing the decision signature;
+  `toolCallId` (`tc_<uuid>`) is generated at the loop/runtime entry points and
+  preserved across the approval pause/resume boundary. Covered by
+  `test/gateway-audit.test.js`: allow+executed, deny (no execution record),
+  approval-requested pause, and approve-resume sharing one `toolCallId`.
 
 ## Follow-Up
 
@@ -181,8 +192,9 @@ type-checked lifecycle without creating a second execution path.
 
 ### P2: Reliability, audit, and migration proof
 
-1. Add/normalize gateway audit records for each allow, approval, deny, and
-   execution result, with `traceId`, `sessionId`, `runId`, and `toolCallId`.
+1. ✅ Done (commits `a85917a` + `734a500`) — see Progress. Add/normalize gateway
+   audit records for each allow, approval, deny, and execution result, with
+   `traceId`, `sessionId`, `runId`, and `toolCallId`.
 2. Audit all side-effecting code paths to ensure adapters, scheduler,
    workflows, skills, and provider integrations cannot bypass `ToolGateway`.
 3. Complete operational proof: per-session concurrency locking, cancellation
