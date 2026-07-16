@@ -369,7 +369,7 @@ export class AgentToolLoop {
   ].join("\n");
   }
 
-  async consumeScopedApproval(message: StandardMessage, onArtifact?: (artifactId: string) => void, onReplyMarkup?: (markup: unknown) => void): Promise<string | null> {
+  async consumeScopedApproval(message: StandardMessage, onArtifact?: (artifactId: string) => void, onReplyMarkup?: (markup: unknown) => void, signal?: AbortSignal): Promise<string | null> {
     const match = message.text.trim().toLowerCase().match(/^(approve|reject)\s+([a-f0-9]{8})$/);
     if (!match) return null;
     const candidate = this.approvals.get(match[2], message.userId, message.chatId);
@@ -394,8 +394,8 @@ export class AgentToolLoop {
     }
     const steps = payload.continuation.steps.map((step) => ({ ...step, image: modelImageForResult(step.result as ToolResult, message.chatId) }));
     appendStep(pending.run_id, steps, { call: payload.call, result, image: modelImageForResult(result, message.chatId) });
-    const reply = await this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, steps, payload.continuation.userMessage, pending.run_id);
-    finishRun(pending.run_id, "completed");
+    const reply = await this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, steps, payload.continuation.userMessage, pending.run_id, signal);
+    finishRun(pending.run_id, signal?.aborted ? "cancelled" : "completed");
     return reply;
   }
 }

@@ -195,7 +195,7 @@ export class Router {
       return handleDebugCommand(text, this.registry);
     }
 
-    const toolScopedApproval = await this.toolLoop.consumeScopedApproval(message, onArtifact, onReplyMarkup);
+    const toolScopedApproval = await this.toolLoop.consumeScopedApproval(message, onArtifact, onReplyMarkup, signal);
     if (toolScopedApproval) return toolScopedApproval;
     const scopedApproval = await this.consumeScopedApproval(message, signal);
     if (scopedApproval) return scopedApproval;

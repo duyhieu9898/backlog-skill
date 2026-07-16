@@ -304,7 +304,7 @@ class AgentToolLoop {
             "Nếu task chưa hoàn thành, hãy gõ \"tiếp tục\" để tiếp tục hoặc thu hẹp yêu cầu thành các bước nhỏ hơn.",
         ].join("\n");
     }
-    async consumeScopedApproval(message, onArtifact, onReplyMarkup) {
+    async consumeScopedApproval(message, onArtifact, onReplyMarkup, signal) {
         const match = message.text.trim().toLowerCase().match(/^(approve|reject)\s+([a-f0-9]{8})$/);
         if (!match)
             return null;
@@ -343,8 +343,8 @@ class AgentToolLoop {
         }
         const steps = payload.continuation.steps.map((step) => ({ ...step, image: modelImageForResult(step.result, message.chatId) }));
         appendStep(pending.run_id, steps, { call: payload.call, result, image: modelImageForResult(result, message.chatId) });
-        const reply = await this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, steps, payload.continuation.userMessage, pending.run_id);
-        (0, repositories_1.finishRun)(pending.run_id, "completed");
+        const reply = await this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, steps, payload.continuation.userMessage, pending.run_id, signal);
+        (0, repositories_1.finishRun)(pending.run_id, signal?.aborted ? "cancelled" : "completed");
         return reply;
     }
 }

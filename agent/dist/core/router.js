@@ -161,7 +161,7 @@ class Router {
             logger_1.log.info(message.traceId, normalized.startsWith("/debug ") ? "debug.trace.requested" : "system.status.requested", { command: normalized });
             return (0, debugCommands_1.handleDebugCommand)(text, this.registry);
         }
-        const toolScopedApproval = await this.toolLoop.consumeScopedApproval(message, onArtifact, onReplyMarkup);
+        const toolScopedApproval = await this.toolLoop.consumeScopedApproval(message, onArtifact, onReplyMarkup, signal);
         if (toolScopedApproval)
             return toolScopedApproval;
         const scopedApproval = await this.consumeScopedApproval(message, signal);
