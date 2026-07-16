@@ -406,6 +406,18 @@ export function getPendingApproval(shortId: string, principalId: string, chatId:
   ).get(shortId, principalId, chatId) as PendingApprovalRow | undefined) || null;
 }
 
+export function listPendingApprovalsByChat(chatId: string, principalId?: string): PendingApprovalRow[] {
+  const db = getDb();
+  if (principalId) {
+    return db.prepare(
+      `SELECT * FROM pending_approvals WHERE chat_id = ? AND principal_id = ? AND status = 'pending'`,
+    ).all(chatId, principalId) as PendingApprovalRow[];
+  }
+  return db.prepare(
+    `SELECT * FROM pending_approvals WHERE chat_id = ? AND status = 'pending'`,
+  ).all(chatId) as PendingApprovalRow[];
+}
+
 export function countPendingApprovals(): number {
   const row = getDb()
     .prepare(`SELECT COUNT(*) AS count FROM pending_approvals WHERE status = 'pending' AND expires_at > ?`)

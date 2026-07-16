@@ -4,6 +4,7 @@ import {
   createApprovalGrant,
   getPendingApproval,
   listActiveApprovalGrants,
+  listPendingApprovalsByChat,
   nowIso,
   resolvePendingApproval,
   revokeApprovalGrant,
@@ -110,6 +111,28 @@ export class ApprovalService {
 
   revoke(grantId: string): void {
     revokeApprovalGrant(grantId);
+  }
+
+  /**
+   * Cancel every still-pending approval for a chat (owner `/stop` while a run is
+   * paused waiting for confirmation). Each resolved pending is recorded as
+   * `invalidated` and its run terminally as `cancelled`. Returns the affected
+   * run ids. Idempotent: `resolvePendingApproval` only updates `status='pending'`
+   * rows, and we re-read the row before finishing the run so an approval that
+   * won a concurrent resolve cannot be overwritten with `cancelled`.
+   */
+  cancelPendingForChat(chatId: string, principalId?: string): string[] {
+    const rows = listPendingApprovalsByChat(chatId, principalId);
+    const runIds: string[] = [];
+    for (const row of rows) {
+      resolvePendingApproval(row.id, "invalidated");
+      const after = getPendingApproval(row.short_id, row.principal_id, row.chat_id);
+      if (after?.status === "invalidated") {
+        finishRun(row.run_id, "cancelled", "Cancelled by owner.");
+        runIds.push(row.run_id);
+      }
+    }
+    return runIds;
   }
 }
 

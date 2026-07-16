@@ -65,10 +65,20 @@ class Router {
             const cancelledRunId = this.runtime.cancelActiveRun(message.chatId);
             const result = (0, commands_1.stopRunningCommand)();
             const runId = result.traceId || cancelledRunId;
-            if (!runId)
-                return "Không có run hoặc lệnh nào đang chạy.";
-            logger_1.log.info(message.traceId, "run.stop.requested", { runningTraceId: result.traceId, runId });
-            return `Đã yêu cầu dừng run đang chạy (traceId: ${runId}).`;
+            if (runId) {
+                logger_1.log.info(message.traceId, "run.stop.requested", { runningTraceId: result.traceId, runId });
+                return `Đã yêu cầu dừng run đang chạy (traceId: ${runId}).`;
+            }
+            // No active run or command: cancel a run paused waiting for approval so
+            // `/stop` is meaningful before the pending approval expires on its own.
+            const cancelledPending = this.approvals.cancelPendingForChat(message.chatId, message.userId);
+            if (cancelledPending.length > 0) {
+                logger_1.log.info(message.traceId, "run.stop.pending_cancelled", { runIds: cancelledPending });
+                return cancelledPending.length === 1
+                    ? `Đã huỷ run đang chờ xác nhận (traceId: ${cancelledPending[0]}).`
+                    : `Đã huỷ ${cancelledPending.length} run đang chờ xác nhận.`;
+            }
+            return "Không có run hoặc lệnh nào đang chạy.";
         }
         if (normalized === "/reset") {
             const newSessionId = (0, repositories_1.resetSession)(message.chatId);

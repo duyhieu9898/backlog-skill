@@ -28,6 +28,7 @@ exports.getLastFailedCommandRun = getLastFailedCommandRun;
 exports.listRecentCommandRuns = listRecentCommandRuns;
 exports.createPendingApproval = createPendingApproval;
 exports.getPendingApproval = getPendingApproval;
+exports.listPendingApprovalsByChat = listPendingApprovalsByChat;
 exports.countPendingApprovals = countPendingApprovals;
 exports.resolvePendingApproval = resolvePendingApproval;
 exports.createApprovalGrant = createApprovalGrant;
@@ -208,6 +209,13 @@ function createPendingApproval(input) {
 }
 function getPendingApproval(shortId, principalId, chatId) {
     return (0, db_1.getDb)().prepare(`SELECT * FROM pending_approvals WHERE short_id = ? AND principal_id = ? AND chat_id = ?`).get(shortId, principalId, chatId) || null;
+}
+function listPendingApprovalsByChat(chatId, principalId) {
+    const db = (0, db_1.getDb)();
+    if (principalId) {
+        return db.prepare(`SELECT * FROM pending_approvals WHERE chat_id = ? AND principal_id = ? AND status = 'pending'`).all(chatId, principalId);
+    }
+    return db.prepare(`SELECT * FROM pending_approvals WHERE chat_id = ? AND status = 'pending'`).all(chatId);
 }
 function countPendingApprovals() {
     const row = (0, db_1.getDb)()
