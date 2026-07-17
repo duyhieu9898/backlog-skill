@@ -109,6 +109,7 @@ function aggregate(traceId, runResult) {
   const steps = traceId ? listRunSteps(traceId) : [];
 
   let aiMs = 0;
+  let toolMs = 0;
   let tokens = null;
   let provider = null;
   let model = null;
@@ -119,6 +120,8 @@ function aggregate(traceId, runResult) {
       if (typeof p.latencyMs === "number") aiMs += p.latencyMs;
       const u = normalizeUsage(p.usage);
       if (u) tokens = sumUsage(tokens, u);
+    } else if (row.event === "gateway.executed") {
+      if (typeof p.latencyMs === "number") toolMs += p.latencyMs;
     } else if (row.event === "ai.request.created") {
       provider = provider || p.provider;
       model = model || p.model;
@@ -144,6 +147,7 @@ function aggregate(traceId, runResult) {
     runStatus: run?.status || null,
     totalMs: runResult.totalMs,
     aiMs,
+    toolMs,
     aiSteps: events.filter((e) => e.event === "ai.response.received").length,
     toolSteps,
     failedSteps,
@@ -222,7 +226,7 @@ function renderMarkdown(r) {
     ``,
     `## ${c.id}`,
     `- traceId: \`${c.traceId || "(none)"}\``,
-    `- exit: ${c.exitCode} | run: ${c.runStatus || "?"} | aiMs: ${c.aiMs} | aiSteps: ${c.aiSteps} | tokens: ${c.tokenUsage ? JSON.stringify(c.tokenUsage) : "n/a"}`,
+    `- exit: ${c.exitCode} | run: ${c.runStatus || "?"} | aiMs: ${c.aiMs} | toolMs: ${c.toolMs} | aiSteps: ${c.aiSteps} | tokens: ${c.tokenUsage ? JSON.stringify(c.tokenUsage) : "n/a"}`,
     `- tool steps: ${c.toolSteps.length ? c.toolSteps.map((s) => `${s.name}(${s.ok ? "ok" : s.code || "fail"})`).join(" → ") : "(none)"}`,
     c.failedSteps.length ? `- failed steps: ${c.failedSteps.map((s) => `${s.name}:${s.code}`).join(", ")}` : ``,
     c.denyReasons.length ? `- gateway denies: ${c.denyReasons.join("; ")}` : ``,

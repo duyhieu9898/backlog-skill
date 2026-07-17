@@ -198,13 +198,14 @@ class ToolGateway {
                 }
             }
         }
+        const execStart = Date.now();
         const result = await this.executor.execute(prepared, {
             ...context,
             confirmationGranted: approvalGranted,
             userIntent: prepared.userIntent,
             gatewayAuthorized: true,
         });
-        this.auditExecuted(prepared, result);
+        this.auditExecuted(prepared, result, Date.now() - execStart);
         return result;
     }
     async runCommand(action, context) {
@@ -259,7 +260,7 @@ class ToolGateway {
         });
     }
     /** Emit the execution result. No-op without an audit context. */
-    auditExecuted(prepared, result) {
+    auditExecuted(prepared, result, latencyMs) {
         const audit = prepared.audit;
         if (!audit)
             return;
@@ -273,6 +274,7 @@ class ToolGateway {
             summary: result.summary,
             toolName: prepared.call.name,
             toolKey: prepared.key,
+            latencyMs,
         });
     }
 }

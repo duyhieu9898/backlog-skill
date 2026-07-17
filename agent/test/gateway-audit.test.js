@@ -211,6 +211,7 @@ test("allow decision and execution result are audited with all four ids", async 
 
   assert.equal(executed.length, 1);
   assert.equal(executed[0].ok, true);
+  assert.equal(typeof executed[0].latencyMs, "number", "executed record carries tool-exec latencyMs");
 
   // Both records carry the same four correlation ids.
   for (const record of [decisions[0], executed[0]]) {
