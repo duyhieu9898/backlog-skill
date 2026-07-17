@@ -112,7 +112,7 @@ class ToolGateway {
         }
         if (prepared.browserAction) {
             const args = prepared.call.arguments;
-            const browserContext = (0, executor_1.buildBrowserActionPolicyContext)(args, prepared.browserAction.kind);
+            const browserContext = (0, executor_1.buildBrowserActionPolicyContext)(args, prepared.browserAction.kind, prepared.audit);
             const decision = new permissionPolicy_1.PermissionPolicy((0, app_1.loadAgentConfig)().permissions).evaluate(prepared.browserAction, { browserContext });
             if (prepared.approvalGranted) {
                 const approved = new permissionPolicy_1.PermissionPolicy((0, app_1.loadAgentConfig)().permissions).evaluate(prepared.browserAction, { browserContext, confirmationGranted: true });
@@ -127,8 +127,8 @@ class ToolGateway {
             if (decision.outcome === "confirm") {
                 const actionFingerprint = decision.actionFingerprint || "";
                 browser_confirmation_1.browserConfirmationStore.createGrant({
-                    sessionId: "sess-1",
-                    runId: "run-1",
+                    sessionId: browserContext?.sessionId ?? "default",
+                    runId: browserContext?.runId ?? "default",
                     profile: args.profile || "default",
                     targetId: args.targetId || "",
                     snapshotId: args.request?.snapshotId,
@@ -169,7 +169,7 @@ class ToolGateway {
         }
         if (prepared.browserAction) {
             const args = prepared.call.arguments;
-            const browserContext = (0, executor_1.buildBrowserActionPolicyContext)(args, prepared.browserAction.kind);
+            const browserContext = (0, executor_1.buildBrowserActionPolicyContext)(args, prepared.browserAction.kind, prepared.audit);
             const decision = new permissionPolicy_1.PermissionPolicy((0, app_1.loadAgentConfig)().permissions).evaluate(prepared.browserAction, {
                 browserContext,
                 confirmationGranted: approvalGranted,

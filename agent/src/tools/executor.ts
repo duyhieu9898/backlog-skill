@@ -739,7 +739,8 @@ export class ToolExecutor {
 
 export function buildBrowserActionPolicyContext(
   args: Record<string, any>,
-  actionKind: string
+  actionKind: string,
+  audit?: ToolAuditContext,
 ): BrowserActionPolicyContext | undefined {
   if (actionKind !== "browser.act") return undefined;
 
@@ -774,8 +775,8 @@ export function buildBrowserActionPolicyContext(
   }
 
   return {
-    sessionId: "sess-1",
-    runId: "run-1",
+    sessionId: audit?.sessionId ?? "default",
+    runId: audit?.runId ?? "default",
     profile: args.profile || "default",
     targetId,
     snapshotId,

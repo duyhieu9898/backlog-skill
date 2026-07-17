@@ -121,7 +121,7 @@ export class ToolGateway {
 
     if (prepared.browserAction) {
       const args = prepared.call.arguments as Record<string, any>;
-      const browserContext = buildBrowserActionPolicyContext(args, prepared.browserAction.kind);
+      const browserContext = buildBrowserActionPolicyContext(args, prepared.browserAction.kind, prepared.audit);
       const decision = new PermissionPolicy(loadAgentConfig().permissions).evaluate(prepared.browserAction, { browserContext });
       if (prepared.approvalGranted) {
         const approved = new PermissionPolicy(loadAgentConfig().permissions).evaluate(prepared.browserAction, { browserContext, confirmationGranted: true });
@@ -136,8 +136,8 @@ export class ToolGateway {
       if (decision.outcome === "confirm") {
         const actionFingerprint = (decision as any).actionFingerprint || "";
         browserConfirmationStore.createGrant({
-          sessionId: "sess-1",
-          runId: "run-1",
+          sessionId: browserContext?.sessionId ?? "default",
+          runId: browserContext?.runId ?? "default",
           profile: args.profile || "default",
           targetId: args.targetId || "",
           snapshotId: args.request?.snapshotId,
@@ -179,7 +179,7 @@ export class ToolGateway {
     }
     if (prepared.browserAction) {
       const args = prepared.call.arguments as Record<string, any>;
-      const browserContext = buildBrowserActionPolicyContext(args, prepared.browserAction.kind);
+      const browserContext = buildBrowserActionPolicyContext(args, prepared.browserAction.kind, prepared.audit);
       const decision = new PermissionPolicy(loadAgentConfig().permissions).evaluate(prepared.browserAction, {
         browserContext,
         confirmationGranted: approvalGranted,

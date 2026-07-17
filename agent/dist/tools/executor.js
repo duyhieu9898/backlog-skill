@@ -707,7 +707,7 @@ class ToolExecutor {
     }
 }
 exports.ToolExecutor = ToolExecutor;
-function buildBrowserActionPolicyContext(args, actionKind) {
+function buildBrowserActionPolicyContext(args, actionKind, audit) {
     if (actionKind !== "browser.act")
         return undefined;
     const request = args.request;
@@ -738,8 +738,8 @@ function buildBrowserActionPolicyContext(args, actionKind) {
         }
     }
     return {
-        sessionId: "sess-1",
-        runId: "run-1",
+        sessionId: audit?.sessionId ?? "default",
+        runId: audit?.runId ?? "default",
         profile: args.profile || "default",
         targetId,
         snapshotId,
