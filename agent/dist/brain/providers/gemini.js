@@ -105,6 +105,7 @@ class GeminiProvider {
             direction: "response",
             payload: response,
         });
+        const usage = response.usageMetadata;
         const call = response.functionCalls?.[0];
         if (call) {
             return {
@@ -112,15 +113,16 @@ class GeminiProvider {
                     name: normalizeFunctionName(call.name),
                     arguments: (call.args || {}),
                 },
+                usage,
             };
         }
         const recoveredCall = nativeTools ? rawToolCall(response.text) : undefined;
         if (recoveredCall)
-            return { toolCall: recoveredCall };
+            return { toolCall: recoveredCall, usage };
         if (nativeTools)
-            return { text: response.text || "Không có thao tác phù hợp." };
+            return { text: response.text || "Không có thao tác phù hợp.", usage };
         const text = response.text || "{}";
-        return (0, provider_1.validateAiResponse)(JSON.parse(text));
+        return { ...(0, provider_1.validateAiResponse)(JSON.parse(text)), usage };
     }
 }
 exports.GeminiProvider = GeminiProvider;

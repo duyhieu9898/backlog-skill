@@ -12,3 +12,18 @@ test("log redaction removes secret values from keys and common credential string
     nested: { password: "[redacted]" },
   });
 });
+
+test("sanitizeForLog preserves token-usage metrics but still redacts secrets", () => {
+  // Child keys contain "token" (OpenAI *_tokens, Gemini *TokenCount) but are usage
+  // metrics, not secrets — they must survive so eval/audit can account for cost.
+  const result = sanitizeForLog({
+    usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 },
+    usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 30, totalTokenCount: 150 },
+    api_key: "sk_live_abc",
+    token: "session-xyz",
+  });
+  assert.deepEqual(result.usage, { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 });
+  assert.deepEqual(result.usageMetadata, { promptTokenCount: 120, candidatesTokenCount: 30, totalTokenCount: 150 });
+  assert.equal(result.api_key, "[redacted]");
+  assert.equal(result.token, "[redacted]");
+});
