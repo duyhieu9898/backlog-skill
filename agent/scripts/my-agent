@@ -107,6 +107,7 @@ Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=PATH=${NODE_DIR}:/usr/local/bin:/usr/bin:/bin
+Environment="NODE_OPTIONS=--no-network-family-autoselection --dns-result-order=ipv4first"
 
 [Install]
 WantedBy=default.target
