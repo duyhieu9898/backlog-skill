@@ -68,6 +68,9 @@ function initializeSchema(database = getDb()) {
     CREATE INDEX IF NOT EXISTS idx_trace_events_trace_created
       ON trace_events(trace_id, created_at ASC);
 
+    CREATE INDEX IF NOT EXISTS idx_trace_events_created
+      ON trace_events(created_at);
+
     CREATE TABLE IF NOT EXISTS command_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       trace_id TEXT NOT NULL,

@@ -91,8 +91,12 @@ function normalizeUsage(u) {
   const prompt = u.prompt_tokens ?? u.promptTokenCount;
   const completion = u.completion_tokens ?? u.candidatesTokenCount;
   const total = u.total_tokens ?? u.totalTokenCount;
-  if (prompt == null && completion == null && total == null) return null;
-  return { prompt: prompt ?? null, completion: completion ?? null, total: total ?? null };
+  // Thinking/reasoning tokens (hidden inside completion unless surfaced): Gemini
+  // thoughtsTokenCount, OpenAI completion_tokens_details.reasoning_tokens.
+  const reasoning = u.reasoning_tokens ?? u.completion_tokens_details?.reasoning_tokens ?? null;
+  const thoughts = u.thoughtsTokenCount ?? null;
+  if (prompt == null && completion == null && total == null && reasoning == null && thoughts == null) return null;
+  return { prompt: prompt ?? null, completion: completion ?? null, total: total ?? null, reasoning, thoughts };
 }
 
 function sumUsage(a, b) {
@@ -100,7 +104,13 @@ function sumUsage(a, b) {
   if (!a) return b;
   if (!b) return a;
   const add = (x, y) => (x == null || y == null ? (x ?? y ?? null) : x + y);
-  return { prompt: add(a.prompt, b.prompt), completion: add(a.completion, b.completion), total: add(a.total, b.total) };
+  return {
+    prompt: add(a.prompt, b.prompt),
+    completion: add(a.completion, b.completion),
+    total: add(a.total, b.total),
+    reasoning: add(a.reasoning, b.reasoning),
+    thoughts: add(a.thoughts, b.thoughts),
+  };
 }
 
 function aggregate(traceId, runResult) {

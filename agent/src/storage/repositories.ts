@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
+import { loadAgentConfig } from "../config/app";
 
 export type TraceEventRow = {
   trace_id: string;
@@ -178,7 +179,24 @@ export function insertTraceEvent(traceId: string, event: string, payload: unknow
        VALUES (?, ?, ?, ?)`,
     )
     .run(traceId, event, JSON.stringify(payload ?? {}), nowIso());
+  // Prune old trace_events on a throttle so the table cannot grow unbounded in a
+  // long-running process (raw-AI JSONL already prunes; trace_events did not).
+  const now = Date.now();
+  if (now - tracePruneAt > TRACE_PRUNE_INTERVAL_MS) {
+    tracePruneAt = now;
+    pruneTraceEvents(loadAgentConfig().logging?.traceRetentionDays ?? 30);
+  }
 }
+
+/** Best-effort: a retention < 1 day is treated as "do not prune". */
+export function pruneTraceEvents(retentionDays: number): number {
+  if (!Number.isFinite(retentionDays) || retentionDays < 1) return 0;
+  const cutoffIso = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
+  return getDb().prepare(`DELETE FROM trace_events WHERE created_at < ?`).run(cutoffIso).changes;
+}
+
+const TRACE_PRUNE_INTERVAL_MS = 60_000;
+let tracePruneAt = 0;
 
 export function listTraceEvents(traceId: string, limit = 50): TraceEventRow[] {
   return getDb()

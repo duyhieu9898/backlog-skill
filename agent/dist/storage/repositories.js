@@ -9,6 +9,7 @@ exports.nowIso = nowIso;
 exports.setJsonState = setJsonState;
 exports.getJsonState = getJsonState;
 exports.insertTraceEvent = insertTraceEvent;
+exports.pruneTraceEvents = pruneTraceEvents;
 exports.listTraceEvents = listTraceEvents;
 exports.getLastFailedToolEvent = getLastFailedToolEvent;
 exports.getActiveSessionId = getActiveSessionId;
@@ -48,6 +49,7 @@ exports.getUncompactedChatMessages = getUncompactedChatMessages;
 exports.markMessagesAsCompacted = markMessagesAsCompacted;
 const node_crypto_1 = require("node:crypto");
 const db_1 = require("./db");
+const app_1 = require("../config/app");
 function insertArtifact(row) {
     (0, db_1.getDb)().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at)`).run(row);
 }
@@ -84,7 +86,23 @@ function insertTraceEvent(traceId, event, payload) {
         .prepare(`INSERT INTO trace_events (trace_id, event, payload_json, created_at)
        VALUES (?, ?, ?, ?)`)
         .run(traceId, event, JSON.stringify(payload ?? {}), nowIso());
+    // Prune old trace_events on a throttle so the table cannot grow unbounded in a
+    // long-running process (raw-AI JSONL already prunes; trace_events did not).
+    const now = Date.now();
+    if (now - tracePruneAt > TRACE_PRUNE_INTERVAL_MS) {
+        tracePruneAt = now;
+        pruneTraceEvents((0, app_1.loadAgentConfig)().logging?.traceRetentionDays ?? 30);
+    }
 }
+/** Best-effort: a retention < 1 day is treated as "do not prune". */
+function pruneTraceEvents(retentionDays) {
+    if (!Number.isFinite(retentionDays) || retentionDays < 1)
+        return 0;
+    const cutoffIso = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
+    return (0, db_1.getDb)().prepare(`DELETE FROM trace_events WHERE created_at < ?`).run(cutoffIso).changes;
+}
+const TRACE_PRUNE_INTERVAL_MS = 60_000;
+let tracePruneAt = 0;
 function listTraceEvents(traceId, limit = 50) {
     return (0, db_1.getDb)()
         .prepare(`SELECT trace_id, event, payload_json, created_at

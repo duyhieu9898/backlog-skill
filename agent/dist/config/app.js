@@ -56,6 +56,7 @@ const defaultConfig = {
     logging: {
         rawAiInteractions: true,
         rawAiRetentionDays: 14,
+        traceRetentionDays: 30,
     },
     schedules: [],
     desktop: {

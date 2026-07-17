@@ -57,6 +57,7 @@ export type AgentConfig = {
   logging?: {
     rawAiInteractions?: boolean;
     rawAiRetentionDays?: number;
+    traceRetentionDays?: number;
   };
   schedules?: ScheduledCheckConfig[];
   desktop?: {
@@ -146,6 +147,7 @@ const defaultConfig: AgentConfig = {
   logging: {
     rawAiInteractions: true,
     rawAiRetentionDays: 14,
+    traceRetentionDays: 30,
   },
   schedules: [],
   desktop: {
