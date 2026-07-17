@@ -51,6 +51,30 @@ function hasExplicitSystemIntent(action, userIntent) {
     const requestedTargets = namedTargets.filter((term) => !ignored.has(term));
     return requestedTargets.length === 0 || requestedTargets.some((term) => command.includes(term));
 }
+/** Extracts a normalized hostname (IPv6 brackets and trailing dot stripped) for posture classification. */
+function hostOf(url) {
+    try {
+        let hostname = new URL(url).hostname.toLowerCase();
+        if (hostname.startsWith("[") && hostname.endsWith("]")) {
+            hostname = hostname.substring(1, hostname.length - 1);
+        }
+        if (hostname.endsWith("."))
+            hostname = hostname.substring(0, hostname.length - 1);
+        return hostname;
+    }
+    catch {
+        return "";
+    }
+}
+/** Extracts the lowercase `host` (hostname[:port]) used for allowedHosts exact-match. */
+function hostKeyOf(url) {
+    try {
+        return new URL(url).host.toLowerCase();
+    }
+    catch {
+        return "";
+    }
+}
 function normalizeAction(action) {
     if (action.kind === "command.run") {
         return { ...action, cwd: canonicalizePolicyPath(action.cwd) };
@@ -162,13 +186,50 @@ class PermissionPolicy {
         if (kind === "browser.open" || kind === "browser.navigate") {
             const url = action.url;
             if (url) {
+                // 1. Non-configurable guardrail: protocol escapes and SSRF/non-routable
+                //    destinations (cloud metadata, link-local, unspecified, multicast).
                 const allowedHosts = this.browserConfig.allowedHosts || [];
-                const decision = (0, url_policy_1.evaluateUrlSync)({ url, allowedHosts });
-                if (decision.decision === "deny") {
+                const guardrail = (0, url_policy_1.evaluateUrlSync)({ url, allowedHosts });
+                if (guardrail.decision === "deny") {
                     return {
                         outcome: "deny",
-                        reasonCode: decision.code,
-                        reason: decision.reason,
+                        reasonCode: guardrail.code,
+                        reason: guardrail.reason,
+                        action,
+                    };
+                }
+                // An explicit allowedHosts entry is an owner trust declaration: it
+                // bypasses the navigation posture below (legacy "exact match = allow").
+                const hostKey = hostKeyOf(url);
+                if (hostKey && allowedHosts.map((h) => h.toLowerCase()).includes(hostKey)) {
+                    return {
+                        outcome: "allow",
+                        reasonCode: "ALLOWED",
+                        reason: "Host is explicitly allowed by the owner allowlist.",
+                        action,
+                    };
+                }
+                // 2. Configurable navigation posture (trusted-local: private default
+                //    allow). `privateNavigation`/`publicNavigation` are owner policy and
+                //    default to "allow"; an owner may set "confirm" or "deny" to tighten.
+                const hostname = hostOf(url);
+                const isPrivate = (0, url_policy_1.isPrivateHostname)(hostname) || (0, url_policy_1.isPrivateIp)(hostname);
+                const mode = isPrivate
+                    ? this.browserConfig.privateNavigation ?? "allow"
+                    : this.browserConfig.publicNavigation ?? "allow";
+                if (mode === "deny") {
+                    return {
+                        outcome: "deny",
+                        reasonCode: "NAVIGATION_MODE_DENIED",
+                        reason: `Navigation to ${isPrivate ? "private/local" : "public"} host is denied by policy: ${hostname}`,
+                        action,
+                    };
+                }
+                if (mode === "confirm" && !context.confirmationGranted) {
+                    return {
+                        outcome: "confirm",
+                        reasonCode: "CONFIRMATION_REQUIRED",
+                        reason: `Navigation to ${isPrivate ? "private/local" : "public"} host requires confirmation: ${hostname}`,
                         action,
                     };
                 }

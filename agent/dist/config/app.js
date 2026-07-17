@@ -14,7 +14,7 @@ const apps_1 = require("../tools/computer/apps");
 const DEFAULT_BROWSER_PERMISSIONS = {
     allowedHosts: [],
     publicNavigation: "allow",
-    privateNavigation: "deny",
+    privateNavigation: "allow",
     consequentialActions: "confirm",
     destructiveActions: "confirm",
 };

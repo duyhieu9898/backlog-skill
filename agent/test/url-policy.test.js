@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { evaluateUrl, isPrivateIp, isPrivateHostname } = require("../dist/browser/url-policy");
+const { evaluateUrl, isPrivateIp, isPrivateHostname, isSsrfGuardedIp } = require("../dist/browser/url-policy");
 
 test("isPrivateIp helper", () => {
   assert.equal(isPrivateIp("127.0.0.1"), true);
@@ -47,16 +47,43 @@ test("evaluateUrl - navigation protocols", async () => {
   assert.equal(dataRes.code, "NAVIGATION_PROTOCOL_BLOCKED");
 });
 
-test("evaluateUrl - blocked loopback and private IPs", async () => {
-  assert.equal((await evaluateUrl({ url: "http://127.0.0.1", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://localhost", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://localhost.", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://10.0.0.1:8080", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://192.168.1.1", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://169.254.169.254", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://[::1]", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://[fc00::1]", allowedHosts: [] })).decision, "deny");
-  assert.equal((await evaluateUrl({ url: "http://[fe80::1]", allowedHosts: [] })).decision, "deny");
+test("isSsrfGuardedIp helper — the non-configurable guardrail set", () => {
+  // Cloud metadata / link-local and non-routable ranges stay hard-denied.
+  assert.equal(isSsrfGuardedIp("169.254.169.254"), true);
+  assert.equal(isSsrfGuardedIp("169.254.0.1"), true);
+  assert.equal(isSsrfGuardedIp("0.0.0.0"), true);
+  assert.equal(isSsrfGuardedIp("224.0.0.1"), true); // multicast
+  assert.equal(isSsrfGuardedIp("240.0.0.1"), true); // reserved
+  // Private LAN and loopback are NOT guardrail-denied — they are owner network.
+  assert.equal(isSsrfGuardedIp("127.0.0.1"), false);
+  assert.equal(isSsrfGuardedIp("10.0.0.1"), false);
+  assert.equal(isSsrfGuardedIp("192.168.1.1"), false);
+  assert.equal(isSsrfGuardedIp("172.16.5.5"), false);
+  assert.equal(isSsrfGuardedIp("8.8.8.8"), false);
+});
+
+test("evaluateUrl - SSRF guardrail blocks metadata and non-routable destinations", async () => {
+  const metadata = await evaluateUrl({ url: "http://169.254.169.254", allowedHosts: [] });
+  assert.equal(metadata.decision, "deny");
+  assert.equal(metadata.code, "NAVIGATION_PRIVATE_NETWORK_BLOCKED");
+
+  assert.equal((await evaluateUrl({ url: "http://169.254.0.1", allowedHosts: [] })).decision, "deny");
+  assert.equal((await evaluateUrl({ url: "http://0.0.0.0", allowedHosts: [] })).decision, "deny");
+});
+
+test("evaluateUrl - private LAN, loopback, and localhost are allowed by default (trusted-local)", async () => {
+  // Under ADR 0017 the owner's local network is legitimate; only the gateway
+  // posture (privateNavigation) may tighten it. The url-policy guardrail itself
+  // no longer blocks these.
+  assert.equal((await evaluateUrl({ url: "http://127.0.0.1", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://localhost", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://localhost.", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://10.0.0.1:8080", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://192.168.1.1", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://[::1]", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://[fc00::1]", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://[fe80::1]", allowedHosts: [] })).decision, "allow");
+  assert.equal((await evaluateUrl({ url: "http://dev-server.local", allowedHosts: [] })).decision, "allow");
 });
 
 test("evaluateUrl - allowlist matches", async () => {
@@ -65,9 +92,10 @@ test("evaluateUrl - allowlist matches", async () => {
   assert.equal((await evaluateUrl({ url: "http://127.0.0.1:5173/dashboard", allowedHosts: ["127.0.0.1:5173"] })).decision, "allow");
   assert.equal((await evaluateUrl({ url: "http://dev-server.local", allowedHosts: ["dev-server.local"] })).decision, "allow");
 
-  // allowed host with wrong port
+  // A private host with a non-allowlisted port is still allowed: under the
+  // trusted-local model private destinations default-allow regardless of port.
   const wrongPortRes = await evaluateUrl({ url: "http://localhost:3001", allowedHosts: ["localhost:3000"] });
-  assert.equal(wrongPortRes.decision, "deny");
+  assert.equal(wrongPortRes.decision, "allow");
 
   // hostname suffix bypass
   const suffixRes = await evaluateUrl({ url: "http://localhost3000.com", allowedHosts: ["localhost:3000"] });
@@ -83,10 +111,15 @@ test("evaluateUrl - malformed and validation", async () => {
   assert.equal(malformed.code, "NAVIGATION_INVALID_URL");
 });
 
-test("evaluateUrl - DNS resolution checks", async () => {
-  // metadata.google.internal is private. It might not resolve, or if it does, it could resolve to private/link-local.
-  // In either case, it ends with `.internal`, so it is classified as a private hostname and blocked immediately!
+test("evaluateUrl - DNS resolution catches SSRF-guarded destinations", async () => {
+  // metadata.google.internal is a cloud-metadata SSRF target. Outside its cloud
+  // it does not resolve (denied as unresolvable); inside, it resolves to the
+  // link-local 169.254.x metadata IP (denied by the SSRF guardrail). Either way
+  // the guardrail denies it — it is never allowed through to navigation.
   const metaRes = await evaluateUrl({ url: "http://metadata.google.internal", allowedHosts: [] });
   assert.equal(metaRes.decision, "deny");
-  assert.equal(metaRes.code, "NAVIGATION_HOST_NOT_ALLOWED");
+  assert.ok(
+    metaRes.code === "NAVIGATION_PRIVATE_NETWORK_BLOCKED" || metaRes.code === "NAVIGATION_INVALID_URL",
+    `unexpected code ${metaRes.code}`,
+  );
 });

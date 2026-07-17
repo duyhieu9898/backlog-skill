@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.isPrivateIPv4 = isPrivateIPv4;
 exports.isPrivateIPv6 = isPrivateIPv6;
 exports.isPrivateIp = isPrivateIp;
+exports.isSsrfGuardedIp = isSsrfGuardedIp;
 exports.isPrivateHostname = isPrivateHostname;
 exports.evaluateUrlSync = evaluateUrlSync;
 exports.evaluateUrl = evaluateUrl;
@@ -80,6 +81,25 @@ function isPrivateIp(ip) {
         return isPrivateIPv6(ip);
     return false;
 }
+/**
+ * The non-configurable SSRF guardrail: destinations that have no legitimate
+ * browsing purpose and are common server-side request forgery / exfiltration
+ * targets. These are hard-denied regardless of owner posture: cloud metadata
+ * (169.254.169.254 IMDS) and the rest of IPv4 link-local, the unspecified
+ * baseline (0.0.0.0/8), and multicast/reserved ranges. Private LAN, loopback,
+ * and ULA addresses are NOT here — under the trusted-local model those are the
+ * owner's own network and governed by `permissions.browser.privateNavigation`.
+ */
+const SSRF_GUARDED_IPV4_CIDRS = ["0.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4"];
+function isSsrfGuardedIp(ip) {
+    if (!node_net_1.default.isIPv4(ip))
+        return false;
+    const parts = ip.split(".").map(Number);
+    if (parts.length !== 4 || parts.some(isNaN))
+        return false;
+    const ipVal = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+    return SSRF_GUARDED_IPV4_CIDRS.some((cidr) => ipMatchesCidr(ipVal, cidr));
+}
 function isPrivateHostname(hostname) {
     const norm = hostname.toLowerCase().trim();
     if (norm === "localhost" || norm === "localhost.localdomain")
@@ -137,20 +157,15 @@ function evaluateUrlSync(context) {
     if (hostname.endsWith(".")) {
         hostname = hostname.substring(0, hostname.length - 1);
     }
-    // Check if Hostname is explicitly blocked/private
-    if (isPrivateHostname(hostname)) {
-        return {
-            decision: "deny",
-            code: "NAVIGATION_HOST_NOT_ALLOWED",
-            reason: `Host is private and not allowed: ${parsed.host}`,
-        };
-    }
-    // Check if IP is private
-    if (isPrivateIp(hostname)) {
+    // Non-configurable SSRF guardrail: hard-deny metadata/link-local and other
+    // non-routable destinations. Private LAN, loopback, and intranet hostnames
+    // are NOT blocked here — they are the owner's local network under the
+    // trusted-local model and governed by `privateNavigation` at the gateway.
+    if (isSsrfGuardedIp(hostname)) {
         return {
             decision: "deny",
             code: "NAVIGATION_PRIVATE_NETWORK_BLOCKED",
-            reason: `Destination IP is private or restricted: ${hostname}`,
+            reason: `Destination is SSRF-guarded or non-routable: ${hostname}`,
         };
     }
     return { decision: "allow" };
@@ -172,16 +187,26 @@ async function evaluateUrl(context) {
     if (hostname.endsWith(".")) {
         hostname = hostname.substring(0, hostname.length - 1);
     }
-    // If it is a domain, perform DNS resolution to inspect resolved IPs
-    if (!node_net_1.default.isIP(hostname)) {
+    // If it is a domain, perform DNS resolution to catch destinations that
+    // resolve to an SSRF-guarded IP (e.g. metadata.google.internal → 169.254.x).
+    // Resolving to a private LAN address is allowed under the trusted-local model.
+    // Skip DNS only for unambiguously owner-local names (localhost, .local, .lan,
+    // and single-label hostnames): they may rely on mDNS, are no SSRF concern, and
+    // never overlap cloud-metadata endpoints. Other private-shaped names such as
+    // "*.internal" still resolve so metadata.google.internal is caught.
+    const skipDns = hostname === "localhost"
+        || hostname.endsWith(".local")
+        || hostname.endsWith(".lan")
+        || !hostname.includes(".");
+    if (!node_net_1.default.isIP(hostname) && !skipDns) {
         try {
             const addresses = await node_dns_1.default.promises.lookup(hostname, { all: true });
             for (const addr of addresses) {
-                if (isPrivateIp(addr.address)) {
+                if (isSsrfGuardedIp(addr.address)) {
                     return {
                         decision: "deny",
                         code: "NAVIGATION_PRIVATE_NETWORK_BLOCKED",
-                        reason: `Host ${hostname} resolved to a private IP: ${addr.address}`,
+                        reason: `Host ${hostname} resolved to an SSRF-guarded IP: ${addr.address}`,
                     };
                 }
             }

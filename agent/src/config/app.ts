@@ -102,7 +102,7 @@ export type ScheduledCheckConfig = {
 const DEFAULT_BROWSER_PERMISSIONS: BrowserPermissionConfig = {
   allowedHosts: [],
   publicNavigation: "allow",
-  privateNavigation: "deny",
+  privateNavigation: "allow",
   consequentialActions: "confirm",
   destructiveActions: "confirm",
 };

@@ -75,15 +75,24 @@ test("Browser Safety and Network Policy integration", async (t) => {
     const openDecision = policy.evaluate(openAction);
     assert.equal(openDecision.outcome, "allow");
 
-    // Open it using browserService
-    // Note: since browserService.open loads agent/config.json directly, we should temporarily override config.json, or just test that browserService rejects localhost by default!
-    // Let's test that browserService rejects localhost by default:
-    await assert.rejects(
-      async () => {
-        await browserService.open(profileName, "http://localhost:3000");
-      },
-      /Host is private and not allowed/
-    );
+    // Trusted-local navigation posture (ADR 0017 P2.5): localhost and private
+    // LAN are allowed by default (owner's own network), while the SSRF guardrail
+    // still hard-denies cloud-metadata / non-routable destinations, and an owner
+    // can tighten private access via `privateNavigation`.
+    const allowPolicy = new PermissionPolicy({
+      ...config,
+      browser: { ...config.browser, privateNavigation: "allow" },
+    });
+    assert.equal(allowPolicy.evaluate({ kind: "browser.open", profile: profileName, url: "http://localhost:3000" }).outcome, "allow");
+    assert.equal(allowPolicy.evaluate({ kind: "browser.open", profile: profileName, url: "http://192.168.1.1" }).outcome, "allow");
+    // The guardrail is non-configurable: metadata is denied even with privateNavigation "allow".
+    assert.equal(allowPolicy.evaluate({ kind: "browser.open", profile: profileName, url: "http://169.254.169.254" }).outcome, "deny");
+    // The posture is configurable: an owner may set "deny" to block private navigation.
+    const denyPolicy = new PermissionPolicy({
+      ...config,
+      browser: { ...config.browser, privateNavigation: "deny" },
+    });
+    assert.equal(denyPolicy.evaluate({ kind: "browser.open", profile: profileName, url: "http://localhost:3000" }).outcome, "deny");
 
     // 3. Let's test evaluateAction risk classification directly
     const sendAction = { kind: "browser.act", profile: profileName, targetId: "tab_01", request: { kind: "click", ref: "e1", snapshotId: "snap1" } };
