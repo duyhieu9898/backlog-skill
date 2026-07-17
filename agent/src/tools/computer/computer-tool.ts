@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 /**
  * Linux-local adaptation of OpenClaw's computer-tool contract.
  *
- * Upstream reference: src/tools/openclaw/src/agents/tools/computer-tool.ts
+ * Upstream source: https://github.com/openclaw/openclaw (computer-tool)
  * This owns model-facing action validation and frame authority. The X11
  * adapter owns screenshot capture and input delivery; no Gateway/node/macOS
  * dependency crosses this boundary.
