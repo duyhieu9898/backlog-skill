@@ -40,6 +40,18 @@ export function initializeSchema(database = getDb()): void {
     CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_created
       ON chat_messages(chat_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS context_checkpoints (
+      chat_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      checkpoint_json TEXT NOT NULL,
+      first_kept_message_id INTEGER,
+      tokens_before INTEGER NOT NULL,
+      compaction_count INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (chat_id, session_id)
+    );
+
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
       owner_chat_id TEXT NOT NULL,

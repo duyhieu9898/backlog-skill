@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContextHydrator = void 0;
 const app_1 = require("../config/app");
 const repositories_1 = require("../storage/repositories");
+const assembler_1 = require("./assembler");
+const checkpoint_1 = require("./checkpoint");
+const memory_1 = require("./memory");
 const DEBUG_WORDS = ["lỗi", "bug", "vừa rồi", "lúc nãy", "tại sao", "failed", "error"];
 const FILE_WORDS = ["file", "tệp", "thư mục", "folder", "directory", "đọc", "read", "ghi", "write", "patch"];
 const DESKTOP_WORDS = ["desktop", "màn hình", "screenshot", "chụp màn hình", "vscode", "vs code", "visual studio code", "app ", "mở app"];
@@ -19,6 +22,28 @@ function isToolProtocolMessage(role, content) {
     if (role === "user")
         return /^(approve|reject)\b/i.test(text);
     return /^(Tool completed|Tool failed|computer cần xác nhận|```json\s*\{\s*"toolCall"|Không có confirmation nào đang chờ\.)/is.test(text);
+}
+function softTrimToolResult(value, maxChars) {
+    if (value.length <= maxChars)
+        return value;
+    const head = Math.floor(maxChars / 2);
+    const tail = maxChars - head;
+    return `${value.slice(0, head)}\n[...old tool result trimmed in working context...]\n${value.slice(-tail)}`;
+}
+function toolContextBlock(callJson, resultJson, maxChars) {
+    let call = callJson;
+    let result = resultJson;
+    try {
+        call = JSON.stringify(JSON.parse(callJson));
+    }
+    catch { }
+    try {
+        result = JSON.stringify(JSON.parse(resultJson));
+    }
+    catch { }
+    // Call and result are deliberately one context entry. The assembler may keep
+    // or omit the block, but can never split an orphaned tool result from its call.
+    return `[TOOL CALL]\n${call}\n[TOOL RESULT]\n${softTrimToolResult(result, maxChars)}`;
 }
 function runtimeContext(timestamp, lastFailureSummary) {
     const runtime = (0, app_1.loadAgentConfig)().runtime;
@@ -40,20 +65,6 @@ function runtimeContext(timestamp, lastFailureSummary) {
         locale,
         ...(lastFailureSummary !== undefined ? { lastFailureSummary } : {}),
     };
-}
-function pruneHistory(history) {
-    return history.map((entry, index) => {
-        if (index >= history.length - 3) {
-            return entry;
-        }
-        if (entry.content.length > 1000) {
-            return {
-                role: entry.role,
-                content: `${entry.content.slice(0, 1000)}\n\n[...Nội dung cũ dài ${entry.content.length} ký tự đã được lược bỏ để tiết kiệm token...]`,
-            };
-        }
-        return entry;
-    });
 }
 class ContextHydrator {
     registry;
@@ -102,20 +113,48 @@ class ContextHydrator {
         // Desktop state is carried by the computer controller and an approved
         // continuation, not by chat transcript. Old previews/frames or a prior
         // task must never steer a fresh request to control a different window.
-        const history = includesDesktopIntent
+        const rawHistory = includesDesktopIntent
             ? []
-            : pruneHistory((0, repositories_1.listRecentChat)(message.chatId, 20)
-                .filter((entry) => entry.trace_id !== message.traceId)
-                .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
-                .map((entry) => ({
-                role: entry.role === "assistant"
-                    ? "assistant"
-                    : entry.role === "system"
-                        ? "system"
-                        : "user",
-                content: redactHistory(entry.content),
-            }))
-                .filter((entry) => entry.content.length > 0));
+            : ([
+                ...(0, repositories_1.listActiveSessionChat)(message.chatId)
+                    .filter((entry) => entry.trace_id !== message.traceId)
+                    .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
+                    .map((entry) => ({
+                    role: entry.role === "assistant"
+                        ? "assistant"
+                        : entry.role === "system"
+                            ? "system"
+                            : "user",
+                    content: redactHistory(entry.content),
+                    createdAt: entry.created_at,
+                }))
+                    .filter((entry) => entry.content.length > 0),
+                ...(0, repositories_1.listSessionToolContextBlocks)(message.chatId)
+                    .filter((entry) => entry.trace_id !== message.traceId)
+                    .map((entry) => ({
+                    role: "system",
+                    content: toolContextBlock(entry.call_json, entry.result_json, (0, app_1.loadAgentConfig)().context?.toolResultSoftTrimChars || 4_000),
+                    createdAt: entry.created_at,
+                })),
+            ]
+                .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+                .map(({ role, content }) => ({ role, content })));
+        const history = new assembler_1.ContextAssembler({
+            recentTailTokens: (0, app_1.loadAgentConfig)().context?.recentTailTokens || 20_000,
+        }).assemble(rawHistory).history;
+        const checkpointRow = includesDesktopIntent ? null : (0, repositories_1.getContextCheckpoint)(message.chatId);
+        if (checkpointRow) {
+            try {
+                const checkpoint = JSON.parse(checkpointRow.checkpoint_json);
+                const rendered = (0, checkpoint_1.renderCheckpoint)(checkpoint);
+                if (rendered)
+                    history.unshift({ role: "system", content: `[SESSION CHECKPOINT]\n${rendered}` });
+            }
+            catch {
+                // A corrupt checkpoint must not stop a live conversation. It remains
+                // durable evidence for diagnosis and a later repair.
+            }
+        }
         const selectedSkill = likelySkill
             ? {
                 slug: likelySkill.slug,
@@ -128,6 +167,7 @@ class ContextHydrator {
             message,
             prompt: {
                 history,
+                memory: (0, memory_1.retrieveRelevantDurableMemory)(message.text, (0, app_1.loadAgentConfig)().context?.retrievedMemoryMaxTokens || 3_000),
                 runtime: runtimeContext(message.timestamp, lastFailureSummary),
                 selectedSkill,
                 toolScope,

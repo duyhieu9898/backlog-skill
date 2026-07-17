@@ -6,6 +6,7 @@ import { validateAiResponse, type AiProvider, type AiRequest, type AiResponse } 
 function userPayload(input: AiRequest): string {
   return JSON.stringify({
     runtime: input.context.runtime,
+    memory: input.context.memory,
     selectedSkill: input.context.selectedSkill,
     availableTools: input.tools,
     previousToolSteps: input.steps,

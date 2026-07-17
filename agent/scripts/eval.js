@@ -56,14 +56,18 @@ if (cases.length === 0) {
 
 // --- per-case run ----------------------------------------------------------
 
-function runCase(c) {
+function runCase(c, index) {
   const env = { ...process.env, AGENT_DB_FILE: dbFile };
   const startedAt = Date.now();
   let stdout = "";
   let exitCode = null;
   let timedOut = false;
   try {
-    stdout = execFileSync(process.execPath, [cliPath, "--json", c.prompt], {
+    // Evaluation cases intentionally receive distinct chat/session identities.
+    // The shared eval DB remains useful for one report, but must never become
+    // working history for a later case.
+    const session = `eval-${Date.now()}-${index}-${c.id}`;
+    stdout = execFileSync(process.execPath, [cliPath, "--json", "--session", session, c.prompt], {
       cwd: agentDir,
       encoding: "utf8",
       env,
@@ -123,6 +127,7 @@ function aggregate(traceId, runResult) {
   let tokens = null;
   let provider = null;
   let model = null;
+  let tokenAttribution = null;
   const denyReasons = [];
   for (const row of events) {
     const p = safeParse(row.payload_json);
@@ -135,6 +140,7 @@ function aggregate(traceId, runResult) {
     } else if (row.event === "ai.request.created") {
       provider = provider || p.provider;
       model = model || p.model;
+      tokenAttribution = tokenAttribution || p.tokenAttribution || null;
     } else if (row.event === "gateway.decision" && p.outcome === "deny") {
       denyReasons.push(`${p.reasonCode || "DENY"}: ${p.reason || ""}`.trim());
     }
@@ -164,6 +170,7 @@ function aggregate(traceId, runResult) {
     denyReasons,
     artifact,
     tokenUsage: tokens,
+    tokenAttribution,
     provider,
     model,
     reply: runResult.parsed?.reply || null,
@@ -188,8 +195,8 @@ function evaluate(c, m) {
 
 // --- run all + report ------------------------------------------------------
 
-const results = cases.map((c) => {
-  const runResult = runCase(c);
+const results = cases.map((c, index) => {
+  const runResult = runCase(c, index);
   const metrics = aggregate(runResult.traceId, runResult);
   const verdict = evaluate(c, metrics);
   return { id: c.id, prompt: c.prompt, expect: c.expect || {}, ...metrics, ...verdict };
@@ -237,6 +244,7 @@ function renderMarkdown(r) {
     `## ${c.id}`,
     `- traceId: \`${c.traceId || "(none)"}\``,
     `- exit: ${c.exitCode} | run: ${c.runStatus || "?"} | aiMs: ${c.aiMs} | toolMs: ${c.toolMs} | aiSteps: ${c.aiSteps} | tokens: ${c.tokenUsage ? JSON.stringify(c.tokenUsage) : "n/a"}`,
+    c.tokenAttribution ? `- estimated input attribution: ${JSON.stringify(c.tokenAttribution)}` : "",
     `- tool steps: ${c.toolSteps.length ? c.toolSteps.map((s) => `${s.name}(${s.ok ? "ok" : s.code || "fail"})`).join(" → ") : "(none)"}`,
     c.failedSteps.length ? `- failed steps: ${c.failedSteps.map((s) => `${s.name}:${s.code}`).join(", ")}` : ``,
     c.denyReasons.length ? `- gateway denies: ${c.denyReasons.join("; ")}` : ``,

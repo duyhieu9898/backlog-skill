@@ -18,6 +18,7 @@ export const configFile = process.env.AGENT_CONFIG_FILE
   : path.join(agentDir, "config.json");
 export const systemPromptFile = path.join(agentDir, "prompts", "system.md");
 export const memoryFile = path.join(agentDir, "prompts", "MEMORY.md");
+export const memoryDir = path.join(agentDir, "prompts", "memory");
 export const sqliteFile = process.env.AGENT_DB_FILE
   ? path.resolve(process.env.AGENT_DB_FILE)
   : path.join(dataDir, "agent.sqlite");

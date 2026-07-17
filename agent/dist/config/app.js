@@ -53,6 +53,15 @@ const defaultConfig = {
         timezone: "Asia/Ho_Chi_Minh",
         locale: "vi-VN",
     },
+    context: {
+        maxContextTokens: 128_000,
+        reserveTokens: 20_000,
+        recentTailTokens: 20_000,
+        summaryMaxTokens: 6_000,
+        retrievedMemoryMaxTokens: 3_000,
+        toolResultSoftTrimChars: 4_000,
+        keepRecentAssistantTurnsFromPruning: 3,
+    },
     logging: {
         rawAiInteractions: true,
         rawAiRetentionDays: 14,
@@ -136,6 +145,10 @@ function loadAgentConfig() {
             ...defaultConfig.runtime,
             ...config.runtime,
         },
+        context: {
+            ...defaultConfig.context,
+            ...config.context,
+        },
         logging: {
             ...defaultConfig.logging,
             ...config.logging,
@@ -172,6 +185,12 @@ function loadAgentConfig() {
     if (typeof merged.runtime.runDeadlineMs === "number" && merged.runtime.runDeadlineMs <= 0) {
         throw new Error("Invalid config: runtime.runDeadlineMs must be positive");
     }
+    if (!merged.context || merged.context.maxContextTokens <= merged.context.reserveTokens) {
+        throw new Error("Invalid config: context.maxContextTokens must exceed reserveTokens");
+    }
+    if (merged.context.recentTailTokens <= 0 || merged.context.summaryMaxTokens <= 0 || merged.context.retrievedMemoryMaxTokens < 0) {
+        throw new Error("Invalid config: context token budgets must be positive (memory may be zero)");
+    }
     // Expand ~ home directory symbol in profilesRoot
     const rawRoot = merged.browser.profilesRoot || "~/.my-agent/browser/profiles";
     const resolvedRoot = rawRoot.startsWith("~/")
@@ -205,12 +224,6 @@ function loadSystemPrompt() {
     }
     else {
         basePrompt = node_fs_1.default.readFileSync(paths_1.systemPromptFile, "utf8");
-    }
-    if (node_fs_1.default.existsSync(paths_1.memoryFile)) {
-        const memory = node_fs_1.default.readFileSync(paths_1.memoryFile, "utf8").trim();
-        if (memory) {
-            basePrompt += `\n\n# LONG-TERM MEMORY (Ký ức dài hạn)\nBên dưới là các thông tin dài hạn quan trọng về Preferences, Rules đặc thù được lưu trữ từ các phiên trò chuyện trước. Hãy luôn tuân thủ các thông tin này:\n\n${memory}`;
-        }
     }
     return basePrompt;
 }

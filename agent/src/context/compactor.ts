@@ -1,11 +1,17 @@
 import { AiRouter } from "../brain/router";
-import { getActiveSessionId, getUncompactedChatMessages, insertChatMessage, markMessagesAsCompacted } from "../storage/repositories";
+import { loadAgentConfig } from "../config/app";
+import { getActiveSessionId, getContextCheckpoint, getUncompactedChatMessages, listSessionToolContextBlocks, markMessagesAsCompacted, saveContextCheckpoint } from "../storage/repositories";
 import { generateTraceId } from "../logging/trace";
 import { log } from "../logging/logger";
+import { checkpointFromModelResponse } from "./checkpoint";
+import { flushCheckpointToDailyMemory } from "./memory";
+import { estimateTokens } from "./token-estimate";
 
 export class Compactor {
   private readonly ai = new AiRouter();
   private readonly activeCompactions = new Set<string>();
+
+  constructor(private readonly options: { recentTailTokens?: number } = {}) {}
 
   async compactIfNeeded(chatId: string): Promise<void> {
     if (this.activeCompactions.has(chatId)) {
@@ -16,8 +22,11 @@ export class Compactor {
     const sessionId = getActiveSessionId(chatId);
     const messages = getUncompactedChatMessages(chatId, sessionId);
 
-    // Chỉ compaction khi số tin nhắn vượt quá 15
-    if (messages.length <= 15) {
+    const recentTailTokens = this.options.recentTailTokens
+      ?? loadAgentConfig().context?.recentTailTokens
+      ?? 20_000;
+    const tokensBefore = estimateTokens(messages.map((message) => ({ role: message.role, content: message.content })));
+    if (tokensBefore <= recentTailTokens) {
       return;
     }
 
@@ -25,19 +34,35 @@ export class Compactor {
     const traceId = generateTraceId();
     log.info(traceId, "compaction.started", { chatId, sessionId, totalMessages: messages.length });
 
-    // Lấy 10 tin nhắn đầu tiên để tóm tắt
-    const targetMessages = messages.slice(0, 10);
-    const formattedHistory = targetMessages
+    let keptTokens = 0;
+    let firstKeptIndex = messages.length;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const entryTokens = estimateTokens({ role: messages[index].role, content: messages[index].content });
+      if (keptTokens > 0 && keptTokens + entryTokens > recentTailTokens) break;
+      keptTokens += entryTokens;
+      firstKeptIndex = index;
+    }
+    const targetMessages = messages.slice(0, firstKeptIndex);
+    if (targetMessages.length === 0) return;
+    const previousRow = getContextCheckpoint(chatId, sessionId);
+    const compactedTraceIds = new Set(targetMessages.map((message) => message.trace_id));
+    const formattedHistory = [
+      previousRow ? `[PREVIOUS CHECKPOINT]\n${previousRow.checkpoint_json}` : "",
+      targetMessages
       .map((m) => {
         const roleLabel = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
         return `${roleLabel}: ${m.content}`;
       })
-      .join("\n\n");
+      .join("\n\n"),
+      ...listSessionToolContextBlocks(chatId)
+        .filter((step) => compactedTraceIds.has(step.trace_id))
+        .map((step) => `Tool call: ${step.call_json}\nTool result: ${step.result_json}`),
+    ].filter(Boolean).join("\n\n");
 
     const systemPrompt = [
-      "Bạn là trợ lý ảo lưu trữ. Nhiệm vụ của bạn là đọc lịch sử chat dưới đây và tóm tắt nó thành một đoạn tóm tắt cực kỳ ngắn gọn (dưới 500 ký tự).",
-      "Bản tóm tắt phải làm rõ: những gì đã thảo luận, các quyết định/lệnh nào đã được đưa ra hoặc hoàn thành.",
-      "Chỉ trả về đoạn tóm tắt thô bằng tiếng Việt, không thêm lời chào, không định dạng JSON, không giải thích gì thêm.",
+      "Bạn là trợ lý lưu checkpoint hội thoại. Đọc lịch sử được đưa vào và tạo checkpoint ngắn, không suy đoán.",
+      "Chỉ trả về JSON hợp lệ, không markdown, với đúng các key: goals, constraints, completed, inProgress, blockers, decisions, nextSteps, criticalContext, importantIdentifiers.",
+      "Mọi key trừ decisions là mảng string. decisions là mảng object {decision, rationale?}. Giữ goal, quyết định, tiến độ, blocker, next step, path/error/ID quan trọng.",
     ].join("\n");
 
     try {
@@ -63,30 +88,29 @@ export class Compactor {
         throw new Error("AI returned an empty summary.");
       }
 
+      const previous = previousRow;
+      let previousCheckpoint = null;
+      try { previousCheckpoint = previous ? JSON.parse(previous.checkpoint_json) : null; } catch {}
+      const checkpoint = checkpointFromModelResponse(summary, previousCheckpoint);
+      const flushedMemoryFile = flushCheckpointToDailyMemory(checkpoint);
       const messageIds = targetMessages.map((m) => m.id);
       const compactedSessionId = `${sessionId}:compacted`;
-
-      // Tạo timestamp cũ hơn tin nhắn đầu tiên 1 giây để bản tóm tắt luôn đứng đầu lịch sử
-      const summaryCreatedAt = new Date(new Date(targetMessages[0].created_at).getTime() - 1000).toISOString();
-
-      // Lưu bản tóm tắt vào active session
-      insertChatMessage({
+      saveContextCheckpoint({
         chatId,
-        userId: "system",
-        role: "system",
-        content: `[Bản tóm tắt lịch sử cuộc trò chuyện cũ: ${summary}]`,
-        traceId,
         sessionId,
-        createdAt: summaryCreatedAt,
+        checkpoint,
+        firstKeptMessageId: messages[firstKeptIndex]?.id || null,
+        tokensBefore,
       });
-
-      // Đánh dấu các tin nhắn cũ là compacted
       markMessagesAsCompacted(messageIds, compactedSessionId);
 
       log.info(traceId, "compaction.completed", {
         chatId,
         sessionId,
         compactedCount: messageIds.length,
+        firstKeptMessageId: messages[firstKeptIndex]?.id || null,
+        tokensBefore,
+        flushedMemoryFile,
       });
     } catch (err) {
       log.error(traceId, "compaction.failed", { error: err });

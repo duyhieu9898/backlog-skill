@@ -7,6 +7,7 @@ const provider_1 = require("../provider");
 function userPayload(input, includeTools) {
     return JSON.stringify({
         runtime: input.context.runtime,
+        memory: input.context.memory,
         selectedSkill: input.context.selectedSkill,
         ...(includeTools ? { availableTools: input.tools } : {}),
         previousToolSteps: input.steps.map(({ image: _image, ...step }) => step),

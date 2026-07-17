@@ -18,12 +18,12 @@ export function sanitizeForLog(value: unknown): unknown {
 
   const clean: Record<string, unknown> = {};
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (/token|secret|password|api[_-]?key|cookie/i.test(key)) {
-      clean[key] = "[redacted]";
-    } else if (key === "usage" || key === "usageMetadata") {
+    if (key === "usage" || key === "usageMetadata" || key === "tokenAttribution" || key === "tokensBefore") {
       // Token counts are usage metrics, not secrets; keep them so eval/audit
       // can account for cost even though child keys contain "token".
       clean[key] = raw;
+    } else if (/token|secret|password|api[_-]?key|cookie/i.test(key)) {
+      clean[key] = "[redacted]";
     } else if (raw instanceof Error) {
       clean[key] = { name: raw.name, message: raw.message, stack: raw.stack };
     } else {

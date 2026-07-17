@@ -19,9 +19,13 @@ exports.setRunStatus = setRunStatus;
 exports.getRun = getRun;
 exports.appendRunStep = appendRunStep;
 exports.listRunSteps = listRunSteps;
+exports.listSessionToolContextBlocks = listSessionToolContextBlocks;
 exports.resetSession = resetSession;
 exports.insertChatMessage = insertChatMessage;
 exports.listRecentChat = listRecentChat;
+exports.listActiveSessionChat = listActiveSessionChat;
+exports.getContextCheckpoint = getContextCheckpoint;
+exports.saveContextCheckpoint = saveContextCheckpoint;
 exports.insertCommandRun = insertCommandRun;
 exports.finishCommandRun = finishCommandRun;
 exports.getLastCommandRun = getLastCommandRun;
@@ -153,6 +157,22 @@ function appendRunStep(input) {
 function listRunSteps(runId) {
     return (0, db_1.getDb)().prepare(`SELECT * FROM run_steps WHERE run_id = ? ORDER BY ordinal ASC`).all(runId);
 }
+function listSessionToolContextBlocks(chatId) {
+    const sessionId = getActiveSessionId(chatId);
+    const sessionClause = sessionId === "default"
+        ? "(cm.session_id = 'default' OR cm.session_id IS NULL)"
+        : "cm.session_id = ?";
+    const sql = `SELECT rs.run_id AS trace_id, rs.created_at, rs.call_json, rs.result_json
+    FROM run_steps rs
+    WHERE EXISTS (
+      SELECT 1 FROM chat_messages cm
+      WHERE cm.chat_id = ? AND ${sessionClause} AND cm.trace_id = rs.run_id
+    )
+    ORDER BY rs.created_at ASC, rs.id ASC`;
+    return (sessionId === "default"
+        ? (0, db_1.getDb)().prepare(sql).all(chatId)
+        : (0, db_1.getDb)().prepare(sql).all(chatId, sessionId));
+}
 function resetSession(chatId) {
     const key = `active_session:${chatId}`;
     const sessionId = (0, node_crypto_1.randomUUID)();
@@ -184,6 +204,38 @@ function listRecentChat(chatId, limit = 20) {
     const stmt = (0, db_1.getDb)().prepare(sql);
     const rows = isDefault ? stmt.all(chatId, limit) : stmt.all(chatId, sessionId, limit);
     return rows.reverse();
+}
+function listActiveSessionChat(chatId) {
+    const sessionId = getActiveSessionId(chatId);
+    const isDefault = sessionId === "default";
+    const sql = isDefault
+        ? `SELECT chat_id, user_id, role, content, trace_id, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND (session_id = 'default' OR session_id IS NULL)
+       ORDER BY created_at ASC, id ASC`
+        : `SELECT chat_id, user_id, role, content, trace_id, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND session_id = ?
+       ORDER BY created_at ASC, id ASC`;
+    return (isDefault ? (0, db_1.getDb)().prepare(sql).all(chatId) : (0, db_1.getDb)().prepare(sql).all(chatId, sessionId));
+}
+function getContextCheckpoint(chatId, sessionId = getActiveSessionId(chatId)) {
+    return (0, db_1.getDb)().prepare(`SELECT * FROM context_checkpoints WHERE chat_id = ? AND session_id = ?`).get(chatId, sessionId) || null;
+}
+function saveContextCheckpoint(input) {
+    const existing = getContextCheckpoint(input.chatId, input.sessionId);
+    const now = nowIso();
+    const compactionCount = (existing?.compaction_count || 0) + 1;
+    (0, db_1.getDb)().prepare(`INSERT INTO context_checkpoints
+       (chat_id, session_id, checkpoint_json, first_kept_message_id, tokens_before, compaction_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(chat_id, session_id) DO UPDATE SET
+       checkpoint_json = excluded.checkpoint_json,
+       first_kept_message_id = excluded.first_kept_message_id,
+       tokens_before = excluded.tokens_before,
+       compaction_count = excluded.compaction_count,
+       updated_at = excluded.updated_at`).run(input.chatId, input.sessionId, JSON.stringify(input.checkpoint), input.firstKeptMessageId, input.tokensBefore, compactionCount, existing?.created_at || now, now);
+    return getContextCheckpoint(input.chatId, input.sessionId);
 }
 function insertCommandRun(input) {
     (0, db_1.getDb)()
@@ -411,7 +463,7 @@ function listScheduledRuns(jobName, limit = 5) {
 }
 function getUncompactedChatMessages(chatId, sessionId) {
     return (0, db_1.getDb)()
-        .prepare(`SELECT id, role, content, created_at
+        .prepare(`SELECT id, role, content, trace_id, created_at
        FROM chat_messages
        WHERE chat_id = ? AND session_id = ?
        ORDER BY created_at ASC, id ASC`)

@@ -28,15 +28,26 @@ function readStdin() {
 async function runCli(args = process.argv.slice(2)) {
     (0, env_1.loadEnv)(node_path_1.default.join(paths_1.agentDir, ".env"));
     const json = args.includes("--json");
-    const text = (0, cli_1.inputFromArgs)(args.filter((arg) => arg !== "--json")) || (process.stdin.isTTY ? "" : await readStdin());
+    const sessionFlag = args.indexOf("--session");
+    const session = sessionFlag >= 0 ? args[sessionFlag + 1] : undefined;
+    if (sessionFlag >= 0 && (!session || session.startsWith("--"))) {
+        process.stderr.write("Agent lỗi: --session requires a non-empty value.\n");
+        return 2;
+    }
+    const messageArgs = args.filter((arg, index) => {
+        if (arg === "--json")
+            return false;
+        return sessionFlag < 0 || (index !== sessionFlag && index !== sessionFlag + 1);
+    });
+    const text = (0, cli_1.inputFromArgs)(messageArgs) || (process.stdin.isTTY ? "" : await readStdin());
     if (!text) {
-        process.stderr.write('Usage: npm run cli -- "<message>"\n');
+        process.stderr.write('Usage: npm run cli -- [--session <id>] "<message>"\n');
         return 2;
     }
     let exitCode = 0;
     try {
         const router = new router_1.Router(new registry_1.SkillRegistry());
-        const message = (0, cli_1.toCliMessage)(text);
+        const message = (0, cli_1.toCliMessage)(text, { session });
         let artifactId;
         const reply = await router.route(message, undefined, (id) => { artifactId = id; });
         const artifact = artifactId ? (0, repositories_1.getArtifact)(artifactId) : null;

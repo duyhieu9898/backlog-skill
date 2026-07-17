@@ -10,6 +10,7 @@ const provider_1 = require("../provider");
 function userPayload(input) {
     return JSON.stringify({
         runtime: input.context.runtime,
+        memory: input.context.memory,
         selectedSkill: input.context.selectedSkill,
         availableTools: input.tools,
         previousToolSteps: input.steps,

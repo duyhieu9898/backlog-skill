@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { loadAgentConfig, loadSystemPrompt } from "../config/app";
 import { appendRawAiInteraction } from "../logging/aiInteractions";
 import { log } from "../logging/logger";
+import { estimateAiRequestTokens } from "../context/token-estimate";
 import type { AiPromptContext, AiProvider, AiResponse, AiToolDefinition, AiToolStep } from "./provider";
 import { GeminiProvider } from "./providers/gemini";
 import { OpenAiProvider } from "./providers/openai";
@@ -73,18 +74,28 @@ export class AiRouter {
     const started = Date.now();
     const activePrompt = this.customSystemPrompt !== undefined ? this.customSystemPrompt : loadSystemPrompt();
     const activeHash = crypto.createHash("sha256").update(activePrompt).digest("hex");
+    const effectiveContext = this.fitContextToBudget(activePrompt, context, userMessage, tools, steps);
 
+    const requestTokenEstimate = estimateAiRequestTokens({
+      traceId,
+      system: activePrompt,
+      context: effectiveContext,
+      userMessage,
+      tools,
+      steps,
+    });
     log.info(traceId, "ai.request.created", {
       provider: this.providerName,
       model: this.model,
       cacheablePrefixHash: activeHash,
+      tokenAttribution: requestTokenEstimate,
     });
     for (let attempt = 0; attempt <= PROVIDER_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
         const response = await this.provider.complete({
           traceId,
           system: activePrompt,
-          context,
+          context: effectiveContext,
           userMessage,
           tools,
           steps,
@@ -119,5 +130,28 @@ export class AiRouter {
     }
 
     throw new Error("AI provider retry loop ended unexpectedly.");
+  }
+
+  private fitContextToBudget(
+    system: string,
+    context: AiPromptContext,
+    userMessage: string,
+    tools: AiToolDefinition[],
+    steps: AiToolStep[],
+  ): AiPromptContext {
+    const policy = loadAgentConfig().context;
+    const limit = (policy?.maxContextTokens || 128_000) - (policy?.reserveTokens || 20_000);
+    const history = Array.isArray(context.history) ? [...context.history] : [];
+    const memory = Array.isArray(context.memory) ? [...context.memory] : [];
+    const estimate = () => estimateAiRequestTokens({ traceId: "budget", system, context: { ...context, history, memory }, userMessage, tools, steps }).totalEstimated;
+    while (estimate() > limit && history.length > 0) {
+      // A checkpoint is durable state, so retain it and remove the oldest raw
+      // block instead. Tool call/result pairs are represented as one block.
+      const removable = history.findIndex((entry) => !entry.content.startsWith("[SESSION CHECKPOINT]"));
+      if (removable < 0) break;
+      history.splice(removable, 1);
+    }
+    while (estimate() > limit && memory.length > 0) memory.pop();
+    return { ...context, history, memory };
   }
 }

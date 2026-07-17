@@ -25,16 +25,26 @@ function readStdin(): Promise<string> {
 export async function runCli(args = process.argv.slice(2)): Promise<number> {
   loadEnv(path.join(agentDir, ".env"));
   const json = args.includes("--json");
-  const text = inputFromArgs(args.filter((arg) => arg !== "--json")) || (process.stdin.isTTY ? "" : await readStdin());
+  const sessionFlag = args.indexOf("--session");
+  const session = sessionFlag >= 0 ? args[sessionFlag + 1] : undefined;
+  if (sessionFlag >= 0 && (!session || session.startsWith("--"))) {
+    process.stderr.write("Agent lỗi: --session requires a non-empty value.\n");
+    return 2;
+  }
+  const messageArgs = args.filter((arg, index) => {
+    if (arg === "--json") return false;
+    return sessionFlag < 0 || (index !== sessionFlag && index !== sessionFlag + 1);
+  });
+  const text = inputFromArgs(messageArgs) || (process.stdin.isTTY ? "" : await readStdin());
   if (!text) {
-    process.stderr.write('Usage: npm run cli -- "<message>"\n');
+    process.stderr.write('Usage: npm run cli -- [--session <id>] "<message>"\n');
     return 2;
   }
 
   let exitCode = 0;
   try {
     const router = new Router(new SkillRegistry());
-    const message = toCliMessage(text);
+    const message = toCliMessage(text, { session });
     let artifactId: string | undefined;
     const reply = await router.route(message, undefined, (id) => { artifactId = id; });
     const artifact = artifactId ? getArtifact(artifactId) : null;

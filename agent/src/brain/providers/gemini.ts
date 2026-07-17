@@ -12,6 +12,7 @@ import {
 function userPayload(input: AiRequest, includeTools: boolean): string {
   return JSON.stringify({
     runtime: input.context.runtime,
+    memory: input.context.memory,
     selectedSkill: input.context.selectedSkill,
     ...(includeTools ? { availableTools: input.tools } : {}),
     previousToolSteps: input.steps.map(({ image: _image, ...step }) => step),

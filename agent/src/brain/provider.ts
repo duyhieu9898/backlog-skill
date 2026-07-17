@@ -40,6 +40,8 @@ export type AiToolScope = {
 
 export type AiPromptContext = {
   history: AiChatTurn[];
+  /** Relevant durable facts; never a wholesale replay of MEMORY.md. */
+  memory?: string[];
   runtime: AiRuntimeContext;
   selectedSkill?: {
     slug: string;

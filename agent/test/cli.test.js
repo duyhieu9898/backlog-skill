@@ -7,6 +7,7 @@ test.after(() => closeIsolatedDb());
 
 const {
   inputFromArgs,
+  cliChatId,
   LOCAL_CLI_CHAT_ID,
   LOCAL_CLI_USER_ID,
   toCliMessage,
@@ -15,6 +16,7 @@ const {
   listRecentChat,
   resetSession,
   insertChatMessage,
+  getContextCheckpoint,
   getUncompactedChatMessages,
   getPendingApproval,
 } = require("../dist/storage/repositories");
@@ -36,6 +38,13 @@ test("CLI adapter creates a stable local Router message", () => {
   assert.equal(message.text, "/status");
   assert.ok(message.traceId.startsWith("tr_"));
   assert.equal(inputFromArgs(["hello", "local", "operator"]), "hello local operator");
+});
+
+test("CLI adapter isolates an explicitly named session without changing the stable default", () => {
+  assert.equal(cliChatId(), LOCAL_CLI_CHAT_ID);
+  assert.equal(cliChatId("eval-case-a"), "local-cli:session:eval-case-a");
+  assert.equal(toCliMessage("2+2", { session: "eval-case-a" }).chatId, "local-cli:session:eval-case-a");
+  assert.throws(() => cliChatId(" "), /must not be empty/);
 });
 
 test("CLI routes argv input through Router and persists the local chat", () => {
@@ -60,6 +69,20 @@ test("CLI accepts stdin input without starting Telegram", () => {
   });
 
   assert.match(output, /bemo\.checkout/);
+});
+
+test("CLI --session keeps independent history out of the default local chat", () => {
+  const session = `isolated-${Date.now()}`;
+  const output = execFileSync(process.execPath, [cliPath, "--session", session, "/status"], {
+    cwd: agentDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.match(output, /uptime:/);
+  const isolatedMessages = listRecentChat(cliChatId(session), 2);
+  assert.equal(isolatedMessages.at(-2)?.content, "/status");
+  const defaultMessages = listRecentChat(LOCAL_CLI_CHAT_ID, 20);
+  assert.ok(!defaultMessages.some((message) => message.content === "/status" && message.created_at === isolatedMessages.at(-2)?.created_at));
 });
 
 test("CLI approves a digest-bound harmless command from a prior local invocation", () => {
@@ -97,7 +120,7 @@ test("CLI /reset command clears local chat history", () => {
 
 test("Compactor triggers compaction when session messages exceed 15", async () => {
   const { Compactor } = require("../dist/context/compactor");
-  const compactor = new Compactor();
+  const compactor = new Compactor({ recentTailTokens: 50 });
   const chatId = `compaction-test-${Date.now()}`;
   const sessionId = resetSession(chatId);
 
@@ -124,23 +147,22 @@ test("Compactor triggers compaction when session messages exceed 15", async () =
   // Trigger compaction
   await compactor.compactIfNeeded(chatId);
 
-  // The first 10 messages should be compacted (their session_id changed to sessionId:compacted)
-  // There should be 16 - 10 = 6 messages left, plus 1 system summary message = 7 messages
+  // Old entries are retained durably under the compacted session marker. The
+  // active view gets a separate structured checkpoint instead of a synthetic
+  // chat row that would be mistaken for raw conversation.
   const remaining = getUncompactedChatMessages(chatId, sessionId);
-  assert.equal(remaining.length, 7);
-
-  // The first message of the remaining list should be the system summary
-  assert.equal(remaining[0].role, "system");
-  assert.match(remaining[0].content, /Bản tóm tắt lịch sử cuộc trò chuyện cũ:/);
-
-  // The rest of the messages should be the last 6 messages
-  assert.equal(remaining[1].content, "User message 6");
-  assert.equal(remaining[6].content, "Assistant reply 8");
+  assert.ok(remaining.length > 0 && remaining.length < 16);
+  assert.ok(remaining.every((message) => message.role !== "system"));
+  const checkpoint = getContextCheckpoint(chatId, sessionId);
+  assert.ok(checkpoint);
+  assert.equal(checkpoint.compaction_count, 1);
+  assert.ok(checkpoint.first_kept_message_id);
+  assert.ok(checkpoint.tokens_before > 50);
 });
 
 test("Compactor prevents concurrent compaction calls for the same chatId", async () => {
   const { Compactor } = require("../dist/context/compactor");
-  const compactor = new Compactor();
+  const compactor = new Compactor({ recentTailTokens: 50 });
   const chatId = `compaction-lock-test-${Date.now()}`;
   const sessionId = resetSession(chatId);
 
@@ -155,10 +177,6 @@ test("Compactor prevents concurrent compaction calls for the same chatId", async
   const p2 = compactor.compactIfNeeded(chatId);
   await Promise.all([p1, p2]);
 
-  // If both compactions ran, we would have two system summary messages.
-  // Since lock is working, only one compaction runs, so we should have exactly 1 system summary message.
-  const remaining = getUncompactedChatMessages(chatId, sessionId);
-  const summaries = remaining.filter((m) => m.role === "system");
-  assert.equal(summaries.length, 1);
+  // If both compactions ran, the persisted checkpoint revision would be 2.
+  assert.equal(getContextCheckpoint(chatId, sessionId)?.compaction_count, 1);
 });
-

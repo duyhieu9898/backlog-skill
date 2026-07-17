@@ -87,6 +87,17 @@ export type RunRow = {
   completed_at: string | null;
 };
 
+export type ContextCheckpointRow = {
+  chat_id: string;
+  session_id: string;
+  checkpoint_json: string;
+  first_kept_message_id: number | null;
+  tokens_before: number;
+  compaction_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ApprovalGrantRow = {
   id: string;
   principal_id: string;
@@ -267,6 +278,23 @@ export function listRunSteps(runId: string): RunStepRow[] {
   return getDb().prepare(`SELECT * FROM run_steps WHERE run_id = ? ORDER BY ordinal ASC`).all(runId) as RunStepRow[];
 }
 
+export function listSessionToolContextBlocks(chatId: string): Array<{ trace_id: string; created_at: string; call_json: string; result_json: string }> {
+  const sessionId = getActiveSessionId(chatId);
+  const sessionClause = sessionId === "default"
+    ? "(cm.session_id = 'default' OR cm.session_id IS NULL)"
+    : "cm.session_id = ?";
+  const sql = `SELECT rs.run_id AS trace_id, rs.created_at, rs.call_json, rs.result_json
+    FROM run_steps rs
+    WHERE EXISTS (
+      SELECT 1 FROM chat_messages cm
+      WHERE cm.chat_id = ? AND ${sessionClause} AND cm.trace_id = rs.run_id
+    )
+    ORDER BY rs.created_at ASC, rs.id ASC`;
+  return (sessionId === "default"
+    ? getDb().prepare(sql).all(chatId)
+    : getDb().prepare(sql).all(chatId, sessionId)) as Array<{ trace_id: string; created_at: string; call_json: string; result_json: string }>;
+}
+
 export function resetSession(chatId: string): string {
   const key = `active_session:${chatId}`;
   const sessionId = randomUUID();
@@ -326,6 +354,60 @@ export function listRecentChat(chatId: string, limit = 20): Array<{
     trace_id: string;
     created_at: string;
   }>;
+}
+
+export function listActiveSessionChat(chatId: string): Array<{
+  chat_id: string;
+  user_id: string;
+  role: string;
+  content: string;
+  trace_id: string;
+  created_at: string;
+}> {
+  const sessionId = getActiveSessionId(chatId);
+  const isDefault = sessionId === "default";
+  const sql = isDefault
+    ? `SELECT chat_id, user_id, role, content, trace_id, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND (session_id = 'default' OR session_id IS NULL)
+       ORDER BY created_at ASC, id ASC`
+    : `SELECT chat_id, user_id, role, content, trace_id, created_at
+       FROM chat_messages
+       WHERE chat_id = ? AND session_id = ?
+       ORDER BY created_at ASC, id ASC`;
+  return (isDefault ? getDb().prepare(sql).all(chatId) : getDb().prepare(sql).all(chatId, sessionId)) as Array<{
+    chat_id: string; user_id: string; role: string; content: string; trace_id: string; created_at: string;
+  }>;
+}
+
+export function getContextCheckpoint(chatId: string, sessionId = getActiveSessionId(chatId)): ContextCheckpointRow | null {
+  return (getDb().prepare(
+    `SELECT * FROM context_checkpoints WHERE chat_id = ? AND session_id = ?`,
+  ).get(chatId, sessionId) as ContextCheckpointRow | undefined) || null;
+}
+
+export function saveContextCheckpoint(input: {
+  chatId: string;
+  sessionId: string;
+  checkpoint: unknown;
+  firstKeptMessageId: number | null;
+  tokensBefore: number;
+}): ContextCheckpointRow {
+  const existing = getContextCheckpoint(input.chatId, input.sessionId);
+  const now = nowIso();
+  const compactionCount = (existing?.compaction_count || 0) + 1;
+  getDb().prepare(
+    `INSERT INTO context_checkpoints
+       (chat_id, session_id, checkpoint_json, first_kept_message_id, tokens_before, compaction_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(chat_id, session_id) DO UPDATE SET
+       checkpoint_json = excluded.checkpoint_json,
+       first_kept_message_id = excluded.first_kept_message_id,
+       tokens_before = excluded.tokens_before,
+       compaction_count = excluded.compaction_count,
+       updated_at = excluded.updated_at`,
+  ).run(input.chatId, input.sessionId, JSON.stringify(input.checkpoint), input.firstKeptMessageId, input.tokensBefore, compactionCount, existing?.created_at || now, now);
+  return getContextCheckpoint(input.chatId, input.sessionId)!;
 }
 
 export function insertCommandRun(input: {
@@ -758,16 +840,17 @@ export function getUncompactedChatMessages(chatId: string, sessionId: string): A
   id: number;
   role: string;
   content: string;
+  trace_id: string;
   created_at: string;
 }> {
   return getDb()
     .prepare(
-      `SELECT id, role, content, created_at
+      `SELECT id, role, content, trace_id, created_at
        FROM chat_messages
        WHERE chat_id = ? AND session_id = ?
        ORDER BY created_at ASC, id ASC`,
     )
-    .all(chatId, sessionId) as Array<{ id: number; role: string; content: string; created_at: string }>;
+    .all(chatId, sessionId) as Array<{ id: number; role: string; content: string; trace_id: string; created_at: string }>;
 }
 
 export function markMessagesAsCompacted(messageIds: number[], compactedSessionId: string): void {

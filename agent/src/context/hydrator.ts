@@ -1,6 +1,9 @@
 import { loadCommandCatalog, type AgentCommand } from "../commands";
 import { loadAgentConfig } from "../config/app";
-import { listRecentChat, listRecentCommandRuns, listTraceEvents, getLastFailedCommandRun, getLastFailedToolEvent } from "../storage/repositories";
+import { getContextCheckpoint, listActiveSessionChat, listRecentCommandRuns, listSessionToolContextBlocks, listTraceEvents, getLastFailedCommandRun, getLastFailedToolEvent } from "../storage/repositories";
+import { ContextAssembler } from "./assembler";
+import { renderCheckpoint, type ContextCheckpoint } from "./checkpoint";
+import { retrieveRelevantDurableMemory } from "./memory";
 import type { SkillMetadata, SkillRegistry } from "../skills/registry";
 import type { AiPromptContext, AiToolScope } from "../brain/provider";
 import type { StandardMessage } from "../types/messages";
@@ -31,6 +34,23 @@ function isToolProtocolMessage(role: string, content: string): boolean {
   return /^(Tool completed|Tool failed|computer cần xác nhận|```json\s*\{\s*"toolCall"|Không có confirmation nào đang chờ\.)/is.test(text);
 }
 
+function softTrimToolResult(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const head = Math.floor(maxChars / 2);
+  const tail = maxChars - head;
+  return `${value.slice(0, head)}\n[...old tool result trimmed in working context...]\n${value.slice(-tail)}`;
+}
+
+function toolContextBlock(callJson: string, resultJson: string, maxChars: number): string {
+  let call = callJson;
+  let result = resultJson;
+  try { call = JSON.stringify(JSON.parse(callJson)); } catch {}
+  try { result = JSON.stringify(JSON.parse(resultJson)); } catch {}
+  // Call and result are deliberately one context entry. The assembler may keep
+  // or omit the block, but can never split an orphaned tool result from its call.
+  return `[TOOL CALL]\n${call}\n[TOOL RESULT]\n${softTrimToolResult(result, maxChars)}`;
+}
+
 function runtimeContext(timestamp: Date, lastFailureSummary?: string): AiPromptContext["runtime"] {
   const runtime = loadAgentConfig().runtime;
   const timezone = runtime?.timezone || "Asia/Ho_Chi_Minh";
@@ -51,23 +71,6 @@ function runtimeContext(timestamp: Date, lastFailureSummary?: string): AiPromptC
     locale,
     ...(lastFailureSummary !== undefined ? { lastFailureSummary } : {}),
   };
-}
-
-function pruneHistory(
-  history: Array<{ role: "assistant" | "user" | "system"; content: string }>
-): Array<{ role: "assistant" | "user" | "system"; content: string }> {
-  return history.map((entry, index) => {
-    if (index >= history.length - 3) {
-      return entry;
-    }
-    if (entry.content.length > 1000) {
-      return {
-        role: entry.role,
-        content: `${entry.content.slice(0, 1000)}\n\n[...Nội dung cũ dài ${entry.content.length} ký tự đã được lược bỏ để tiết kiệm token...]`,
-      };
-    }
-    return entry;
-  });
 }
 
 export class ContextHydrator {
@@ -116,10 +119,11 @@ export class ContextHydrator {
     // Desktop state is carried by the computer controller and an approved
     // continuation, not by chat transcript. Old previews/frames or a prior
     // task must never steer a fresh request to control a different window.
-    const history = includesDesktopIntent
+    const rawHistory = includesDesktopIntent
       ? []
-      : pruneHistory(
-          listRecentChat(message.chatId, 20)
+      : (
+          [
+            ...listActiveSessionChat(message.chatId)
             .filter((entry) => entry.trace_id !== message.traceId)
             .filter((entry) => !isToolProtocolMessage(entry.role, entry.content))
             .map((entry) => ({
@@ -129,9 +133,34 @@ export class ContextHydrator {
                   ? "system" as const
                   : "user" as const,
               content: redactHistory(entry.content),
+              createdAt: entry.created_at,
             }))
-            .filter((entry) => entry.content.length > 0)
+            .filter((entry) => entry.content.length > 0),
+            ...listSessionToolContextBlocks(message.chatId)
+              .filter((entry) => entry.trace_id !== message.traceId)
+              .map((entry) => ({
+                role: "system" as const,
+                content: toolContextBlock(entry.call_json, entry.result_json, loadAgentConfig().context?.toolResultSoftTrimChars || 4_000),
+                createdAt: entry.created_at,
+              })),
+          ]
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+            .map(({ role, content }) => ({ role, content }))
         );
+    const history = new ContextAssembler({
+      recentTailTokens: loadAgentConfig().context?.recentTailTokens || 20_000,
+    }).assemble(rawHistory).history;
+    const checkpointRow = includesDesktopIntent ? null : getContextCheckpoint(message.chatId);
+    if (checkpointRow) {
+      try {
+        const checkpoint = JSON.parse(checkpointRow.checkpoint_json) as ContextCheckpoint;
+        const rendered = renderCheckpoint(checkpoint);
+        if (rendered) history.unshift({ role: "system", content: `[SESSION CHECKPOINT]\n${rendered}` });
+      } catch {
+        // A corrupt checkpoint must not stop a live conversation. It remains
+        // durable evidence for diagnosis and a later repair.
+      }
+    }
     const selectedSkill = likelySkill
       ? {
           slug: likelySkill.slug,
@@ -145,6 +174,7 @@ export class ContextHydrator {
       message,
       prompt: {
         history,
+        memory: retrieveRelevantDurableMemory(message.text, loadAgentConfig().context?.retrievedMemoryMaxTokens || 3_000),
         runtime: runtimeContext(message.timestamp, lastFailureSummary),
         selectedSkill,
         toolScope,

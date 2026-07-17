@@ -19,11 +19,13 @@ test("sanitizeForLog preserves token-usage metrics but still redacts secrets", (
   const result = sanitizeForLog({
     usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 },
     usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 30, totalTokenCount: 150 },
+    tokenAttribution: { system: 10, history: 4, totalEstimated: 14 },
     api_key: "sk_live_abc",
     token: "session-xyz",
   });
   assert.deepEqual(result.usage, { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 });
   assert.deepEqual(result.usageMetadata, { promptTokenCount: 120, candidatesTokenCount: 30, totalTokenCount: 150 });
+  assert.deepEqual(result.tokenAttribution, { system: 10, history: 4, totalEstimated: 14 });
   assert.equal(result.api_key, "[redacted]");
   assert.equal(result.token, "[redacted]");
 });
