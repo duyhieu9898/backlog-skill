@@ -151,6 +151,24 @@ logging (redacted, config-gated); and run/session/schedule SQLite bookkeeping.
 A regression test (`test/gateway-boundary.test.js`) locks the boundary against
 future drift.
 
+P2.5 reframed the browser network policy from an inherited sandbox boundary
+into guardrails. `browser/url-policy.ts` is now a pure non-configurable
+guardrail: it denies only protocol escapes (`file`, `javascript`, `data`,
+`chrome`, `devtools`) and SSRF/non-routable destinations — cloud metadata and
+IPv4 link-local (`169.254.0.0/16`, including `169.254.169.254`), the unspecified
+baseline (`0.0.0.0/8`), multicast, and reserved ranges, via the new
+`isSsrfGuardedIp`. Private LAN, loopback, localhost, and intranet hostnames
+pass through. The configurable navigation posture lives in
+`security/permissionPolicy.ts evaluateBrowser`, which consults the guardrail,
+honours an explicit `allowedHosts` entry as an owner trust declaration that
+bypasses posture, and otherwise applies `permissions.browser.privateNavigation`
+(private/localhost, default `"allow"`) or `publicNavigation` (public, default
+`"allow"`) — `"allow"` / `"confirm"` / `"deny"`. The `privateNavigation` knob
+existed before but was ignored; it is now live, so an owner may tighten private
+access to `confirm` or `deny` without re-introducing the blanket block. The
+owner's agent can now reach its own router, dev servers, and intranet by
+default, while metadata exfiltration and protocol escapes stay blocked.
+
 ## Progress
 
 - **P1.1 — ToolRegistry** (commit `a24a98b`): added `src/tools/registry.ts` and
@@ -228,6 +246,24 @@ future drift.
   Lease-prevents-duplicate claim, config removal, runtime create/delete
   semantics, and `ScheduledCheckRunner` lifecycle were already covered by
   `test/scheduler.test.js` and `test/scheduler-runner.test.js`.
+- **P2.5 — Browser URL/private-host restrictions as guardrails** (commit `2b31ce4`):
+  split the single hard-deny network policy into a non-configurable guardrail
+  and a configurable posture. `browser/url-policy.ts` now denies only protocol
+  escapes and SSRF/non-routable destinations (new `isSsrfGuardedIp`: cloud
+  metadata / IPv4 link-local `169.254.0.0/16`, `0.0.0.0/8`, multicast, reserved);
+  private LAN, loopback, localhost, and intranet hostnames pass through.
+  `security/permissionPolicy.ts evaluateBrowser` consults the guardrail, honours
+  an explicit `allowedHosts` entry as an owner trust declaration that bypasses
+  posture, and otherwise applies `privateNavigation`/`publicNavigation`
+  (`"allow"`/`"confirm"`/`"deny"`). The `privateNavigation` config knob —
+  previously declared but never read — is now live, and its default flipped from
+  `"deny"` to `"allow"`, so the owner's agent reaches its own private network by
+  default while metadata exfiltration and protocol escapes stay blocked.
+  Reconciled `US-023` acceptance criteria and E03 README accordingly. Covered by
+  `test/url-policy.test.js` (guardrail set, private-LAN default-allow, protocol
+  deny, DNS catches `metadata.google.internal`) and `test/browser-safety.test.js`
+  (default-allow localhost, guardrail denies `169.254.169.254`, `privateNavigation:"deny"`
+  tightens).
 
 ## Follow-Up
 
@@ -273,8 +309,13 @@ future drift.
    destructive command that exceeds the schedule's pre-approved scope. Covered by
    `test/scheduler-reliability.test.js` plus existing `test/scheduler.test.js`
    and `test/scheduler-runner.test.js`.
-5. Re-evaluate browser/CDP URL/private-host restrictions as guardrails rather
-   than inherited sandbox boundaries, then align E03 acceptance criteria.
+5. ✅ Done (commit `2b31ce4`) — see Progress. Re-evaluate browser/CDP URL/private-host
+   restrictions as guardrails rather than inherited sandbox boundaries, then
+   align E03 acceptance criteria. `url-policy.ts` is a pure guardrail (protocol
+   escapes + SSRF/non-routable via `isSsrfGuardedIp`); private/localhost is now
+   governed by the live `privateNavigation` posture (default `allow`) in
+   `permissionPolicy.evaluateBrowser`. `allowedHosts` remains as an explicit
+   trust-declaration bypass. US-023 and E03 README reconciled.
 6. Rename remaining active source/test terminology from “allowlist” to command
    shortcut where appropriate; keep legacy names only where compatibility or
    historical evidence requires them.

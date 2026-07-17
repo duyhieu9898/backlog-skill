@@ -4,6 +4,13 @@
 > in ADR 0017. Routine navigation and UI steps are default-allow; approval is
 > scoped to significant new external effects or sensitive/high-impact actions,
 > not individual clicks.
+>
+> Migration notice (2026-07-17, P2.5): Network restrictions are **guardrails**,
+> not an inherited sandbox boundary. Private/localhost navigation is governed by
+> owner posture (`permissions.browser.privateNavigation`, default `allow`) so the
+> owner's agent can reach the router, dev servers, and intranet. Only protocol
+> escapes and SSRF/non-routable destinations (cloud metadata `169.254.169.254`,
+> link-local, unspecified, multicast/reserved) remain hard-denied. See US-023.
 
 ## Goal
 
