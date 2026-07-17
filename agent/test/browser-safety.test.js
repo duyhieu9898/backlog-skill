@@ -48,7 +48,7 @@ test("Browser Safety and Network Policy integration", async (t) => {
     const testUrl = `http://127.0.0.1:${port}`;
 
     // Wait! By default, http://127.0.0.1 is blocked because it is a loopback IP!
-    // So we must allowlist "127.0.0.1:<port>" in permissions.browser.allowedHosts!
+    // So we must add "127.0.0.1:<port>" to permissions.browser.allowedHosts!
     // How do we inject permissions config into loadAgentConfig?
     // We can mock loadAgentConfig or temporarily patch agent/config.json!
     // Or we can just test PermissionPolicy directly!

@@ -205,7 +205,7 @@ class PermissionPolicy {
                     return {
                         outcome: "allow",
                         reasonCode: "ALLOWED",
-                        reason: "Host is explicitly allowed by the owner allowlist.",
+                        reason: "Host is explicitly trusted by the owner (allowedHosts).",
                         action,
                     };
                 }

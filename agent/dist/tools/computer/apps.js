@@ -21,7 +21,7 @@ class DesktopRegistry {
     }
     /**
      * Resolves only a configured app. Model input never becomes a launcher argv:
-     * the returned appId always came from the local allowlist.
+     * the returned appId always came from the app registry.
      */
     resolve(query) {
         const normalized = query.trim().toLocaleLowerCase();

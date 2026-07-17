@@ -69,7 +69,7 @@ export class ComputerController {
     return this.frames.issue(chatId, displayId);
   }
 
-  /** A target exists only after an allowlisted app has been launched and focused. */
+  /** A target exists only after a configured app has been launched and focused. */
   bindTarget(chatId: string, displayId: string): void {
     this.targets.set(chatId, { displayId });
   }

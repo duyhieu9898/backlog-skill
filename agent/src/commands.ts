@@ -118,29 +118,29 @@ function normalizeCommand(action: AgentCommand): AgentCommand {
     throw new Error(`Command ${action.name} has an invalid shell command.`);
   }
   if (action.inputMode && action.inputMode !== "json-stdin") {
-    throw new Error(`Allowlisted command ${action.name} has an unsupported input mode.`);
+    throw new Error(`Command shortcut ${action.name} has an unsupported input mode.`);
   }
   if (action.inputMode && !action.inputSchema) {
-    throw new Error(`Allowlisted command ${action.name} input mode requires an input schema.`);
+    throw new Error(`Command shortcut ${action.name} input mode requires an input schema.`);
   }
   if (action.invocationInput !== undefined) {
     if (!action.inputSchema || action.inputMode !== "json-stdin") {
-      throw new Error(`Allowlisted command ${action.name} does not accept structured input.`);
+      throw new Error(`Command shortcut ${action.name} does not accept structured input.`);
     }
     const errors = validateJsonSchema(action.inputSchema, action.invocationInput);
     if (errors.length) throw new Error(`Invalid input for ${action.name}: ${errors.join(" ")}`);
   }
   const cwd = resolveCwd(action.cwd);
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
-    throw new Error(`Allowlisted command ${action.name} has a stale cwd: ${cwd}`);
+    throw new Error(`Command shortcut ${action.name} has a stale cwd: ${cwd}`);
   }
   if (action.skillSlug) {
     const skillRoot = path.resolve(agentDir, "..", "skills", action.skillSlug);
     if (!fs.existsSync(path.join(skillRoot, "SKILL.md"))) {
-      throw new Error(`Allowlisted command ${action.name} references missing skill: ${action.skillSlug}`);
+      throw new Error(`Command shortcut ${action.name} references missing skill: ${action.skillSlug}`);
     }
     if (cwd !== fs.realpathSync(skillRoot)) {
-      throw new Error(`Allowlisted command ${action.name} cwd does not match skill ${action.skillSlug}.`);
+      throw new Error(`Command shortcut ${action.name} cwd does not match skill ${action.skillSlug}.`);
     }
   }
   return {
@@ -223,7 +223,7 @@ export function getRunningTraceId(): string | null {
   return runningCommand?.traceId || null;
 }
 
-/** Request a graceful stop for the one globally tracked allowlisted command. */
+/** Request a graceful stop for the one globally tracked catalog command. */
 export function stopRunningCommand(): { stopped: boolean; traceId?: string } {
   const running = runningCommand;
   if (!running) return { stopped: false };

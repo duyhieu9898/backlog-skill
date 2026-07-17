@@ -48,7 +48,7 @@ export type FocusedWindow = { windowId: string; title: string };
 export interface DesktopActionAdapter extends DesktopAdapter {
   capture(displayId?: string): CapturedScreen;
   launch(appId: string): LaunchedApp;
-  /** Focus an already allowlisted app window; undefined means it is not ready. */
+  /** Focus an already configured app window; undefined means it is not ready. */
   focusWindow(title: string): FocusedWindow | undefined;
 }
 

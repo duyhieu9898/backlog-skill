@@ -357,7 +357,7 @@ class ToolExecutor {
             const commandName = call.name.slice("command.".length);
             const base = this.catalogLoader().allow.find((command) => command.name === commandName);
             if (!base)
-                throw new Error(`Unknown allowlisted command: ${commandName}`);
+                throw new Error(`Unknown command shortcut: ${commandName}`);
             const command = base.inputSchema ? (0, commands_1.withCommandInput)(base, call.arguments) : base;
             const preview = (0, commands_1.previewCommand)(command);
             const commandDigest = (0, commands_1.commandPreviewDigest)(preview);

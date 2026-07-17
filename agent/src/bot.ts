@@ -39,7 +39,7 @@ let globalScheduledRunner: ScheduledCheckRunner | null = null;
 
 async function poll(): Promise<void> {
   let offset = readOffset();
-  console.log("Agent started with an allowlisted Telegram chat.");
+  console.log("Agent started with a trusted Telegram chat.");
 
   try {
     await telegram.deleteWebhook();

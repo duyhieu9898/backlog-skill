@@ -28,7 +28,7 @@ const {
 const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 const { ApprovalService } = require("../dist/security/approvalService");
 
-test("loadCommands maps command names and aliases from allowlist", () => {
+test("loadCommands maps command names and aliases from the command catalog", () => {
   const commands = loadCommands();
 
   assert.deepEqual(commands["bemo.checkout"].argv, ["npm", "run", "-s", "checkout"]);

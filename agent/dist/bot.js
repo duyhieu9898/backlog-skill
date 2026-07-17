@@ -38,7 +38,7 @@ async function initializeOffset() {
 let globalScheduledRunner = null;
 async function poll() {
     let offset = (0, state_1.readOffset)();
-    console.log("Agent started with an allowlisted Telegram chat.");
+    console.log("Agent started with a trusted Telegram chat.");
     try {
         await telegram.deleteWebhook();
         console.log("Deleted active webhook (if any) to enable polling.");

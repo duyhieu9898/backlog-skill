@@ -86,13 +86,13 @@ test("evaluateUrl - private LAN, loopback, and localhost are allowed by default 
   assert.equal((await evaluateUrl({ url: "http://dev-server.local", allowedHosts: [] })).decision, "allow");
 });
 
-test("evaluateUrl - allowlist matches", async () => {
+test("evaluateUrl - allowedHosts match", async () => {
   // exact allowed hosts
   assert.equal((await evaluateUrl({ url: "http://localhost:3000", allowedHosts: ["localhost:3000"] })).decision, "allow");
   assert.equal((await evaluateUrl({ url: "http://127.0.0.1:5173/dashboard", allowedHosts: ["127.0.0.1:5173"] })).decision, "allow");
   assert.equal((await evaluateUrl({ url: "http://dev-server.local", allowedHosts: ["dev-server.local"] })).decision, "allow");
 
-  // A private host with a non-allowlisted port is still allowed: under the
+  // A private host with a non-listed port is still allowed: under the
   // trusted-local model private destinations default-allow regardless of port.
   const wrongPortRes = await evaluateUrl({ url: "http://localhost:3001", allowedHosts: ["localhost:3000"] });
   assert.equal(wrongPortRes.decision, "allow");

@@ -75,14 +75,14 @@ function normalizeCommand(action) {
         throw new Error(`Command ${action.name} has an invalid shell command.`);
     }
     if (action.inputMode && action.inputMode !== "json-stdin") {
-        throw new Error(`Allowlisted command ${action.name} has an unsupported input mode.`);
+        throw new Error(`Command shortcut ${action.name} has an unsupported input mode.`);
     }
     if (action.inputMode && !action.inputSchema) {
-        throw new Error(`Allowlisted command ${action.name} input mode requires an input schema.`);
+        throw new Error(`Command shortcut ${action.name} input mode requires an input schema.`);
     }
     if (action.invocationInput !== undefined) {
         if (!action.inputSchema || action.inputMode !== "json-stdin") {
-            throw new Error(`Allowlisted command ${action.name} does not accept structured input.`);
+            throw new Error(`Command shortcut ${action.name} does not accept structured input.`);
         }
         const errors = (0, schema_1.validateJsonSchema)(action.inputSchema, action.invocationInput);
         if (errors.length)
@@ -90,15 +90,15 @@ function normalizeCommand(action) {
     }
     const cwd = resolveCwd(action.cwd);
     if (!node_fs_1.default.existsSync(cwd) || !node_fs_1.default.statSync(cwd).isDirectory()) {
-        throw new Error(`Allowlisted command ${action.name} has a stale cwd: ${cwd}`);
+        throw new Error(`Command shortcut ${action.name} has a stale cwd: ${cwd}`);
     }
     if (action.skillSlug) {
         const skillRoot = node_path_1.default.resolve(paths_1.agentDir, "..", "skills", action.skillSlug);
         if (!node_fs_1.default.existsSync(node_path_1.default.join(skillRoot, "SKILL.md"))) {
-            throw new Error(`Allowlisted command ${action.name} references missing skill: ${action.skillSlug}`);
+            throw new Error(`Command shortcut ${action.name} references missing skill: ${action.skillSlug}`);
         }
         if (cwd !== node_fs_1.default.realpathSync(skillRoot)) {
-            throw new Error(`Allowlisted command ${action.name} cwd does not match skill ${action.skillSlug}.`);
+            throw new Error(`Command shortcut ${action.name} cwd does not match skill ${action.skillSlug}.`);
         }
     }
     return {
@@ -164,7 +164,7 @@ function isCommandRunning() {
 function getRunningTraceId() {
     return runningCommand?.traceId || null;
 }
-/** Request a graceful stop for the one globally tracked allowlisted command. */
+/** Request a graceful stop for the one globally tracked catalog command. */
 function stopRunningCommand() {
     const running = runningCommand;
     if (!running)
