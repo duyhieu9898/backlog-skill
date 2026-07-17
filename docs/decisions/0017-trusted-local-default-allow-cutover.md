@@ -277,6 +277,23 @@ default, while metadata exfiltration and protocol escapes stay blocked.
   evidence in ADRs 0010/0014/0016, `docs/stories/**`, `docs/research/**` is preserved per
   the documentation rule. Verified: `npm run check` clean, `npm test` 176/176 green,
   `grep "allowlist" agent/src agent/test` empty.
+- **P2.7 — Final migration proof** (commits `6bc3507` + `95a2d5d`): closed the four
+  real gaps in the end-to-end cutover proof. Added an `AGENT_COMMANDS_FILE` env
+  override (`config/paths.ts`, mirroring `AGENT_DB_FILE`/`AGENT_CONFIG_FILE`) so proofs
+  can inject a harmless test command catalog headlessly. New proofs:
+  `test/migration-proof.test.js` (a pre-existing old-schema DB — `scheduled_jobs` minus
+  the 7 additive columns, `chat_messages` without `session_id`, plus the legacy
+  `pending_confirmations` table — is brought current by the ADD COLUMN migrators with
+  defaults, seeded rows preserved, legacy table dropped, second open idempotent);
+  `test/telegram-approval-smoke.test.js` (first coverage of the Telegram adapter: a
+  message pauses and emits the Approve/Reject keyboard, a `callback_query` resumes and
+  the action runs); `test/cli-approval-smoke.test.js` (full CLI lifecycle through
+  `dist/cli.js`: 1st invocation prints the Approval ID, 2nd `approve <id>` completes);
+  `test/scheduler-prepare-effect.test.js` (first coverage of `runConfiguredEffect`:
+  prepare→JSON→effect through the gateway). TypeScript/regression, destructive-command
+  refusal, and one real custom-tool execution were already covered and are recorded here
+  rather than re-tested. Verified: `npm run check` clean, `npm test` 181/181 green.
+  **This completes the ADR 0017 P2 cutover.**
 
 ## Follow-Up
 
@@ -333,10 +350,12 @@ default, while metadata exfiltration and protocol escapes stay blocked.
    terminology from “allowlist” to an accurate term per concept; kept legacy names
    only where historical evidence requires them (ADRs 0010/0014/0016, `docs/stories/**`,
    `docs/research/**`, vendored `agent/tools/openclaw/**`).
-7. Run final migration proof: TypeScript and full regression suite, SQLite
-   migration from an existing database, CLI and Telegram approval smoke,
-   scheduler smoke, destructive-command refusal, and one real custom-tool
-   execution.
+7. ✅ Done (commits `6bc3507` + `95a2d5d`) — see Progress. Ran the final migration
+   proof: TypeScript + full regression (181/181), SQLite migration from an existing
+   old-schema database, CLI and Telegram approval smoke (including the previously
+   uncovered Telegram `callback_query` adapter path), scheduler `prepareEffect` smoke,
+   destructive-command refusal (already covered at three layers), and one real
+   custom-tool execution (already covered). **ADR 0017 P2 cutover complete.**
 
 ### Documentation rule
 
