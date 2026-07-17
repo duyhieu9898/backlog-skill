@@ -148,7 +148,7 @@ test("patch requires one exact match and mutates routine files", (t) => {
   assert.equal(fs.readFileSync(file, "utf8"), "same same");
 });
 
-test("file tools refuse denied paths, symlink escapes, and binary writes", (t) => {
+test("file tools confirm secret paths, refuse binary, and allow owner-confirmed writes through symlinks (ADR 0017 trusted-local)", (t) => {
   const { workspace, outside, tools } = fixture(t);
   fs.symlinkSync(outside, path.join(workspace, "escape"));
 
@@ -158,6 +158,11 @@ test("file tools refuse denied paths, symlink escapes, and binary writes", (t) =
   );
   assert.equal(secret.code, "CONFIRMATION_REQUIRED");
 
+  // ADR 0017 removed the legacy allowed-root boundary: an owner-confirmed write
+  // is allowed anywhere on the owner's machine, including through a symlink that
+  // resolves outside the workspace. This is intentional under the trusted-local
+  // model (single owner), not a sandbox escape — only secret-like paths prompt
+  // and only clearly destructive content (binary) is refused.
   const escaped = tools.execute(
     { kind: "file.write", path: path.join(workspace, "escape", "note.txt"), content: "no" },
     { traceId: `files-denied-escape-${Date.now()}`, confirmationGranted: true },
