@@ -120,7 +120,7 @@ async function poll(): Promise<void> {
     } catch (error) {
       const traceId = generateTraceId();
       const messageText = error instanceof Error ? error.message : String(error);
-      log.error(traceId, "telegram.reply.failed", { error });
+      log.error(traceId, "telegram.poll.failed", { error });
       console.error(`[${formatDate()}] ${messageText}`);
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }
