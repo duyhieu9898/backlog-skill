@@ -18,7 +18,7 @@ my-agents/
 │   │   ├── skills/        # Skill registry/loader only, not skill implementations
 │   │   ├── telegram/      # Telegram config/client
 │   │   └── types/         # Shared interfaces
-│   ├── commands.json      # Command allowlist, aliases, confirmation, cwd
+│   ├── commands.json      # Command shortcuts, aliases, confirmation, cwd
 │   └── package.json
 ├── skills/
 │   ├── bemo/              # Existing Bemo project
@@ -83,10 +83,10 @@ type SkillMetadata = {
 };
 ```
 
-Command allowlist model:
+Command shortcut model:
 
 ```ts
-type AllowedCommand = {
+type CommandShortcut = {
   name: string;
   label: string;
   skillSlug: string;
@@ -99,7 +99,7 @@ type AllowedCommand = {
 };
 ```
 
-`AllowedCommand` lives in `agent/commands.json`, not inside each skill. `SKILL.md` is for AI understanding; `commands.json` is the execution allowlist.
+A catalog entry lives in `agent/commands.json`, not inside each skill. `SKILL.md` is for AI understanding; `commands.json` is the command catalog.
 
 Default command policy:
 
@@ -237,7 +237,7 @@ type StandardMessage = {
 ### Phase 3: Command Router
 
 - Keep command aliases as zero-AI fast path.
-- `agent/commands.json` is the only command allowlist.
+- `agent/commands.json` is the only command catalog.
 - Skill folders do not need to define runnable commands in `SKILL.md`.
 - `commands.json` should point to `../skills/<slug>`.
 
@@ -263,7 +263,7 @@ Example:
 - Commands use fixed argv arrays and execute without a shell.
 - Wildcard and model-provided raw shell are disabled.
 - Catalog loading rejects duplicate aliases, missing skills, and stale cwd paths.
-- The executor passes only a minimal non-secret environment allowlist.
+- The executor passes only a minimal non-secret environment set.
 - AI normally emits only `commandName`.
 - Add `requiresConfirmation` for commands that write to external services or destroy data. Direct fixed commands may run without confirmation only when config says so.
 - Confirmation flow:
@@ -514,7 +514,7 @@ ai.failed
 ## 5. Safety Rules
 
 - Command aliases must be explicit and reviewed.
-- AI cannot run arbitrary shell; it may select only fixed argv entries in the allowlist.
+- AI cannot run arbitrary shell; it may select only fixed argv entries in the command catalog.
 - Skill commands that affect external services should say so in `SKILL.md`.
 - Secrets stay in `.env`, never in `SKILL.md`.
 - Destructive commands need either a fixed safe command or `requiresConfirmation`.

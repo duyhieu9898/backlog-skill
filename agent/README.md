@@ -41,7 +41,7 @@ to stderr.
   executing; it does not wait behind that command's chat queue.
 - `/debug <traceId>` — trace events for one execution.
 - `/commands` — registered command shortcuts grouped by skill; this is not a
-  permission allowlist.
+  permission boundary.
 - `/schedule` — configured scheduled checks and delivery mode.
 - `/schedule show <name>` — one scheduled check's durable state.
 - `/schedule history <name>` — recent durable scheduled runs.

@@ -20,7 +20,7 @@ DENY CLEARLY DESTRUCTIVE ACTIONS
 
 The system favors useful autonomous work: research, browsing, desktop actions,
 file edits, code/config changes, schedules, custom tools, and arbitrary
-commands are ordinary capabilities. It does not use a fixed command allowlist
+commands are ordinary capabilities. It does not use a fixed command catalog
 or permanently fixed filesystem roots as its primary permission mechanism.
 
 ```ts
@@ -293,7 +293,7 @@ backends cannot be bypassed.
 
 ### Telegram and Scheduler
 
-Telegram is an owner-only personal bot: allowlist owner user ID and chat IDs,
+Telegram is an owner-only personal bot: allow only the owner user ID and chat IDs,
 ignore other users, accept approvals only from the owner and bind them to the
 pending run, deduplicate update IDs, apply basic rate limiting, and load global
 memory only for the configured owner.
@@ -349,7 +349,7 @@ Authorization headers.
 1. The agent is a trusted local operator on a real machine, protected by application-level guardrails rather than an OS sandbox.
 2. Most actions allow by default; only significant impact needs approval and clearly destructive actions are denied.
 3. A clear user request approves its exact current task; approvals cover a task, run, session, or schedule and equivalent follow-on steps.
-4. Policy evaluates executable, arguments, target, cwd, impact, and intent—not a command name or hard allowlist alone.
+4. Policy evaluates executable, arguments, target, cwd, impact, and intent—not a command name or fixed catalog alone.
 5. The agent may access/edit system files, run commands, install software, and change system configuration when the task calls for it.
 6. Every tool action crosses `ToolGateway`; `PermissionPolicy` precedes `ToolExecutor`, with no bypass by adapters, providers, schedulers, workflows, or skills.
 7. Browser and desktop actions do not prompt per interaction; approved schedules do not prompt per execution.

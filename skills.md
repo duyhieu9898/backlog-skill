@@ -30,7 +30,7 @@ Tên thư mục trong `skills/` là `slug` của skill. Ví dụ: `bemo`, `gmail
 - Những file/script/config nào quan trọng.
 - Rủi ro hoặc lưu ý khi thao tác.
 
-`SKILL.md` không phải là allowlist bảo mật. Quyền chạy command nằm ở config riêng của agent, ví dụ `agent/commands.json`.
+`SKILL.md` không phải là cơ chế phân quyền. Quyền chạy command nằm ở config riêng của agent, ví dụ `agent/commands.json`.
 
 ## Format SKILL.md
 
@@ -71,7 +71,7 @@ Frontmatter nên có:
 | `name` | Không | Tên hiển thị của skill. Nếu thiếu, dùng tên thư mục. |
 | `description` | Có | Mô tả ngắn để AI tìm đúng skill. |
 
-## Command Allowlist
+## Command Shortcuts
 
 Command được phép chạy nên nằm ở một tầng config riêng của agent, không bắt buộc khai báo trong từng `SKILL.md`.
 
@@ -169,7 +169,7 @@ Khi load skill, agent thay `{baseDir}` bằng đường dẫn tuyệt đối c�
 
 ## Gợi Ý Prompt Cho AI API
 
-Khi tích hợp AI API, gửi metadata skill và command allowlist:
+Khi tích hợp AI API, gửi metadata skill và command catalog:
 
 ```text
 Available skills:
@@ -196,7 +196,7 @@ Cách này giữ prompt ngắn, giảm chi phí token và tránh model bị nhi�
 ## Nguyên Tắc An Toàn
 
 - `SKILL.md` là tài liệu hướng dẫn, không phải cơ chế phân quyền.
-- Command thật được kiểm soát bởi allowlist config của agent.
+- Command thật được kiểm soát bởi catalog config của agent.
 - Không đưa secret vào `SKILL.md`; dùng `.env` hoặc biến môi trường.
 - Nếu skill có script gửi request ra ngoài, ghi rõ service nào được gọi.
 - Không dùng wildcard hoặc raw shell; chỉ khai báo argv cố định đã review.

@@ -264,6 +264,19 @@ default, while metadata exfiltration and protocol escapes stay blocked.
   deny, DNS catches `metadata.google.internal`) and `test/browser-safety.test.js`
   (default-allow localhost, guardrail denies `169.254.169.254`, `privateNavigation:"deny"`
   tightens).
+- **P2.6 — Allowlist → shortcut terminology rename** (commit `f733bae`): renamed the
+  remaining active source/test terminology from “allowlist” to an accurate term per
+  concept — command catalog → “command shortcut”/“catalog command” (`commands.ts`,
+  `executor.ts`, `commands.test.js`); browser host → “trusted (allowedHosts)” with the
+  field name kept for config compatibility (`permissionPolicy.ts`, `browser-safety`/
+  `url-policy` tests); desktop app → “configured app”/“app registry” (`computer/apps.ts`,
+  `contracts.ts`, `computer-tool.ts`); telegram chat → “trusted chat” (`bot.ts`). Vendored
+  `agent/tools/openclaw/**` excluded (read-only upstream reference). Active docs reconciled
+  (`ARCHITECTURE.md`, `plan.md`, `skills.md`, `agent/README.md`); the `HARNESS_COMPONENTS.md`
+  P2 tracker cell was also corrected (it had listed P2.4/P2.5 as remaining). Historical
+  evidence in ADRs 0010/0014/0016, `docs/stories/**`, `docs/research/**` is preserved per
+  the documentation rule. Verified: `npm run check` clean, `npm test` 176/176 green,
+  `grep "allowlist" agent/src agent/test` empty.
 
 ## Follow-Up
 
@@ -316,9 +329,10 @@ default, while metadata exfiltration and protocol escapes stay blocked.
    governed by the live `privateNavigation` posture (default `allow`) in
    `permissionPolicy.evaluateBrowser`. `allowedHosts` remains as an explicit
    trust-declaration bypass. US-023 and E03 README reconciled.
-6. Rename remaining active source/test terminology from “allowlist” to command
-   shortcut where appropriate; keep legacy names only where compatibility or
-   historical evidence requires them.
+6. ✅ Done (commit `f733bae`) — see Progress. Renamed remaining active source/test
+   terminology from “allowlist” to an accurate term per concept; kept legacy names
+   only where historical evidence requires them (ADRs 0010/0014/0016, `docs/stories/**`,
+   `docs/research/**`, vendored `agent/tools/openclaw/**`).
 7. Run final migration proof: TypeScript and full regression suite, SQLite
    migration from an existing database, CLI and Telegram approval smoke,
    scheduler smoke, destructive-command refusal, and one real custom-tool
