@@ -30,6 +30,7 @@ asset references and observations rather than repeated inline payloads.
 - `docs/research/CONTEXT_MANAGEMENT_REFACTOR_PLAN.md`
 - `docs/research/CONCEPT_BROWSER_CONTRACT_AND_MEDIA_USAGE.md`
 - `docs/decisions/0020-browser-snapshot-and-media-contract.md`
+- `docs/stories/epics/E04-context-management/US-027-implementation-handoff.md`
 - `docs/stories/epics/E03-browser-capability/US-021-accessibility-snapshot-and-typed-actions.md`
 - `docs/stories/epics/E01-local-operator-core/US-009-ai-tool-router.md`
 

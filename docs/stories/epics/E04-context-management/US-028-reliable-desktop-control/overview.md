@@ -44,6 +44,7 @@ with a diagnostic instead of consuming the tool-loop limit.
 - `docs/TOOL_REGISTRY.md`
 - `docs/research/CONCEPT_OPENCLAW_CONTEXT.md`
 - `docs/stories/epics/E03-browser-capability/US-022-agent-multi-step-loop.md`
+- `docs/stories/epics/E04-context-management/US-028-reliable-desktop-control/implementation-handoff.md`
 
 ## Non-Goals
 
