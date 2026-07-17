@@ -29,6 +29,7 @@ and approval-checked again by `ToolGateway` at execution.
 - `docs/research/CONTEXT_MANAGEMENT_REFACTOR_PLAN.md`
 - `docs/research/CONCEPT_CAPABILITY_ROUTING_AND_TOOL_SCHEMAS.md`
 - `docs/decisions/0019-capability-routing-authority-boundary.md`
+- `docs/stories/epics/E04-context-management/US-026-implementation-handoff.md`
 - `docs/stories/epics/E01-local-operator-core/US-009-ai-tool-router.md`
 
 ## Observed Baseline
