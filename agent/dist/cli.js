@@ -11,6 +11,9 @@ const env_1 = require("./config/env");
 const router_1 = require("./core/router");
 const registry_1 = require("./skills/registry");
 const repositories_1 = require("./storage/repositories");
+const commands_1 = require("./commands");
+const shutdown_1 = require("./core/shutdown");
+const browser_service_1 = require("./browser/browser-service");
 function readStdin() {
     return new Promise((resolve, reject) => {
         let input = "";
@@ -30,31 +33,51 @@ async function runCli(args = process.argv.slice(2)) {
         process.stderr.write('Usage: npm run cli -- "<message>"\n');
         return 2;
     }
-    const router = new router_1.Router(new registry_1.SkillRegistry());
-    const message = (0, cli_1.toCliMessage)(text);
-    let artifactId;
-    const reply = await router.route(message, undefined, (id) => { artifactId = id; });
-    const artifact = artifactId ? (0, repositories_1.getArtifact)(artifactId) : null;
-    if (json) {
-        process.stdout.write(`${JSON.stringify({
-            traceId: message.traceId,
-            reply,
-            artifact: artifact && { id: artifact.id, mimeType: artifact.mime_type, byteSize: artifact.byte_size, path: artifact.local_path },
-        })}\n`);
+    let exitCode = 0;
+    try {
+        const router = new router_1.Router(new registry_1.SkillRegistry());
+        const message = (0, cli_1.toCliMessage)(text);
+        let artifactId;
+        const reply = await router.route(message, undefined, (id) => { artifactId = id; });
+        const artifact = artifactId ? (0, repositories_1.getArtifact)(artifactId) : null;
+        if (json) {
+            process.stdout.write(`${JSON.stringify({
+                traceId: message.traceId,
+                reply,
+                artifact: artifact && { id: artifact.id, mimeType: artifact.mime_type, byteSize: artifact.byte_size, path: artifact.local_path },
+            })}\n`);
+        }
+        else {
+            process.stdout.write(`${reply}${artifact ? `\nArtifact: ${artifact.local_path}` : ""}\n`);
+        }
     }
-    else {
-        process.stdout.write(`${reply}${artifact ? `\nArtifact: ${artifact.local_path}` : ""}\n`);
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`Agent lỗi: ${message}\n`);
+        exitCode = 1;
     }
-    return 0;
+    finally {
+        // Tear down browser/command handles so the process exits. Without this the
+        // managed Chromium keeps the Node event loop alive and `npm run cli` hangs
+        // after printing its result whenever a run used the browser tool.
+        await (0, shutdown_1.performGracefulShutdown)({
+            stopRunningCommand: commands_1.stopRunningCommand,
+            waitForRunningCommandStop: commands_1.waitForRunningCommandStop,
+            browserShutdown: () => browser_service_1.browserService.shutdown(),
+        }).catch(() => {
+            // Best-effort: a shutdown failure must not mask the run's result.
+        });
+    }
+    return exitCode;
 }
 if (require.main === module) {
     runCli()
         .then((exitCode) => {
-        process.exitCode = exitCode;
+        process.exit(exitCode);
     })
         .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         process.stderr.write(`Agent lỗi: ${message}\n`);
-        process.exitCode = 1;
+        process.exit(1);
     });
 }
