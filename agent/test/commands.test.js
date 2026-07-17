@@ -5,6 +5,9 @@ const test = require("node:test");
 
 const os = require("node:os");
 
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
+
 const {
   buildCommandCatalog,
   buildCommandEnvironment,

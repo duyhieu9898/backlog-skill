@@ -2,6 +2,9 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const test = require("node:test");
 
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
+
 const { ApprovalService } = require("../dist/security/approvalService");
 const { createApprovalGrant, revokeApprovalGrant, nowIso } = require("../dist/storage/repositories");
 

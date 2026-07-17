@@ -3,6 +3,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
+
 const { AiRouter } = require("../dist/brain/router");
 const { validateAiResponse } = require("../dist/brain/provider");
 const { GeminiProvider } = require("../dist/brain/providers/gemini");

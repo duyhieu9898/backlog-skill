@@ -1,6 +1,9 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const closeIsolatedDb = require("./helpers/db");
+test.after(() => closeIsolatedDb());
+
 const { AgentRuntime } = require("../dist/runtime/agentRuntime");
 const { getRun } = require("../dist/storage/repositories");
 const { getRunningTraceId } = require("../dist/commands");
