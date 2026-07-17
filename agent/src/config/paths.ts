@@ -10,7 +10,9 @@ export const stateFile = path.join(logDir, "telegram-state.json");
 export const botLog = path.join(logDir, "agent.log");
 export const aiInteractionDir = path.join(logDir, "ai-interactions");
 export const aiInteractionIndex = path.join(aiInteractionDir, "index.jsonl");
-export const commandsFile = path.join(agentDir, "commands.json");
+export const commandsFile = process.env.AGENT_COMMANDS_FILE
+  ? path.resolve(process.env.AGENT_COMMANDS_FILE)
+  : path.join(agentDir, "commands.json");
 export const configFile = process.env.AGENT_CONFIG_FILE
   ? path.resolve(process.env.AGENT_CONFIG_FILE)
   : path.join(agentDir, "config.json");

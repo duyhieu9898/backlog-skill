@@ -15,7 +15,9 @@ exports.stateFile = node_path_1.default.join(exports.logDir, "telegram-state.jso
 exports.botLog = node_path_1.default.join(exports.logDir, "agent.log");
 exports.aiInteractionDir = node_path_1.default.join(exports.logDir, "ai-interactions");
 exports.aiInteractionIndex = node_path_1.default.join(exports.aiInteractionDir, "index.jsonl");
-exports.commandsFile = node_path_1.default.join(exports.agentDir, "commands.json");
+exports.commandsFile = process.env.AGENT_COMMANDS_FILE
+    ? node_path_1.default.resolve(process.env.AGENT_COMMANDS_FILE)
+    : node_path_1.default.join(exports.agentDir, "commands.json");
 exports.configFile = process.env.AGENT_CONFIG_FILE
     ? node_path_1.default.resolve(process.env.AGENT_CONFIG_FILE)
     : node_path_1.default.join(exports.agentDir, "config.json");
