@@ -135,14 +135,19 @@ export class ToolGateway {
       }
       if (decision.outcome === "confirm") {
         const actionFingerprint = (decision as any).actionFingerprint || "";
-        browserConfirmationStore.createGrant({
-          sessionId: browserContext?.sessionId ?? "default",
-          runId: browserContext?.runId ?? "default",
-          profile: args.profile || "default",
-          targetId: args.targetId || "",
-          snapshotId: args.request?.snapshotId,
-          actionFingerprint,
-        });
+        // Only a browser.act element confirmation carries a fingerprint and needs
+        // a grant consumed on execute. A browser.open/navigate confirmation has no
+        // fingerprint; it just requires owner approval (no grant, nothing to consume).
+        if (actionFingerprint) {
+          browserConfirmationStore.createGrant({
+            sessionId: browserContext?.sessionId ?? "default",
+            runId: browserContext?.runId ?? "default",
+            profile: args.profile || "default",
+            targetId: args.targetId || "",
+            snapshotId: args.request?.snapshotId,
+            actionFingerprint,
+          });
+        }
         return {
           ...prepared,
           requiresConfirmation: true,

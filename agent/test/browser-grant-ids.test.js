@@ -19,6 +19,7 @@ process.env.AGENT_DB_FILE = path.join(dbDir, "test.sqlite");
 const { buildBrowserActionPolicyContext } = require("../dist/tools/executor");
 const { ToolGateway } = require("../dist/tools/gateway");
 const { browserConfirmationStore } = require("../dist/security/browser-confirmation");
+const { PermissionPolicy } = require("../dist/security/permissionPolicy");
 const { refStore } = require("../dist/browser/ref-store");
 const { closeDb } = require("../dist/storage/db");
 
@@ -101,4 +102,37 @@ test("gateway stores the real session/run ids on a browser confirmation grant", 
   } finally {
     refStore.clear("t1");
   }
+});
+
+test("only browser.act confirm carries an actionFingerprint; browser.open/navigate confirm does not", () => {
+  // This is the distinction the gateway relies on: only an element confirmation
+  // (browser.act) gets a fingerprint-bound grant. A navigation confirmation
+  // (browser.open/navigate) has no fingerprint, so the gateway must NOT create a
+  // grant for it (it would never be consumed and would leak until TTL).
+  const policy = new PermissionPolicy({
+    browser: {
+      consequentialActions: "confirm",
+      destructiveActions: "confirm",
+      publicNavigation: "confirm",
+      privateNavigation: "confirm",
+      allowedHosts: [],
+    },
+  });
+
+  const actDecision = policy.evaluate(
+    { kind: "browser.act", profile: "p", targetId: "t", request: { kind: "click", ref: "e1", snapshotId: "s1" } },
+    {
+      browserContext: {
+        sessionId: "s", runId: "r", profile: "p", targetId: "t", snapshotId: "s1", url: "http://example.com",
+        action: { kind: "click", ref: "e1", snapshotId: "s1" },
+        element: { ref: "e1", role: "button", name: "Send Message" },
+      },
+    },
+  );
+  assert.equal(actDecision.outcome, "confirm");
+  assert.ok(actDecision.actionFingerprint, "browser.act confirm carries an actionFingerprint");
+
+  const openDecision = policy.evaluate({ kind: "browser.open", profile: "p", url: "http://example.com" });
+  assert.equal(openDecision.outcome, "confirm");
+  assert.ok(!openDecision.actionFingerprint, "browser.open confirm carries no actionFingerprint");
 });
