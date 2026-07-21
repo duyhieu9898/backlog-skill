@@ -12,6 +12,7 @@
     "verify": "npm run test && git diff --check && git diff --cached --check",
     "test:gemini": "node scripts/test-gemini.js",
     "ai-logs": "node scripts/ai-logs.js",
+    "diff": "node scripts/eval-diff.js",
     "smoke:telegram-media": "npm run build && node scripts/telegram-media-smoke.js",
     "eval": "npm run build && node scripts/eval.js"
   },
