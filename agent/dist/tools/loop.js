@@ -13,7 +13,6 @@ const store_1 = require("../artifacts/store");
 const image_context_1 = require("./media/image-context");
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_crypto_1 = __importDefault(require("node:crypto"));
-const ref_store_1 = require("../browser/ref-store");
 const MAX_TOOL_STEPS = 8;
 const MAX_IDENTICAL_FAILURES = 2;
 function formatResult(result) {
@@ -87,8 +86,21 @@ class AgentToolLoop {
     async run(message, context, onReplyMarkup, onArtifact, initialSteps = [], userMessage = message.text, runId = message.traceId, signal) {
         const steps = [...initialSteps];
         const failures = new Map();
-        const tools = this.gateway.definitions(context.toolScope);
+        const route = context.capabilityRoute;
+        const tools = this.gateway.definitions(route);
+        const snapshot = {
+            names: tools.map((tool) => tool.name),
+            schemaHash: node_crypto_1.default.createHash("sha256").update(JSON.stringify(tools)).digest("hex"),
+        };
         const sessionId = (0, repositories_1.getActiveSessionId)(message.chatId);
+        logger_1.log.info(message.traceId, "ai.tool.visibility.selected", {
+            capabilities: route?.capabilities || [],
+            continuation: route?.continuation || "new",
+            confidence: route?.confidence || "low",
+            selectionReason: route?.selectionReason || "legacy context",
+            visibleToolNames: snapshot.names,
+            schemaHash: snapshot.schemaHash,
+        });
         for (let index = 0; index < MAX_TOOL_STEPS; index += 1) {
             if (signal?.aborted)
                 return "Run cancelled.";
@@ -158,96 +170,9 @@ class AgentToolLoop {
                 });
                 let finalResult = result;
                 let finalCall = response.toolCall;
-                if (!result.ok && result.code === "STALE_ELEMENT_REF" && response.toolCall.name === "browser") {
-                    const actionArgs = response.toolCall.arguments;
-                    if (actionArgs?.action === "act") {
-                        logger_1.log.info(message.traceId, "ai.tool.stale_ref_retry", {
-                            toolName: response.toolCall.name,
-                            ref: actionArgs.request?.ref,
-                        });
-                        // 1. Push the failed step first so the trace is complete
-                        appendStep(runId, steps, {
-                            call: response.toolCall,
-                            result,
-                            image: modelImageForResult(result, message.chatId),
-                        });
-                        // 2. Schedule and run a new snapshot step
-                        const profile = actionArgs.profile;
-                        const targetId = actionArgs.targetId;
-                        const snapshotCall = {
-                            name: "browser",
-                            arguments: {
-                                action: "snapshot",
-                                profile,
-                                targetId,
-                            },
-                        };
-                        const snapshotPrepared = this.prepareAuthorized(snapshotCall, message, runId, sessionId, `tc_${node_crypto_1.default.randomUUID()}`, tools, userMessage);
-                        const snapshotResult = await this.gateway.execute(snapshotPrepared, {
-                            traceId: message.traceId,
-                            chatId: message.chatId,
-                            signal,
-                        });
-                        if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(snapshotResult.code) && typeof snapshotResult.data?.artifactId === "string") {
-                            onArtifact?.(snapshotResult.data.artifactId);
-                        }
-                        appendStep(runId, steps, {
-                            call: snapshotCall,
-                            result: snapshotResult,
-                            image: modelImageForResult(snapshotResult, message.chatId),
-                        });
-                        // 3. Resolve the new reference in the new snapshot
-                        let newRef = undefined;
-                        let newSnapshotId = undefined;
-                        if (snapshotResult.ok && snapshotResult.data) {
-                            const snapshotData = snapshotResult.data.snapshot;
-                            newSnapshotId = snapshotData?.snapshotId;
-                            if (newSnapshotId) {
-                                const oldSnapshotId = actionArgs.request?.snapshotId;
-                                const oldRef = actionArgs.request?.ref;
-                                const descriptor = ref_store_1.refStore.getRef(oldSnapshotId, oldRef);
-                                const newRecord = ref_store_1.refStore.getRecord(newSnapshotId);
-                                if (descriptor && newRecord) {
-                                    for (const [refId, desc] of newRecord.refs.entries()) {
-                                        if (desc.role === descriptor.role && desc.name === descriptor.name) {
-                                            newRef = refId;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // 4. Retry the target action exactly once
-                        const retryCall = {
-                            name: "browser",
-                            arguments: {
-                                ...response.toolCall.arguments,
-                                request: {
-                                    ...actionArgs.request,
-                                    ref: newRef || actionArgs.request?.ref,
-                                    snapshotId: newSnapshotId || actionArgs.request?.snapshotId,
-                                },
-                            },
-                        };
-                        const retryPrepared = this.prepareAuthorized(retryCall, message, runId, sessionId, `tc_${node_crypto_1.default.randomUUID()}`, tools, userMessage);
-                        const retryResult = await this.gateway.execute(retryPrepared, {
-                            traceId: message.traceId,
-                            chatId: message.chatId,
-                            signal,
-                        });
-                        finalResult = retryResult;
-                        finalCall = retryCall;
-                        if (!retryResult.ok) {
-                            // Retry failed, push to steps and return failure to user immediately
-                            appendStep(runId, steps, {
-                                call: retryCall,
-                                result: retryResult,
-                                image: modelImageForResult(retryResult, message.chatId),
-                            });
-                            return `Browser action retry failed: ${retryResult.summary}`;
-                        }
-                    }
-                }
+                // Ref freshness failures are returned to the model as structured tool
+                // results. The model must take a new snapshot and choose a new ref;
+                // the runtime never translates an old ref into a fresh one.
                 if (["DESKTOP_CAPTURED", "COMPUTER_SCREENSHOT", "COMPUTER_ACTION_COMPLETED", "COMPUTER_LAUNCHED", "WEB_CAPTURED", "BROWSER_SCREENSHOT", "BROWSER_ACTION_COMPLETED"].includes(finalResult.code) && typeof finalResult.data?.artifactId === "string") {
                     onArtifact?.(finalResult.data.artifactId);
                 }

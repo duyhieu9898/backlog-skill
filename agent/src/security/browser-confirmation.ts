@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { refStore } from "../browser/ref-store";
 
 export type BrowserConfirmationGrant = {
   id: string;
@@ -129,6 +130,18 @@ export class BrowserConfirmationStore {
 
     if (active.snapshotId !== current.snapshotId) {
       return { valid: false, code: "CONFIRMATION_STALE", reason: "Page snapshot is stale since confirmation was requested." };
+    }
+
+    // Generation gate: a confirmation granted against a pre-navigation snapshot
+    // is stale after navigation even when the snapshotId string still matches,
+    // because navigation bumps the tab's document generation (US-027). Only
+    // applied when the snapshot record is still live; an absent record is left
+    // to the snapshotId check above so unit tests without a ref-store stay green.
+    if (active.snapshotId) {
+      const record = refStore.getRecord(active.snapshotId);
+      if (record && record.documentRevision !== refStore.getCurrentGeneration(current.targetId)) {
+        return { valid: false, code: "CONFIRMATION_STALE", reason: "Page navigated since confirmation was requested." };
+      }
     }
 
     active.consumed = true;

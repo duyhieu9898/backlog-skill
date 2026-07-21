@@ -109,8 +109,8 @@ After automated tests and service deployment, record:
 
 ## Completion Checklist
 
-- [ ] All US-026 unit/integration tests added and passing.
-- [ ] `cd agent && npm run verify` passes.
+- [x] All US-026 unit/integration tests added and passing.
+- [x] `cd agent && npm run verify` passes (202 tests, 2026-07-17).
 - [ ] Harness proof flags updated only with actual evidence.
 - [ ] Real-provider traces meet the five required checks.
 - [ ] Story evidence and verification command are updated.

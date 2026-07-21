@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.browserConfirmationStore = exports.BrowserConfirmationStore = void 0;
 const node_crypto_1 = __importDefault(require("node:crypto"));
+const ref_store_1 = require("../browser/ref-store");
 class BrowserConfirmationStore {
     grants = new Map();
     createGrant(input) {
@@ -75,6 +76,17 @@ class BrowserConfirmationStore {
         }
         if (active.snapshotId !== current.snapshotId) {
             return { valid: false, code: "CONFIRMATION_STALE", reason: "Page snapshot is stale since confirmation was requested." };
+        }
+        // Generation gate: a confirmation granted against a pre-navigation snapshot
+        // is stale after navigation even when the snapshotId string still matches,
+        // because navigation bumps the tab's document generation (US-027). Only
+        // applied when the snapshot record is still live; an absent record is left
+        // to the snapshotId check above so unit tests without a ref-store stay green.
+        if (active.snapshotId) {
+            const record = ref_store_1.refStore.getRecord(active.snapshotId);
+            if (record && record.documentRevision !== ref_store_1.refStore.getCurrentGeneration(current.targetId)) {
+                return { valid: false, code: "CONFIRMATION_STALE", reason: "Page navigated since confirmation was requested." };
+            }
         }
         active.consumed = true;
         return { valid: true };

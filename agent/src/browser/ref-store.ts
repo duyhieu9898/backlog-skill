@@ -13,6 +13,14 @@ export type SnapshotRecord = {
   snapshotId: string;
   profileName: string;
   targetId: string;
+  /**
+   * Monotonic per-tab document generation stamped at snapshot time. Navigation
+   * bumps the tab's generation; a snapshot whose revision no longer matches
+   * the current generation is stale even if it is still the "latest" id — this
+   * is what prevents a ref from silently rebinding onto a new document when
+   * the model navigates without re-snapshotting (US-027 silent-rebind fix).
+   */
+  documentRevision: number;
   createdAt: number;
   lastAccessedAt: number;
   expiresAt: number;
@@ -23,6 +31,22 @@ export type SnapshotRecord = {
 export class RefStore {
   private sessions = new Map<string, SnapshotRecord>();
   private latestSnapshots = new Map<string, string>(); // targetId -> snapshotId
+  private tabGenerations = new Map<string, number>(); // targetId -> generation
+
+  /** Current document generation for a tab. Bumped on navigation. */
+  getCurrentGeneration(targetId: string): number {
+    return this.tabGenerations.get(targetId) ?? 0;
+  }
+
+  /**
+   * Bump the tab's document generation and drop it from the latest mapping.
+   * Called after a successful navigation so any outstanding snapshot — even
+   * the latest one — is treated as stale until a fresh snapshot is captured.
+   */
+  bumpGeneration(targetId: string): void {
+    this.tabGenerations.set(targetId, this.getCurrentGeneration(targetId) + 1);
+    this.latestSnapshots.delete(targetId);
+  }
 
   createSnapshot(targetId: string, profileName: string, url?: string): string {
     const snapshotId = `snap_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -34,6 +58,7 @@ export class RefStore {
       snapshotId,
       profileName,
       targetId,
+      documentRevision: this.getCurrentGeneration(targetId),
       createdAt: Date.now(),
       lastAccessedAt: Date.now(),
       expiresAt,
@@ -77,11 +102,16 @@ export class RefStore {
   getLatestSnapshotId(targetId: string): string | undefined {
     const snapshotId = this.latestSnapshots.get(targetId);
     if (!snapshotId) return undefined;
-    
+
     // Check if it's expired
     const record = this.getRecord(snapshotId);
     if (!record) return undefined;
-    
+
+    // A latest snapshot whose document revision no longer matches the tab's
+    // current generation (navigation happened after it was captured) is not
+    // actionable — treat it as absent so callers capture a fresh one.
+    if (record.documentRevision !== this.getCurrentGeneration(targetId)) return undefined;
+
     return snapshotId;
   }
 
@@ -101,6 +131,7 @@ export class RefStore {
       this.sessions.delete(id);
     }
     this.latestSnapshots.delete(targetId);
+    this.tabGenerations.delete(targetId);
   }
 
   clearProfile(profileName: string): void {

@@ -1,4 +1,4 @@
-import type { AiToolCall, AiToolDefinition, AiToolScope } from "../brain/provider";
+import type { AiToolCall, AiToolDefinition, CapabilityRoute, VisibleToolSnapshot } from "../brain/provider";
 import { evaluateCommandPermission, type AgentCommand } from "../commands";
 import { loadAgentConfig } from "../config/app";
 import { PermissionPolicy } from "../security/permissionPolicy";
@@ -23,8 +23,12 @@ export class ToolGateway {
     ensureToolsRegistered();
   }
 
-  definitions(scope?: AiToolScope): AiToolDefinition[] {
-    return this.executor.definitions(scope);
+  definitions(route?: CapabilityRoute): AiToolDefinition[] {
+    return this.executor.definitions(route);
+  }
+
+  visibleSnapshot(route: CapabilityRoute): VisibleToolSnapshot {
+    return this.executor.visibleSnapshot(route);
   }
 
   /** Resolve, validate, and attach an action profile — without authorizing. */

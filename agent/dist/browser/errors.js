@@ -4,11 +4,13 @@ exports.BrowserError = void 0;
 class BrowserError extends Error {
     code;
     retryable;
-    constructor(code, message, retryable = false) {
+    recovery;
+    constructor(code, message, retryable = false, recovery) {
         super(message);
         this.code = code;
         this.retryable = retryable;
         this.name = "BrowserError";
+        this.recovery = recovery;
     }
 }
 exports.BrowserError = BrowserError;

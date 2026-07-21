@@ -6,10 +6,9 @@ const repositories_1 = require("../storage/repositories");
 const assembler_1 = require("./assembler");
 const checkpoint_1 = require("./checkpoint");
 const memory_1 = require("./memory");
+const capability_routing_1 = require("./capability-routing");
 const DEBUG_WORDS = ["lỗi", "bug", "vừa rồi", "lúc nãy", "tại sao", "failed", "error"];
-const FILE_WORDS = ["file", "tệp", "thư mục", "folder", "directory", "đọc", "read", "ghi", "write", "patch"];
 const DESKTOP_WORDS = ["desktop", "màn hình", "screenshot", "chụp màn hình", "vscode", "vs code", "visual studio code", "app ", "mở app"];
-const WEB_WORDS = ["http://", "https://", "website", "trang web", "web "];
 function redactHistory(content) {
     return content
         .split("\n")
@@ -75,20 +74,17 @@ class ContextHydrator {
         const text = message.text.toLowerCase();
         const likelySkill = this.registry.findLikelySkill(text);
         const isDebug = DEBUG_WORDS.some((word) => text.includes(word));
-        const includesFileIntent = FILE_WORDS.some((word) => text.includes(word));
         const includesDesktopIntent = DESKTOP_WORDS.some((word) => text.includes(word));
-        const includesWebIntent = WEB_WORDS.some((word) => text.includes(word));
         const recentRuns = isDebug ? (0, repositories_1.listRecentCommandRuns)(message.chatId, 3) : undefined;
         const traceId = this.findTraceId(message.text) || recentRuns?.[0]?.trace_id;
-        const toolScope = likelySkill
-            ? { skillSlug: likelySkill.slug, includeFileTools: false }
-            : includesWebIntent
-                ? { includeFileTools: false, webOnly: true }
-                : includesDesktopIntent
-                    ? { includeFileTools: false, desktopOnly: true }
-                    : includesFileIntent
-                        ? { includeFileTools: true }
-                        : undefined;
+        const scopeKey = `active_capability_scope:${message.chatId}:${(0, repositories_1.getActiveSessionId)(message.chatId)}`;
+        const resolvedScope = (0, capability_routing_1.resolveCapabilityRoute)({
+            text: message.text,
+            traceId: message.traceId,
+            activeLease: (0, repositories_1.getJsonState)("runtime_state", scopeKey),
+            skillSlug: likelySkill?.slug,
+        });
+        (0, repositories_1.setJsonState)("runtime_state", scopeKey, resolvedScope.lease);
         let lastFailureSummary;
         if (isDebug) {
             const lastCommand = (0, repositories_1.getLastFailedCommandRun)();
@@ -170,7 +166,7 @@ class ContextHydrator {
                 memory: (0, memory_1.retrieveRelevantDurableMemory)(message.text, (0, app_1.loadAgentConfig)().context?.retrievedMemoryMaxTokens || 3_000),
                 runtime: runtimeContext(message.timestamp, lastFailureSummary),
                 selectedSkill,
-                toolScope,
+                capabilityRoute: resolvedScope.route,
             },
             relevantRuns: recentRuns,
             relevantTraceEvents: isDebug && traceId ? (0, repositories_1.listTraceEvents)(traceId, 50) : undefined,

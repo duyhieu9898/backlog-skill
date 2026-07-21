@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ToolExecutor = exports.computerController = void 0;
+exports.ToolExecutor = exports.computerController = exports.browserDefinition = void 0;
 exports.buildBrowserActionPolicyContext = buildBrowserActionPolicyContext;
 exports.formatBrowserPreview = formatBrowserPreview;
 const node_crypto_1 = __importDefault(require("node:crypto"));
@@ -24,6 +24,7 @@ const browser_service_1 = require("../browser/browser-service");
 const errors_1 = require("../browser/errors");
 const schema_1 = require("./schema");
 const ref_store_1 = require("../browser/ref-store");
+const contract_1 = require("../browser/contract");
 const emptyObjectSchema = {
     type: "object",
     properties: {},
@@ -145,7 +146,7 @@ const webCaptureDefinition = {
     description: "Open one public HTTPS URL in local headless Chrome, wait briefly for rendering, and return a PNG screenshot artifact. Use this for a user-supplied website screenshot.",
     inputSchema: { type: "object", properties: { url: { type: "string", minLength: 12, maxLength: 2048 } }, required: ["url"], additionalProperties: false },
 };
-const browserDefinition = {
+exports.browserDefinition = {
     name: "browser",
     description: "Interact with the managed Chromium browser. Open URLs, navigate, close tabs, list tabs, focus tabs, and take screenshots.",
     inputSchema: {
@@ -264,12 +265,20 @@ class ToolExecutor {
         this.files = files;
         this.catalogLoader = catalogLoader;
     }
-    definitions(scope) {
-        const commands = scope?.skillSlug
-            ? this.catalogLoader().allow.filter((command) => command.skillSlug === scope.skillSlug)
-            : scope
-                ? []
-                : this.catalogLoader().allow;
+    definitions(route) {
+        // Direct, non-model callers retain the historical catalog for compatibility.
+        // AgentToolLoop always supplies an explicit route, including general: [].
+        if (!route) {
+            const commands = this.catalogLoader().allow.map((command) => ({
+                name: `command.${command.name}`,
+                description: `${command.label}. Fixed argv; ${command.requiresConfirmation || command.externalSideEffect ? "requires explicit confirmation" : "may run without confirmation"}.`,
+                inputSchema: command.inputSchema || emptyObjectSchema,
+            }));
+            return [...fileDefinitions, genericCommandDefinition, ...commands, computerDefinition, webCaptureDefinition, exports.browserDefinition, ...registry_1.toolRegistry.definitions()].sort((a, b) => a.name.localeCompare(b.name));
+        }
+        const commands = route.capabilities.includes("skill") && route.skillSlug
+            ? this.catalogLoader().allow.filter((command) => command.skillSlug === route.skillSlug)
+            : route.capabilities.includes("command") ? this.catalogLoader().allow : [];
         const commandDefinitions = commands.map((command) => ({
             name: `command.${command.name}`,
             description: `${command.label}. Fixed argv; ${command.requiresConfirmation || command.externalSideEffect
@@ -277,17 +286,29 @@ class ToolExecutor {
                 : "may run without confirmation"}.`,
             inputSchema: command.inputSchema || emptyObjectSchema,
         }));
-        if (scope?.desktopOnly)
-            return [computerDefinition];
-        if (scope?.webOnly)
-            return [webCaptureDefinition];
-        const files = scope && !scope.includeFileTools ? [] : fileDefinitions;
-        const base = [...files, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, browserDefinition].sort((a, b) => a.name.localeCompare(b.name));
-        // Custom tools appear only in the default (unscoped) toolset so scoped
-        // views (desktopOnly/webOnly/skill) keep their exact builtin shape.
-        if (scope)
-            return base;
-        return [...base, ...registry_1.toolRegistry.definitions()];
+        const names = new Set();
+        if (route.capabilities.includes("file-read"))
+            ["file.read", "file.list", "file.exists"].forEach((name) => names.add(name));
+        if (route.capabilities.includes("file-write"))
+            ["file.mkdir", "file.write", "file.patch"].forEach((name) => names.add(name));
+        if (route.capabilities.includes("web"))
+            ["web.capture", "browser"].forEach((name) => names.add(name));
+        if (route.capabilities.includes("desktop-observe") || route.capabilities.includes("desktop-control"))
+            names.add("computer");
+        if (route.capabilities.includes("command"))
+            names.add("command.run");
+        for (const command of commandDefinitions)
+            names.add(command.name);
+        return [...fileDefinitions, genericCommandDefinition, ...commandDefinitions, computerDefinition, webCaptureDefinition, exports.browserDefinition, ...registry_1.toolRegistry.definitions()]
+            .filter((tool) => names.has(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
+    }
+    visibleSnapshot(route) {
+        const definitions = this.definitions(route);
+        return {
+            names: definitions.map((tool) => tool.name),
+            route,
+            schemaHash: node_crypto_1.default.createHash("sha256").update(JSON.stringify(definitions)).digest("hex"),
+        };
     }
     /** Resolve a trusted shortcut into a command action without deciding policy. */
     prepareCommand(action, defaultTimeoutMs) {
@@ -306,8 +327,9 @@ class ToolExecutor {
             command: action,
         };
     }
-    prepare(call, traceId, definitions = this.definitions(), chatId) {
-        const definition = definitions.find((tool) => tool.name === call.name);
+    prepare(call, traceId, definitions, chatId) {
+        const visibleDefinitions = definitions ?? this.definitions();
+        const definition = visibleDefinitions.find((tool) => tool.name === call.name);
         if (!definition)
             throw new Error(`Unknown tool: ${call.name}`);
         const errors = (0, schema_1.validateJsonSchema)(definition.inputSchema, call.arguments, "arguments");
@@ -410,6 +432,11 @@ class ToolExecutor {
         }
         if (call.name === "browser") {
             const args = call.arguments;
+            // Route the provider envelope through the single normalization choke point
+            // so provider validation and runtime validation reject the same malformed
+            // actions before execution (US-027 AC).
+            if (args.action === "act")
+                args.request = (0, contract_1.normalizeActionEnvelope)(args).request;
             const action = {
                 kind: `browser.${args.action}`,
                 ...args
@@ -677,11 +704,13 @@ class ToolExecutor {
             }
             catch (error) {
                 if (error instanceof errors_1.BrowserError) {
+                    const recovery = error.recovery;
+                    const summary = recovery?.requiresNewSnapshot ? `${error.message} Recovery: capture a fresh snapshot.` : error.message;
                     return {
                         ok: false,
                         code: error.code,
-                        summary: error.message,
-                        data: { retryable: error.retryable }
+                        summary,
+                        data: { retryable: error.retryable, ...(recovery ? { recovery } : {}) }
                     };
                 }
                 return { ok: false, code: "BROWSER_ERROR", summary: error instanceof Error ? error.message : String(error) };

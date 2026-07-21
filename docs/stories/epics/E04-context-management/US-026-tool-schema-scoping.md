@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+in_progress
 
 ## Lane
 
@@ -125,4 +125,9 @@ provider.
 - Intake #56, 2026-07-17: merged capability-routing research.
 - Baseline analysis: real trace `tr_mropch57_2b339e0a`, 18 declarations,
   estimated `toolSchemas: 2008`.
-- Planned; no implementation or verification has been claimed.
+- Automated implementation on 2026-07-17: deterministic capability routing,
+  session-bounded active-scope leases, immutable run visibility snapshots,
+  scoped Gemini declarations, and sanitized visibility telemetry. `cd agent &&
+  npm run verify` passed 202 tests.
+- Real-provider/deployment traces remain required before marking this story
+  implemented.

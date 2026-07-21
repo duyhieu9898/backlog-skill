@@ -78,9 +78,40 @@ Date: 2026-07-17
 
 ## Completion Checklist
 
-- [ ] Browser/usage/media tests added and passing.
-- [ ] Legacy stale-ref behavior reconciled with ADR-0020.
-- [ ] `cd agent && npm run verify` passes.
-- [ ] US-026 capability map supports final browser schema set.
-- [ ] Real-provider traces meet all five checks.
-- [ ] Story proof flags/evidence/verify command are updated from real evidence.
+- [x] Browser/usage tests added and passing (media-replay tests deferred to the
+  mảng-4 round; see Status below). `npm run verify` 216/216 on 2026-07-21.
+- [x] Legacy stale-ref behavior reconciled with ADR-0020 (document-generation
+  gate; exact→non-exact fallback removed; confirmation generation gate).
+- [x] `cd agent && npm run verify` passes (216 tests, 2026-07-21).
+- [x] US-026 capability map supports final browser schema set (tool name kept as
+  `browser`; flat envelope normalized to canonical variant, no split this round).
+- [ ] Real-provider traces meet all five checks (deferred — needs live Gemini +
+  browser; deterministic proof #1 covered by unit tests).
+- [ ] Story proof flags/evidence/verify command are updated from real evidence
+  (deferred with the real-trace round).
+
+## Status (2026-07-21)
+
+Round 1 landed mảng 1+2+3 of the story (canonical contract, provider-facing
+schemas, usage normalization) with deterministic tests only:
+
+- Silent-rebind fix: `SnapshotRecord.documentRevision` + `RefStore.bumpGeneration`
+  on every `page.goto`; action-executor generation gate; non-exact fallback
+  removed.
+- Canonical contract: `agent/src/browser/contract.ts` (`normalizeActionEnvelope`
+  choke point, `classifyOutcome`, `buildRecovery`); structured
+  `BrowserActionOutcome` + recovery on `BrowserError`.
+- Confirmation generation gate → `CONFIRMATION_STALE` after navigation even when
+  `snapshotId` matches.
+- Usage: `providerReported.rawSummary` (slim) + `observedModalities`; client
+  image estimate never subtracted from provider totals.
+
+Deferred to a later round:
+
+- Mảng 4 (media replay / asset marker) — greenfield, needs real-provider proof.
+- The five Required Real-Trace Proof items (needs live Gemini + browser).
+- `click_at` coordinate-bound variant — browser currently exposes only ref
+  actions, so the coordinate AC is not yet exercised at runtime.
+- Architectural follow-ups noted separately: split `BrowserRuntimeManager` from
+  `BrowserService`, explicit connection-lifecycle state machine, registry-level
+  generation for reconnect invalidation.

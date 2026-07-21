@@ -74,6 +74,9 @@ class Compactor {
                     timezone: "Asia/Ho_Chi_Minh",
                     locale: "vi-VN",
                 },
+                capabilityRoute: {
+                    capabilities: [], targets: [], continuation: "new", confidence: "low", selectionReason: "compaction has no tools",
+                },
             }, formattedHistory, [], []);
             const summary = response.text?.trim();
             if (!summary) {

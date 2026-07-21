@@ -1,12 +1,13 @@
 import { loadCommandCatalog, type AgentCommand } from "../commands";
 import { loadAgentConfig } from "../config/app";
-import { getContextCheckpoint, listActiveSessionChat, listRecentCommandRuns, listSessionToolContextBlocks, listTraceEvents, getLastFailedCommandRun, getLastFailedToolEvent } from "../storage/repositories";
+import { getContextCheckpoint, listActiveSessionChat, listRecentCommandRuns, listSessionToolContextBlocks, listTraceEvents, getLastFailedCommandRun, getLastFailedToolEvent, getActiveSessionId, getJsonState, setJsonState } from "../storage/repositories";
 import { ContextAssembler } from "./assembler";
 import { renderCheckpoint, type ContextCheckpoint } from "./checkpoint";
 import { retrieveRelevantDurableMemory } from "./memory";
 import type { SkillMetadata, SkillRegistry } from "../skills/registry";
-import type { AiPromptContext, AiToolScope } from "../brain/provider";
+import type { ActiveScopeLease, AiPromptContext } from "../brain/provider";
 import type { StandardMessage } from "../types/messages";
+import { resolveCapabilityRoute } from "./capability-routing";
 
 export type HydratedContext = {
   message: StandardMessage;
@@ -16,9 +17,7 @@ export type HydratedContext = {
 };
 
 const DEBUG_WORDS = ["lỗi", "bug", "vừa rồi", "lúc nãy", "tại sao", "failed", "error"];
-const FILE_WORDS = ["file", "tệp", "thư mục", "folder", "directory", "đọc", "read", "ghi", "write", "patch"];
 const DESKTOP_WORDS = ["desktop", "màn hình", "screenshot", "chụp màn hình", "vscode", "vs code", "visual studio code", "app ", "mở app"];
-const WEB_WORDS = ["http://", "https://", "website", "trang web", "web "];
 
 function redactHistory(content: string): string {
   return content
@@ -80,20 +79,17 @@ export class ContextHydrator {
     const text = message.text.toLowerCase();
     const likelySkill = this.registry.findLikelySkill(text);
     const isDebug = DEBUG_WORDS.some((word) => text.includes(word));
-    const includesFileIntent = FILE_WORDS.some((word) => text.includes(word));
     const includesDesktopIntent = DESKTOP_WORDS.some((word) => text.includes(word));
-    const includesWebIntent = WEB_WORDS.some((word) => text.includes(word));
     const recentRuns = isDebug ? listRecentCommandRuns(message.chatId, 3) : undefined;
     const traceId = this.findTraceId(message.text) || recentRuns?.[0]?.trace_id;
-    const toolScope: AiToolScope | undefined = likelySkill
-      ? { skillSlug: likelySkill.slug, includeFileTools: false }
-      : includesWebIntent
-        ? { includeFileTools: false, webOnly: true }
-        : includesDesktopIntent
-          ? { includeFileTools: false, desktopOnly: true }
-      : includesFileIntent
-        ? { includeFileTools: true }
-        : undefined;
+    const scopeKey = `active_capability_scope:${message.chatId}:${getActiveSessionId(message.chatId)}`;
+    const resolvedScope = resolveCapabilityRoute({
+      text: message.text,
+      traceId: message.traceId,
+      activeLease: getJsonState<ActiveScopeLease>("runtime_state", scopeKey),
+      skillSlug: likelySkill?.slug,
+    });
+    setJsonState("runtime_state", scopeKey, resolvedScope.lease);
 
     let lastFailureSummary: string | undefined;
     if (isDebug) {
@@ -177,7 +173,7 @@ export class ContextHydrator {
         memory: retrieveRelevantDurableMemory(message.text, loadAgentConfig().context?.retrievedMemoryMaxTokens || 3_000),
         runtime: runtimeContext(message.timestamp, lastFailureSummary),
         selectedSkill,
-        toolScope,
+        capabilityRoute: resolvedScope.route,
       },
       relevantRuns: recentRuns,
       relevantTraceEvents: isDebug && traceId ? listTraceEvents(traceId, 50) : undefined,

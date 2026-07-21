@@ -2,9 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ActionExecutor = void 0;
 const ref_store_1 = require("./ref-store");
+const types_1 = require("./types");
 const errors_1 = require("./errors");
+const contract_1 = require("./contract");
 class ActionExecutor {
     async execute(page, targetId, request) {
+        request = (0, types_1.validateBrowserActionRequest)(request);
         // 1. Handlers that do NOT require a locator ref:
         if (request.kind === "press") {
             await page.keyboard.press(request.key);
@@ -24,16 +27,32 @@ class ActionExecutor {
         // 2. Handlers that require a locator ref:
         const { ref, snapshotId } = request;
         if (!ref || !snapshotId) {
-            throw new errors_1.BrowserError("ACTION_FAILED", "Missing ref or snapshotId in action request", false);
+            throw new errors_1.BrowserError("SNAPSHOT_REQUIRED", "Ref actions require both ref and snapshotId.", true);
         }
+        const record = ref_store_1.refStore.getRecord(snapshotId);
+        if (!record)
+            throw new errors_1.BrowserError("SNAPSHOT_NOT_FOUND", `Snapshot "${snapshotId}" is unavailable or expired.`, true);
+        if (record.targetId !== targetId)
+            throw new errors_1.BrowserError("SNAPSHOT_TAB_MISMATCH", "Snapshot belongs to a different browser tab.", true);
         const descriptor = ref_store_1.refStore.getRef(snapshotId, ref);
         if (!descriptor) {
-            throw new errors_1.BrowserError("ELEMENT_NOT_FOUND", `Element reference "${ref}" not found in snapshot "${snapshotId}"`, false);
+            throw new errors_1.BrowserError("REF_NOT_FOUND", `Element reference "${ref}" not found in snapshot "${snapshotId}"`, true);
         }
         const latestSnapshotId = ref_store_1.refStore.getLatestSnapshotId(targetId);
-        const isStale = latestSnapshotId !== snapshotId;
-        let locator = page.getByRole(descriptor.role, { name: descriptor.name, exact: true });
-        // Check count on page
+        if (latestSnapshotId !== snapshotId) {
+            throw new errors_1.BrowserError("SNAPSHOT_STALE_REVISION", "A newer snapshot exists; capture a fresh snapshot before acting.", true, (0, contract_1.buildRecovery)("SNAPSHOT_STALE_REVISION", "a newer snapshot exists"));
+        }
+        // Document-generation gate: navigation bumps the tab's generation, so a
+        // snapshot taken before navigation is stale even if it is still the latest
+        // id. This is the core US-027 silent-rebind fix — a ref must never resolve
+        // against a document other than the one that produced it.
+        if (record.documentRevision !== ref_store_1.refStore.getCurrentGeneration(targetId)) {
+            throw new errors_1.BrowserError("SNAPSHOT_STALE_REVISION", "The page navigated after this snapshot was captured; capture a fresh snapshot before acting.", true, (0, contract_1.buildRecovery)("SNAPSHOT_STALE_REVISION", "document changed since snapshot"));
+        }
+        const locator = page.getByRole(descriptor.role, { name: descriptor.name, exact: true });
+        // Check count on page. No exact→non-exact fallback: a within-snapshot
+        // non-exact match would silently rebind the ref to a different element,
+        // which violates the snapshot-bound contract (ADR-0020).
         let count = 0;
         try {
             count = await locator.count();
@@ -42,29 +61,10 @@ class ActionExecutor {
             throw new errors_1.BrowserError("ACTION_FAILED", `Failed to resolve element count: ${err instanceof Error ? err.message : String(err)}`, false);
         }
         if (count === 0) {
-            // Try non-exact match as a fallback
-            locator = page.getByRole(descriptor.role, { name: descriptor.name });
-            count = await locator.count();
+            throw new errors_1.BrowserError("REF_NOT_ACTIONABLE", `Element reference "${ref}" is no longer actionable on the current document.`, true, (0, contract_1.buildRecovery)("REF_NOT_ACTIONABLE", "role/name not present on this document"));
         }
-        if (isStale) {
-            // Stale Ref Fallback resolution
-            if (count === 0) {
-                throw new errors_1.BrowserError("ELEMENT_NOT_FOUND", `Stale element reference "${ref}" was not found on the page.`, false);
-            }
-            if (count > 1) {
-                throw new errors_1.BrowserError("STALE_ELEMENT_REF", `Stale element reference "${ref}" matched multiple elements (${count}) on the page.`, true);
-            }
-            // If count is exactly 1, we allow the stale ref execution!
-        }
-        else {
-            // Current Ref resolution
-            if (count === 0) {
-                throw new errors_1.BrowserError("ELEMENT_NOT_FOUND", `Element reference "${ref}" not found on the page.`, false);
-            }
-            if (count > 1) {
-                // Ambiguous match, choose first to prevent crash
-                locator = locator.first();
-            }
+        if (count > 1) {
+            throw new errors_1.BrowserError("REF_NOT_ACTIONABLE", `Element reference "${ref}" is ambiguous on the current document.`, true, (0, contract_1.buildRecovery)("REF_NOT_ACTIONABLE", "role/name matches more than one element"));
         }
         // Perform target action
         try {

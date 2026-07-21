@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { BrowserConfirmationStore } = require("../dist/security/browser-confirmation");
+const { refStore } = require("../dist/browser/ref-store");
 
 test("browser confirmation lifecycle", () => {
   const store = new BrowserConfirmationStore();
@@ -141,4 +142,38 @@ test("browser confirmation tab invalidation", () => {
   });
   assert.equal(verify.valid, false);
   assert.equal(verify.code, "CONFIRMATION_ALREADY_USED");
+});
+
+test("browser confirmation is stale after navigation even when snapshotId matches", () => {
+  const store = new BrowserConfirmationStore();
+  const targetId = `tab-rebind-${Date.now()}`;
+  const profile = "default";
+  const snapshotId = refStore.createSnapshot(targetId, profile, "https://a.test");
+
+  store.createGrant({
+    sessionId: "sess-1",
+    runId: "run-1",
+    profile,
+    targetId,
+    snapshotId,
+    actionFingerprint: "fp-1",
+  });
+
+  // Simulate navigation: bumps the tab's document generation. The snapshotId
+  // string is unchanged, so the snapshotId check alone would pass — the
+  // generation gate is what catches the post-navigation grant (US-027).
+  refStore.bumpGeneration(targetId);
+
+  const result = store.findAndConsume({
+    sessionId: "sess-1",
+    runId: "run-1",
+    profile,
+    targetId,
+    snapshotId,
+    actionFingerprint: "fp-1",
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "CONFIRMATION_STALE");
+
+  refStore.clear(targetId);
 });

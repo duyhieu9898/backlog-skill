@@ -109,9 +109,10 @@ test("ContextHydrator loads instructions only for a selected skill", () => {
 
   assert.match(selected.prompt.selectedSkill.instructions, /# Bemo Automation/);
   assert.match(selected.prompt.selectedSkill.instructions, new RegExp(path.resolve(repoSkillsDir, "bemo")));
-  assert.equal(selected.prompt.toolScope.skillSlug, "bemo");
+  assert.equal(selected.prompt.capabilityRoute.skillSlug, "bemo");
+  assert.deepEqual(selected.prompt.capabilityRoute.capabilities, ["skill"]);
   assert.equal(general.prompt.selectedSkill, undefined);
-  assert.equal(general.prompt.toolScope, undefined);
+  assert.deepEqual(general.prompt.capabilityRoute.capabilities, []);
 });
 
 test("default SkillRegistry resolves repository skills outside the service cwd", () => {

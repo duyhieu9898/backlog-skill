@@ -4,7 +4,7 @@ process.env.ALLOW_DATA_URLS = "true";
 
 const { browserService } = require("../dist/browser/browser-service");
 
-test("BrowserService snapshot, act, and stale ref fallback resolution", async () => {
+test("BrowserService binds ref actions to the latest snapshot", async () => {
   const profileName = "test-actions-agent";
 
   // Start browser
@@ -67,71 +67,25 @@ test("BrowserService snapshot, act, and stale ref fallback resolution", async ()
     const snapshotB = await browserService.snapshot(profileName, tab.targetId);
     assert.notEqual(snapshotB.snapshotId, snapshotA.snapshotId);
 
-    // Clicking using stale snapshotA's ref e1 should succeed because the button is still unique on the page
+    // A ref is a snapshot-bound capability, not a selector that can be
+    // rebound to a matching element on a later document.
+    await assert.rejects(
+      async () => {
+        await browserService.act(profileName, tab.targetId, {
+          kind: "click",
+          ref: "e1",
+          snapshotId: snapshotA.snapshotId
+        });
+      },
+      (err) => {
+        assert.equal(err.code, "SNAPSHOT_STALE_REVISION");
+        return true;
+      }
+    );
     const clickedTab = await browserService.act(profileName, tab.targetId, {
-      kind: "click",
-      ref: "e1",
-      snapshotId: snapshotA.snapshotId
+      kind: "click", ref: "e1", snapshotId: snapshotB.snapshotId
     });
     assert.equal(clickedTab.targetId, tab.targetId);
-
-    // 5. Test Fallback Resolution: Navigate to Page C (button is gone, should fail)
-    const htmlC = `data:text/html,
-      <html>
-        <head><title>Page C</title></head>
-        <body>
-          <p>No buttons here</p>
-        </body>
-      </html>
-    `.replace(/\n/g, "");
-
-    await browserService.navigate(profileName, tab.targetId, htmlC);
-    await browserService.snapshot(profileName, tab.targetId);
-
-    // Clicking e1 from snapshotA should now throw ELEMENT_NOT_FOUND
-    await assert.rejects(
-      async () => {
-        await browserService.act(profileName, tab.targetId, {
-          kind: "click",
-          ref: "e1",
-          snapshotId: snapshotA.snapshotId
-        });
-      },
-      (err) => {
-        assert.equal(err.code, "ELEMENT_NOT_FOUND");
-        return true;
-      }
-    );
-
-    // 6. Test Fallback Resolution: Navigate to Page D (ambiguous buttons, should throw STALE_ELEMENT_REF)
-    const htmlD = `data:text/html,
-      <html>
-        <head><title>Page D</title></head>
-        <body>
-          <button>Submit Button</button>
-          <button>Submit Button</button>
-        </body>
-      </html>
-    `.replace(/\n/g, "");
-
-    await browserService.navigate(profileName, tab.targetId, htmlD);
-    await browserService.snapshot(profileName, tab.targetId);
-
-    // Clicking e1 from snapshotA should now throw STALE_ELEMENT_REF with retryable=true
-    await assert.rejects(
-      async () => {
-        await browserService.act(profileName, tab.targetId, {
-          kind: "click",
-          ref: "e1",
-          snapshotId: snapshotA.snapshotId
-        });
-      },
-      (err) => {
-        assert.equal(err.code, "STALE_ELEMENT_REF");
-        assert.equal(err.retryable, true);
-        return true;
-      }
-    );
 
   } finally {
     if (tab) {
@@ -140,6 +94,40 @@ test("BrowserService snapshot, act, and stale ref fallback resolution", async ()
       } catch (err) {
         console.error("Failed to close tab:", err);
       }
+    }
+    await browserService.stop(profileName);
+  }
+});
+
+test("BrowserService rejects a ref after navigation even without a newer snapshot (silent-rebind fix)", async () => {
+  const profileName = "test-actions-rebind";
+
+  await browserService.start(profileName);
+  let tab = null;
+  try {
+    const htmlA = `data:text/html,<html><head><title>A</title></head><body><button>Submit Button</button></body></html>`;
+    tab = await browserService.open(profileName, htmlA);
+    const snapshotA = await browserService.snapshot(profileName, tab.targetId);
+
+    // Navigate to Page B with an identically-named button, but do NOT re-snapshot.
+    const htmlB = `data:text/html,<html><head><title>B</title></head><body><button>Submit Button</button></body></html>`;
+    await browserService.navigate(profileName, tab.targetId, htmlB);
+
+    // Pre-fix: snapshotA would still be "latest" and its ref would silently
+    // rebind to Page B's identically-named button. Post-fix: the document-
+    // generation gate rejects the stale snapshot even though no newer one exists.
+    await assert.rejects(
+      async () => browserService.act(profileName, tab.targetId, { kind: "click", ref: "e1", snapshotId: snapshotA.snapshotId }),
+      (err) => { assert.equal(err.code, "SNAPSHOT_STALE_REVISION"); return true; },
+    );
+
+    // A fresh snapshot on Page B re-enables the ref.
+    const snapshotB = await browserService.snapshot(profileName, tab.targetId);
+    const clicked = await browserService.act(profileName, tab.targetId, { kind: "click", ref: "e1", snapshotId: snapshotB.snapshotId });
+    assert.equal(clicked.targetId, tab.targetId);
+  } finally {
+    if (tab) {
+      try { await browserService.close(profileName, tab.targetId); } catch (err) { console.error("Failed to close tab:", err); }
     }
     await browserService.stop(profileName);
   }

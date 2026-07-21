@@ -516,7 +516,7 @@ test("ContextHydrator builds a minimal, redacted prompt for general conversation
     timestamp: new Date("2026-07-10T18:30:00.000Z"),
   }).prompt;
 
-  assert.deepEqual(prompt.toolScope, undefined);
+  assert.deepEqual(prompt.capabilityRoute.capabilities, []);
   assert.equal(prompt.selectedSkill, undefined);
   assert.deepEqual(prompt.runtime, {
     currentTime: "2026-07-11T01:30:00",
@@ -538,5 +538,5 @@ test("ContextHydrator isolates desktop requests from stale chat tool protocol", 
     provider: "telegram", chatId, userId: "user", text: "Mở VS Code", traceId: "desktop-now", timestamp: new Date(),
   }).prompt;
   assert.deepEqual(prompt.history, []);
-  assert.deepEqual(prompt.toolScope, { includeFileTools: false, desktopOnly: true });
+  assert.deepEqual(prompt.capabilityRoute.capabilities, ["desktop-observe"]);
 });

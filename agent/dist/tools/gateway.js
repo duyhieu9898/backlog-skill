@@ -24,8 +24,11 @@ class ToolGateway {
         this.executor = executor;
         (0, register_tools_1.ensureToolsRegistered)();
     }
-    definitions(scope) {
-        return this.executor.definitions(scope);
+    definitions(route) {
+        return this.executor.definitions(route);
+    }
+    visibleSnapshot(route) {
+        return this.executor.visibleSnapshot(route);
     }
     /** Resolve, validate, and attach an action profile — without authorizing. */
     prepareRaw(call, traceId, definitions, chatId) {

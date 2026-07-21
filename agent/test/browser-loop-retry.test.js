@@ -10,7 +10,7 @@ const { ToolExecutor } = require("../dist/tools/executor");
 const { ToolGateway } = require("../dist/tools/gateway");
 const { AiRouter } = require("../dist/brain/router");
 
-test("AgentToolLoop auto-retry policy on STALE_ELEMENT_REF", async () => {
+test("AgentToolLoop returns stale snapshot recovery to the model without rebinding", async () => {
   const profileName = "test-retry-agent";
   await browserService.start(profileName);
 
@@ -66,15 +66,10 @@ test("AgentToolLoop auto-retry policy on STALE_ELEMENT_REF", async () => {
           };
         }
         
-        // The retry should have occurred, inserting:
-        // step 0: failed browser.act (STALE_ELEMENT_REF)
-        // step 1: browser.snapshot (scheduled internally)
-        // step 2: retried browser.act (BROWSER_ACTION_COMPLETED)
-        assert.equal(input.steps.length, 3);
-        assert.equal(input.steps[0].result.code, "STALE_ELEMENT_REF");
-        assert.equal(input.steps[1].result.code, "BROWSER_SNAPSHOT");
-        assert.equal(input.steps[2].result.code, "BROWSER_ACTION_COMPLETED");
-        
+        assert.equal(input.steps.length, 1);
+        assert.equal(input.steps[0].result.code, "SNAPSHOT_STALE_REVISION");
+        assert.equal(input.steps[0].result.data?.recovery?.requiresNewSnapshot, true);
+
         return { text: "success" };
       }
     };
@@ -101,7 +96,7 @@ test("AgentToolLoop auto-retry policy on STALE_ELEMENT_REF", async () => {
 
     // 5. Verify the results
     assert.equal(response, "success");
-    assert.ok(capturedArtifactId);
+    assert.equal(capturedArtifactId, null);
     
   } finally {
     if (tab) {

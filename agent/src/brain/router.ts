@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { loadAgentConfig, loadSystemPrompt } from "../config/app";
 import { appendRawAiInteraction } from "../logging/aiInteractions";
 import { log } from "../logging/logger";
-import { estimateAiRequestTokens } from "../context/token-estimate";
+import { estimateAiRequestTokens, normalizeUsage } from "../context/token-estimate";
 import type { AiPromptContext, AiProvider, AiResponse, AiToolDefinition, AiToolStep } from "./provider";
 import { GeminiProvider } from "./providers/gemini";
 import { OpenAiProvider } from "./providers/openai";
@@ -103,7 +103,9 @@ export class AiRouter {
         log.info(traceId, "ai.response.received", {
           latencyMs: Date.now() - started,
           selectedTool: response.toolCall?.name,
-          usage: response.usage,
+          usage: normalizeUsage(response.usage, requestTokenEstimate, {
+            traceId, system: activePrompt, context: effectiveContext, userMessage, tools, steps,
+          }),
           attempt: attempt + 1,
         });
         return response;

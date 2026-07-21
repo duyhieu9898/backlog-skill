@@ -87,7 +87,9 @@ class AiRouter {
                 logger_1.log.info(traceId, "ai.response.received", {
                     latencyMs: Date.now() - started,
                     selectedTool: response.toolCall?.name,
-                    usage: response.usage,
+                    usage: (0, token_estimate_1.normalizeUsage)(response.usage, requestTokenEstimate, {
+                        traceId, system: activePrompt, context: effectiveContext, userMessage, tools, steps,
+                    }),
                     attempt: attempt + 1,
                 });
                 return response;

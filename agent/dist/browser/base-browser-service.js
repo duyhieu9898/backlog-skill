@@ -82,6 +82,9 @@ class BaseBrowserService {
                 lease.release();
                 this.profileRegistry.markOperationFinished(resolvedName);
             }
+            // Reused the about:blank tab for a real navigation: bump generation so a
+            // prior about:blank snapshot cannot bind an action to the new document.
+            ref_store_1.refStore.bumpGeneration(activeTab.targetId);
             const title = await activeTab.page.title();
             return {
                 targetId: activeTab.targetId,
@@ -182,6 +185,10 @@ class BaseBrowserService {
         }
         return this.executeTabOperation(profileName, targetId, async (tab) => {
             await tab.page.goto(url, { waitUntil: "load", timeout: 30000 });
+            // Navigation changed the document: any outstanding snapshot is now stale
+            // even if no new one is captured. Bump the tab's generation so a stale
+            // ref cannot silently rebind onto the new document (US-027 silent-rebind).
+            ref_store_1.refStore.bumpGeneration(targetId);
             const title = await tab.page.title();
             return {
                 targetId,

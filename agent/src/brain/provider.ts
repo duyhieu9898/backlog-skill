@@ -31,11 +31,32 @@ export type AiRuntimeContext = {
   lastFailureSummary?: string;
 };
 
-export type AiToolScope = {
+export const capabilityNames = ["file-read", "file-write", "web", "desktop-observe", "desktop-control", "command", "skill"] as const;
+export type Capability = (typeof capabilityNames)[number];
+
+export type CapabilityRoute = {
+  capabilities: Capability[];
+  targets: string[];
+  continuation: "new" | "continued" | "cleared";
+  confidence: "hard-signal" | "lease" | "low";
+  selectionReason: string;
   skillSlug?: string;
-  includeFileTools: boolean;
-  desktopOnly?: boolean;
-  webOnly?: boolean;
+};
+
+export type ActiveScopeLease = {
+  capabilities: Capability[];
+  targets: string[];
+  taskSummary: string;
+  sourceTurn: string;
+  state: "active";
+  expiresAt: string;
+  skillSlug?: string;
+};
+
+export type VisibleToolSnapshot = {
+  names: string[];
+  schemaHash: string;
+  route: CapabilityRoute;
 };
 
 export type AiPromptContext = {
@@ -49,7 +70,7 @@ export type AiPromptContext = {
     description: string;
     instructions?: string;
   };
-  toolScope?: AiToolScope;
+  capabilityRoute: CapabilityRoute;
 };
 
 export type AiRequest = {
@@ -99,6 +120,28 @@ export type AiResponse = {
   toolCall?: AiToolCall;
   clarification?: string;
   usage?: unknown;
+};
+
+export type NormalizedUsage = {
+  providerReported: {
+    inputTokensTotal?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    inputByModality?: Record<string, number>;
+    cachedByModality?: Record<string, number>;
+    observedModalities?: string[];
+    // Slimmed token-relevant fields only. The full raw provider payload lives
+    // in the appendRawAiInteraction log; this summary avoids duplicating heavy
+    // request/response content into every ai.response.received log line.
+    rawSummary: unknown;
+  };
+  clientEstimated: {
+    textTokens: number;
+    toolSchemaTokens: number;
+    toolResultTokens: number;
+    imageTokens: number;
+    estimator: { name: string; version: string; confidence: "low" | "medium" };
+  };
 };
 
 export function validateAiResponse(value: unknown): AiResponse {

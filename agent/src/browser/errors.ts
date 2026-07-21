@@ -4,6 +4,16 @@ export type BrowserErrorCode =
   | "TARGET_NOT_FOUND"
   | "TARGET_ID_MISMATCH"
   | "SNAPSHOT_NOT_FOUND"
+  | "SNAPSHOT_REQUIRED"
+  | "SNAPSHOT_TAB_MISMATCH"
+  | "SNAPSHOT_STALE_REVISION"
+  | "REF_NOT_FOUND"
+  | "REF_NOT_ACTIONABLE"
+  | "REF_INVISIBLE"
+  | "REF_COVERED"
+  | "REF_DETACHED"
+  // Deprecated: never thrown; the live stale-ref code is SNAPSHOT_STALE_REVISION.
+  // Kept in the union only to avoid churning persisted error payloads.
   | "STALE_ELEMENT_REF"
   | "ELEMENT_NOT_FOUND"
   | "ACTION_TIMEOUT"
@@ -42,13 +52,21 @@ export type BrowserErrorCode =
   | "BROWSER_SHUTDOWN_TIMEOUT"
   | "BROWSER_FORCE_KILL_FAILED";
 
+export type BrowserErrorRecovery = {
+  requiresNewSnapshot: boolean;
+  reason: string;
+};
+
 export class BrowserError extends Error {
+  readonly recovery?: BrowserErrorRecovery;
   constructor(
     public readonly code: BrowserErrorCode,
     message: string,
-    public readonly retryable: boolean = false
+    public readonly retryable: boolean = false,
+    recovery?: BrowserErrorRecovery
   ) {
     super(message);
     this.name = "BrowserError";
+    this.recovery = recovery;
   }
 }

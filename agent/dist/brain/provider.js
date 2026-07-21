@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.aiResponseJsonSchema = void 0;
+exports.aiResponseJsonSchema = exports.capabilityNames = void 0;
 exports.validateAiResponse = validateAiResponse;
+exports.capabilityNames = ["file-read", "file-write", "web", "desktop-observe", "desktop-control", "command", "skill"];
 exports.aiResponseJsonSchema = {
     anyOf: [
         {
