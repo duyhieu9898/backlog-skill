@@ -15,7 +15,7 @@ node scripts/dev.js <command> [sub] [flags…]
 | Command | What it does |
 |---|---|
 | `eval [--spec <file>] [--only <id>] [--batch smoke\|A\|B\|all]` | Run an eval spec through the real CLI (`dist/cli.js --json`) in an isolated eval DB; aggregate telemetry; write JSON+MD report to `eval/reports/`. Default spec `eval/real-trace.json`; default batch `smoke`. |
-| `eval diff <old.json> <new.json>` | Diff two eval reports: pass/fail + token deltas per case. Tokens ARE meaningful here (reports read the un-redacted `trace_events` table). |
+| `eval diff <old.json> <new.json> \| --last` | Diff two eval reports: pass/fail + token deltas per case. `--last` auto-picks the two newest reports (review step of the improvement loop). Tokens ARE meaningful here (reports read the un-redacted `trace_events` table). |
 | `logs list [--limit N]` | Recent raw AI-interaction index entries (1-200, default 20). |
 | `logs show <traceId> [--direction request\|response\|error]` | Print every raw record for a trace. |
 | `logs diff <oldTraceId> <newTraceId>` | Diff two raw traces by provider-native fields only (tool-declaration count, image presence, turn count). |
@@ -38,6 +38,14 @@ etc. are `[redacted]` and cannot be compared across eras. `logs diff` therefore
 compares only provider-native, un-redacted fields (declaration count, image
 presence, turns). For token deltas, use `eval diff` — eval reports read the
 un-redacted `trace_events` table.
+
+### command_runs drill-down (debug-skill)
+
+`dev.js` surfaces trace_events + AI logs but NOT `command_runs` (terminal command
+history: exit code, output tail, error). For that one drill-down, use the narrowed
+`skills/debug-skill/scripts/query.py commands|runs <traceId>` — it respects
+`AGENT_DB_FILE` (set to `agent/eval/eval.sqlite` inside the eval loop). trace_events
+and raw AI-log queries stay in `dev.js eval|logs`; query.py no longer duplicates them.
 
 ## lib/
 

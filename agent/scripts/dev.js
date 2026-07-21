@@ -25,9 +25,18 @@ function usage(stream = process.stdout) {
   eval [--spec <file>] [--only <id>] [--batch smoke|A|B|all]
       Run an eval spec against the real CLI. Default spec eval/real-trace.json;
       default batch "smoke" (cheap daily). Proof runs: --batch A (provider-only)
-      | B (browser) | all.
-  eval diff <oldReport.json> <newReport.json>
-      Diff two eval reports (pass/fail + token deltas per case).
+      | B (browser) | all. Provider-resilience env: EVAL_INTER_CASE_MS (cool-down
+      between cases; default 10000 for A/B, 0 for smoke) and EVAL_TIMEOUT_MS
+      (per-turn override — raise during a Gemini 503/429 spike). A case where
+      every turn dies on provider retries is marked ⏳ inconclusive, not failed.
+  eval diff <oldReport.json> <newReport.json> | --last
+      Diff two eval reports (pass/fail + token deltas per case). --last auto-picks
+      the two newest reports in eval/reports/ (frictionless review step). NOTE:
+      --last assumes both reports ran the same case set — mixing smoke + A/B
+      yields only new-case/removed noise.
+  eval prune [--keep N] [--dry-run]
+      Delete eval reports beyond the N newest (default 20; each run = .json + .md).
+      Keeps eval/reports/ traceable over many loop iterations. --dry-run previews.
   logs list [--limit N]
       Recent raw AI-interaction index entries (N: 1-200, default 20).
   logs show <traceId> [--direction request|response|error]
@@ -50,9 +59,50 @@ async function main() {
 
   if (cmd === "eval") {
     if (sub === "diff") {
-      const [oldFile, newFile] = rest;
-      if (!oldFile || !newFile) { process.stderr.write("eval diff needs <oldReport.json> <newReport.json>\n"); process.exit(2); }
+      let oldFile, newFile;
+      if (rest.includes("--last")) {
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const { reportsDir } = require("./lib/bootstrap").getContext();
+        // Report filenames are ISO timestamps → lexicographic sort == chronological.
+        const jsons = fs.readdirSync(reportsDir).filter((f) => f.endsWith(".json")).sort();
+        if (jsons.length < 2) { process.stderr.write(`eval diff --last needs >=2 reports in ${reportsDir}\n`); process.exit(2); }
+        oldFile = path.join(reportsDir, jsons[jsons.length - 2]);
+        newFile = path.join(reportsDir, jsons[jsons.length - 1]);
+      } else {
+        [oldFile, newFile] = rest;
+        if (!oldFile || !newFile) { process.stderr.write("eval diff needs <oldReport.json> <newReport.json> (or --last)\n"); process.exit(2); }
+      }
       console.log(diffReports(oldFile, newFile));
+      return;
+    }
+    if (sub === "prune") {
+      // Reports accumulate unbounded over many loop iterations; keep the N newest
+      // (each run writes <stem>.json + <stem>.md). Keeps history traceable without
+      // drowning the dir. `--dry-run` lists what would be removed.
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const { reportsDir } = require("./lib/bootstrap").getContext();
+      const keepIdx = rest.indexOf("--keep");
+      const keep = keepIdx >= 0 ? Number(rest[keepIdx + 1]) : 20;
+      if (!Number.isFinite(keep) || keep < 0) { process.stderr.write("eval prune --keep must be a non-negative number\n"); process.exit(2); }
+      const stems = [...new Set(fs.readdirSync(reportsDir)
+        .filter((f) => f.endsWith(".json") || f.endsWith(".md"))
+        .map((f) => f.replace(/\.(json|md)$/, "")))]
+        .sort(); // ISO timestamp stems → asc == chronological
+      const remove = stems.slice(0, Math.max(0, stems.length - keep));
+      if (rest.includes("--dry-run")) {
+        console.log(`eval prune (dry-run): would keep ${stems.length - remove.length}/${stems.length}, remove ${remove.length}: ${remove.join(", ") || "(none)"}`);
+        return;
+      }
+      let n = 0;
+      for (const stem of remove) {
+        for (const ext of [".json", ".md"]) {
+          const p = path.join(reportsDir, stem + ext);
+          if (fs.existsSync(p)) { fs.unlinkSync(p); n += 1; }
+        }
+      }
+      console.log(`eval prune: kept ${stems.length - remove.length}/${stems.length} reports, removed ${n} files in ${path.relative(process.cwd(), reportsDir) || reportsDir}`);
       return;
     }
     // runEval sets AGENT_DB_FILE before any dist require — call it directly.

@@ -14,6 +14,54 @@ const dbFile = path.join(evalDir, "eval.sqlite");
 const cliPath = path.join(__dirname, "..", "..", "dist", "cli.js");
 
 /**
+ * Per-turn timeout. EVAL_TIMEOUT_MS overrides the spec globally — use it to give
+ * the agent's internal provider-backoff room to recover during a Gemini
+ * 503/429 spike (execFileSync can't be extended mid-run, so this is an up-front
+ * floor, not a runtime extension).
+ */
+function resolveTimeout(c) {
+  const envT = Number(process.env.EVAL_TIMEOUT_MS);
+  if (Number.isFinite(envT) && envT > 0) return envT;
+  return c.timeoutMs || 120000;
+}
+
+/** Read a non-negative ms value from env, else fallback. */
+function clampEnvMs(name, fallback) {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v >= 0 ? v : fallback;
+}
+
+/**
+ * Synchronous sleep for the inter-case cool-down ("test chậm lại"): bursting N
+ * Gemini calls back-to-back in one process invites 503/429 rate spikes. Atomics.wait
+ * needs no subprocess and burns no CPU; fall back to `sleep` if SAB is unavailable.
+ */
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    execFileSync("sleep", [(ms / 1000).toFixed(3)], { stdio: "ignore" });
+  }
+}
+
+/**
+ * Recover the traceId of a turn whose CLI was killed (timeout / provider 503)
+ * before it printed its final --json envelope. The CLI writes route.started to
+ * trace_events at turn start with payload.chatId = "local-cli:session:<session>";
+ * turns of a case share that chatId and run sequentially, so the k-th
+ * route.started (by id) for the chatId is turn k. Without this recovery, a
+ * provider-killed case reports traces=[] and is invisible in the report.
+ */
+function resolveTraceId(getDb, chatId, turnIndex) {
+  if (!chatId) return null;
+  const rows = getDb().prepare(
+    "SELECT trace_id FROM trace_events WHERE event = ? AND payload_json LIKE ? ORDER BY id ASC LIMIT 1 OFFSET ?",
+  ).all("route.started", `%"chatId":"${chatId}"%`, turnIndex);
+  return rows[0]?.trace_id || null;
+}
+
+/**
  * Run an eval spec. Sets AGENT_DB_FILE, lazy-requires dist modules, asserts the
  * DB routing, runs each case through the real CLI in an isolated DB, aggregates
  * telemetry, writes JSON+MD reports, and prints the markdown to stdout.
@@ -54,12 +102,30 @@ function runEval({ specPath = path.join(evalDir, "real-trace.json"), onlyId, bat
   }
 
   const env = { ...process.env, AGENT_DB_FILE: dbFile };
-  const results = cases.map((c, index) => {
-    const { turns } = runCase(c, index, env);
+  // Inter-case cool-down so a batch doesn't burst provider calls and trip 503/429.
+  // smoke is a fast daily health check (no delay); A/B proof runs space out. Tunable
+  // via EVAL_INTER_CASE_MS (ms). A single --only case never sleeps.
+  const effectiveBatch = onlyId ? "only" : (batch || "smoke");
+  const interCaseMs = clampEnvMs("EVAL_INTER_CASE_MS", effectiveBatch === "smoke" ? 0 : 10000);
+
+  const results = [];
+  for (let index = 0; index < cases.length; index += 1) {
+    const c = cases[index];
+    const { turns, chatId } = runCase(c, index, env);
+    // Recover traceIds the CLI didn't emit (timeout / provider kill) so the case
+    // stays drill-downable instead of reporting traces=[].
+    for (let k = 0; k < turns.length; k += 1) {
+      if (!turns[k].traceId) turns[k].traceId = resolveTraceId(getDb, chatId, k);
+    }
     const metrics = aggregate(turns, { listTraceEvents, listRunSteps, getRun });
-    const verdict = evaluate(c, metrics);
-    return { id: c.id, proof: c.proof || null, batch: c.batch || null, prompts: Array.isArray(c.prompts) ? c.prompts : [c.prompt], expect: c.expect || {}, ...metrics, ...verdict };
-  });
+    // A case where every turn died on provider retries (503/429/5xx) is a provider
+    // outage, not an agent regression — mark it inconclusive instead of failed.
+    const verdict = metrics.providerUnavailable
+      ? { pass: null, inconclusive: true, reasons: ["provider unavailable — timed out retrying 503/429/5xx; not an agent regression"] }
+      : evaluate(c, metrics);
+    results.push({ id: c.id, proof: c.proof || null, batch: c.batch || null, prompts: Array.isArray(c.prompts) ? c.prompts : [c.prompt], expect: c.expect || {}, ...metrics, ...verdict });
+    if (interCaseMs > 0 && index < cases.length - 1) sleepSync(interCaseMs);
+  }
 
   closeDb();
 
@@ -68,7 +134,9 @@ function runEval({ specPath = path.join(evalDir, "real-trace.json"), onlyId, bat
   const summary = {
     total: results.length,
     passed: results.filter((r) => r.pass).length,
-    failed: results.filter((r) => !r.pass).length,
+    failed: results.filter((r) => !r.pass && !r.inconclusive).length,
+    inconclusive: results.filter((r) => r.inconclusive).length,
+    providerErrors: results.reduce((s, r) => s + (r.providerRetries || 0), 0),
     avgMs: Math.round(results.reduce((s, r) => s + r.totalMs, 0) / (results.length || 1)),
     totalTokens: results.reduce((s, r) => s + (r.tokenUsage?.total || 0), 0),
     provider: results.find((r) => r.provider)?.provider || null,
@@ -113,11 +181,13 @@ function runCase(c, index, env) {
   // Multi-turn cases share one session so capability lease state carries across
   // turns (continuation/clearing proofs). Each turn still gets a distinct trace.
   const session = `eval-${Date.now()}-${index}-${c.id}`;
+  const chatId = `local-cli:session:${session}`;
   const prompts = Array.isArray(c.prompts) ? c.prompts : [c.prompt];
   // agentDir is set by runEval before runCase is reached; keep a local ref so
   // runTurn can read it without re-resolving.
-  const turns = prompts.map((prompt) => runTurn(prompt, session, env, c.timeoutMs));
-  return { turns };
+  const timeout = resolveTimeout(c);
+  const turns = prompts.map((prompt) => runTurn(prompt, session, env, timeout));
+  return { turns, chatId };
 }
 
 // `ai.response.received.usage` is a NormalizedUsage object, not flat tokens.
@@ -177,16 +247,21 @@ function aggregate(turns, repo) {
   let model = null;
   let tokenAttribution = null;
   let visibility = null;
+  let providerRetries = 0;
   const denyReasons = [];
   const toolSteps = [];
+  const providerUnavailableTurns = [];
 
   for (let i = 0; i < turns.length; i += 1) {
-    const { traceId } = turns[i];
+    const { traceId, timedOut } = turns[i];
     if (!traceId) continue;
+    let retries = 0;
+    let responded = false;
     const events = repo.listTraceEvents(traceId, 500);
     for (const row of events) {
       const p = safeParse(row.payload_json);
       if (row.event === "ai.response.received") {
+        responded = true;
         if (typeof p.latencyMs === "number") aiMs += p.latencyMs;
         const u = readNormalizedUsage(p.usage);
         if (u) tokens = sumUsage(tokens, u);
@@ -195,7 +270,11 @@ function aggregate(turns, repo) {
       } else if (row.event === "ai.request.created") {
         provider = provider || p.provider;
         model = model || p.model;
-        tokenAttribution = tokenAttribution || p.tokenAttribution || null;
+        // tokenAttribution is a per-turn property, like `visibility` below — take
+        // the FIRST request of the LAST turn so toolSchemasZero / visibleToolsEmpty
+        // assertions reflect the final turn, not turn-1 of a multi-turn case. For
+        // single-turn cases (last === only turn) this is unchanged from first-wins.
+        if (i === turns.length - 1 && !tokenAttribution && p.tokenAttribution) tokenAttribution = p.tokenAttribution;
       } else if (row.event === "ai.tool.visibility.selected") {
         if (i === turns.length - 1) {
           visibility = {
@@ -208,8 +287,14 @@ function aggregate(turns, repo) {
         }
       } else if (row.event === "gateway.decision" && p.outcome === "deny") {
         denyReasons.push(`${p.reasonCode || "DENY"}: ${p.reason || ""}`.trim());
+      } else if (row.event === "ai.retry.scheduled") {
+        retries += 1;
+        providerRetries += 1;
       }
     }
+    // A turn that timed out while retrying provider errors and never got a
+    // successful response was killed by a provider outage, not the agent.
+    providerUnavailableTurns.push(!!timedOut && retries > 0 && !responded);
     for (const s of repo.listRunSteps(traceId)) {
       const result = safeParse(s.result_json);
       toolSteps.push({
@@ -220,6 +305,13 @@ function aggregate(turns, repo) {
       });
     }
   }
+
+  // Inconclusive only when EVERY turn with evidence died on provider retries. A
+  // turn with no trace at all (CLI never started) yields no evidence and stays a
+  // real failure — that signals something other than a provider outage.
+  const providerUnavailable = turns.length > 0
+    && providerUnavailableTurns.length === turns.length
+    && providerUnavailableTurns.every(Boolean);
 
   const run = lastTurn.traceId ? repo.getRun(lastTurn.traceId) : null;
   const failedSteps = toolSteps.filter((s) => !s.ok);
@@ -246,6 +338,8 @@ function aggregate(turns, repo) {
     visibility,
     provider,
     model,
+    providerUnavailable,
+    providerRetries,
     reply: lastTurn.parsed?.reply || null,
   };
 }
@@ -302,7 +396,9 @@ function renderMarkdown(r) {
   lines.push(`# Eval ${r.at}`);
   lines.push("");
   lines.push(`provider: ${r.provider || "?"} | model: ${r.model || "?"}`);
-  lines.push(`Summary: ${r.total} cases — ${r.passed} passed, ${r.failed} failed | avg ${r.avgMs}ms | ${r.totalTokens} tokens`);
+  const inc = r.inconclusive ? `, ${r.inconclusive} provider-inconclusive` : "";
+  const perr = r.providerErrors ? ` | ${r.providerErrors} provider retry(s)` : "";
+  lines.push(`Summary: ${r.total} cases — ${r.passed} passed, ${r.failed} failed${inc} | avg ${r.avgMs}ms | ${r.totalTokens} tokens${perr}`);
   lines.push("");
   lines.push("| id | proof | pass | ms | tokens | img-mod | tools | steps | reason |");
   lines.push("|---|---|---:|---:|---:|---:|---:|---:|---|");
@@ -311,12 +407,14 @@ function renderMarkdown(r) {
     const img = c.tokenUsage?.imageModality ?? "-";
     const ntools = (c.visibility?.visibleToolNames || []).length;
     const reason = c.reasons.join("; ") || "";
-    lines.push(`| ${c.id} | ${c.proof || ""} | ${c.pass ? "✅" : "❌"} | ${c.totalMs} | ${tok} | ${img} | ${ntools} | ${c.toolSteps.length} | ${reason} |`);
+    const mark = c.inconclusive ? "⏳" : (c.pass ? "✅" : "❌");
+    lines.push(`| ${c.id} | ${c.proof || ""} | ${mark} | ${c.totalMs} | ${tok} | ${img} | ${ntools} | ${c.toolSteps.length} | ${reason} |`);
   }
   for (const c of r.cases) {
     lines.push("");
     lines.push(`## ${c.id}`);
     if (c.proof) lines.push(`- proof: ${c.proof}${c.batch ? ` (batch ${c.batch})` : ""}`);
+    if (c.inconclusive) lines.push(`- **provider-inconclusive**: every turn timed out on provider retries (${c.providerRetries || 0}); not an agent regression. Re-run off-peak.`);
     const trace = c.traceIds.length > 1 ? c.traceIds.map((t) => BT + t + BT).join(" → ") : BT + (c.lastTraceId || "(none)") + BT;
     lines.push(`- trace: ${trace}`);
     lines.push(`- prompts: ${c.prompts.map((p) => JSON.stringify(p)).join(" → ")}`);
