@@ -26,7 +26,6 @@ Commands:
   status        Show service status
   logs          Follow service logs
   clear-logs    Delete agent.log, logs/ai-interactions/*, the trace_events table, and vacuum the service journal (keeps runs/approvals/schedules/chat history). Use -y/--force to skip the prompt
-  web-smoke     Capture https://example.com/ in headless Chrome and send it to Telegram
   run           Run a prompt locally and print trace/artifact JSON; does not send Telegram
   enable-login  Keep user services running after logout
 EOF
@@ -198,9 +197,6 @@ case "${1:-}" in
     ensure_installed
     systemctl --user restart "${SERVICE_NAME}.service"
     systemctl --user --no-pager --lines=0 status "${SERVICE_NAME}.service"
-    ;;
-  web-smoke)
-    exec "${NODE_BIN}" "${AGENT_DIR}/scripts/dev.js" smoke web
     ;;
   run)
     shift
