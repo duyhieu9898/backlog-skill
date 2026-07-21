@@ -11,7 +11,7 @@ Risk flags: authorization, audit/security, public workflow, existing behavior.
 ## Work Phases
 
 1. Ensure the reviewed Linux/X11 adapter prerequisites are installed through
-   `agent/scripts/my-agent desktop-deps`.
+   `agent/scripts/my-agent install`.
 2. Define platform-neutral UI snapshot and target contracts using the
    OpenClaw computer-control pattern: actions bind to the observed frame and
    fail closed after target or display changes.

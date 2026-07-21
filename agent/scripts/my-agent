@@ -18,7 +18,6 @@ Usage: my-agent <command>
 
 Commands:
   install       Install Linux/X11 desktop prerequisites, CLI symlink, and systemd user service
-  desktop-deps  Install Linux/X11 desktop automation prerequisites only
   uninstall     Stop and remove systemd user service
   start         Start background agent service
   stop          Stop background agent service
@@ -193,9 +192,6 @@ case "${1:-}" in
     enable_linger
     echo "Installed ${SERVICE_FILE}"
     echo "Installed ${BIN_LINK}"
-    ;;
-  desktop-deps)
-    install_linux_x11_desktop_dependencies
     ;;
   uninstall)
     systemctl --user stop "${SERVICE_NAME}.service" 2>/dev/null || true

@@ -20,8 +20,7 @@ the local client dependencies needed to implement or verify those operations.
 
 On Debian/Ubuntu Linux, `agent/scripts/my-agent install` installs the X11
 desktop adapter prerequisites: `scrot`, `libgtk-3-bin`, `xdotool`, `wmctrl`,
-and `python3-pyatspi`. The same operation is available explicitly as
-`my-agent desktop-deps`.
+and `python3-pyatspi`.
 
 The installer imports the active X11 and user-bus environment into the systemd
 user manager before installing the service. The runtime continues to advertise

@@ -67,12 +67,12 @@ prerequisites used by the X11 adapter: `scrot`, `libgtk-3-bin`, `xdotool`,
 password through `sudo`. Re-run only that prerequisite step with:
 
 ```bash
-./scripts/my-agent desktop-deps
+./scripts/my-agent install
 ```
 
 The adapter stays unavailable outside an X11 session or if the dependencies
-cannot be installed. `MY_AGENT_SKIP_DESKTOP_DEPS=1` skips this explicit setup
-step for non-desktop or CI installations.
+cannot be installed. `MY_AGENT_SKIP_DESKTOP_DEPS=1` skips the
+desktop-prerequisite step within `install` for non-desktop or CI installations.
 
 Make sure `~/.local/bin` is in your `PATH`, then control the background service:
 
