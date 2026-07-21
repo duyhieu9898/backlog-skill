@@ -200,7 +200,7 @@ case "${1:-}" in
     systemctl --user --no-pager --lines=0 status "${SERVICE_NAME}.service"
     ;;
   web-smoke)
-    exec "${NODE_BIN}" "${AGENT_DIR}/scripts/web-capture-smoke.js"
+    exec "${NODE_BIN}" "${AGENT_DIR}/scripts/dev.js" smoke web
     ;;
   run)
     shift

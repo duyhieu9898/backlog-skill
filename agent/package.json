@@ -10,11 +10,12 @@
     "cli": "npm run build && node dist/cli.js",
     "test": "npm run build && node --test test/*.test.js",
     "verify": "npm run test && git diff --check && git diff --cached --check",
-    "test:gemini": "node scripts/test-gemini.js",
-    "ai-logs": "node scripts/ai-logs.js",
-    "diff": "node scripts/eval-diff.js",
-    "smoke:telegram-media": "npm run build && node scripts/telegram-media-smoke.js",
-    "eval": "npm run build && node scripts/eval.js"
+    "smoke:gemini": "node scripts/dev.js smoke gemini",
+    "ai-logs": "node scripts/dev.js logs",
+    "eval:diff": "node scripts/dev.js eval diff",
+    "smoke:telegram-media": "npm run build && node scripts/dev.js smoke telegram",
+    "smoke:web": "node scripts/dev.js smoke web",
+    "eval": "npm run build && node scripts/dev.js eval"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
