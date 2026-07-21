@@ -1,6 +1,27 @@
 {
-  "_readme": "US-026 + US-027 real-trace proof spec. Run via: npm run eval -- --spec eval/real-trace.json --batch A  (provider-only, no browser needed) or --batch B (browser ref-actions, needs Playwright + live page). Each case `id` maps to a Required Real-Trace Proof item; `proof` tags the checklist evidence. Batch B cases marked tuning:true need their expect confirmed against real recovery codes observed in the first run — auto pass/fail is secondary to the report's tool-step drill-down for those.",
+  "_readme": "Eval spec — daily smoke + US-026/US-027 real-trace proof. `npm run eval` runs batch `smoke` by default (cheap, no browser). Scope proof with `--batch A` (provider-only) | `--batch B` (browser, needs Playwright + live page) | `--batch all`, or select one case with `--only <id>`. Each proof case `id` maps to a Required Real-Trace Proof item via `proof`; smoke cases have no proof. Batch B cases marked tuning:true need their expect confirmed against real recovery codes from the first run — auto pass/fail is secondary to the report's tool-step drill-down for those.",
   "cases": [
+    {
+      "id": "smoke-math",
+      "batch": "smoke",
+      "prompt": "2+2 bằng mấy? chỉ trả lời số.",
+      "expect": { "exitCode": 0, "replyContains": "4" },
+      "timeoutMs": 60000
+    },
+    {
+      "id": "smoke-status",
+      "batch": "smoke",
+      "prompt": "/status",
+      "expect": { "exitCode": 0, "replyContains": "uptime" },
+      "timeoutMs": 30000
+    },
+    {
+      "id": "smoke-commands",
+      "batch": "smoke",
+      "prompt": "/commands",
+      "expect": { "exitCode": 0, "replyContains": "bemo" },
+      "timeoutMs": 30000
+    },
     {
       "id": "rt-u026-1-general",
       "proof": "US-026 #1 — general chat exposes no tools",

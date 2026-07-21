@@ -23,7 +23,11 @@
 //     noToolCode/hasToolCode; `--batch A|B` filters cases; `proof` tags each case
 //     with the checklist item it satisfies.
 //
-// Usage: npm run eval [-- --only <id>] [-- --spec <file>] [-- --batch A]
+// Usage: npm run eval                           # default: batch "smoke" (cheap daily)
+//        npm run eval -- --batch A              # US-026/US-027 provider-only proof
+//        npm run eval -- --batch B              # browser proof (needs Playwright + page)
+//        npm run eval -- --batch all            # every case
+//        npm run eval -- --only <id> [-- --spec <file>]
 
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -32,7 +36,7 @@ const path = require("node:path");
 const evalDir = path.join(__dirname, "..", "eval");
 const reportsDir = path.join(evalDir, "reports");
 const dbFile = path.join(evalDir, "eval.sqlite");
-const defaultSpec = path.join(evalDir, "prompts.json");
+const defaultSpec = path.join(evalDir, "real-trace.json");
 const cliPath = path.join(__dirname, "..", "dist", "cli.js");
 
 // AGENT_DB_FILE must be set BEFORE any dist require (paths.ts resolves sqliteFile
@@ -58,13 +62,23 @@ function argFlag(name) {
 }
 const specPath = argFlag("--spec") || defaultSpec;
 const onlyId = argFlag("--only");
-const batch = argFlag("--batch"); // "A" | "B" — real-trace proof batch filter
+const batch = argFlag("--batch"); // smoke | A | B | all
 
 const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
-let cases = (Array.isArray(spec) ? spec : spec.cases).filter((c) => !onlyId || c.id === onlyId);
-if (batch) cases = cases.filter((c) => c.batch === batch);
+const allCases = Array.isArray(spec) ? spec : spec.cases;
+let cases;
+if (onlyId) {
+  cases = allCases.filter((c) => c.id === onlyId);
+} else if (batch === "all") {
+  cases = allCases;
+} else {
+  // Default (no --batch, no --only) runs the cheap `smoke` batch so `npm run
+  // eval` stays a fast daily health check. Scope proof with --batch A | B.
+  const want = batch || "smoke";
+  cases = allCases.filter((c) => c.batch === want);
+}
 if (cases.length === 0) {
-  console.error(`eval: no cases${onlyId ? ` matching id "${onlyId}"` : ""}${batch ? ` in batch "${batch}"` : ""} in ${specPath}.`);
+  console.error(`eval: no cases${onlyId ? ` matching id "${onlyId}"` : ` in batch "${batch || "smoke"}"`} in ${specPath}.`);
   process.exit(2);
 }
 
