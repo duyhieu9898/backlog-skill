@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CLI eval harness (ADR 0017 follow-on).
+// CLI eval harness (ADR 0017 follow-on; extended for US-026/US-027 real-trace proof).
 //
 // Runs a fixed prompt-spec through the REAL CLI (`dist/cli.js --json`) as a black
 // box, then aggregates the telemetry each run already emits (trace_events,
@@ -7,11 +7,23 @@
 // fail/err? why slow? why token-heavy? why wrong? — drillable via traceId.
 //
 // Each case runs in a subprocess against an ISOLATED eval DB (eval/eval.sqlite,
-// via AGENT_DB_FILE) so the production agent.sqlite is untouched. It tests the
-// shared core (Router/gateway/AI/tools) that the future TUI will also use, so
-// results carry forward without duplication.
+// via AGENT_DB_FILE) so the production agent.sqlite is untouched. A case may be a
+// single `prompt` or a multi-turn `prompts: [...]` sequence sharing one session
+// (needed for capability lease continuation/clearing proofs).
 //
-// Usage: npm run eval [-- --only <id>] [-- --spec <file>]
+// Real-trace proof extensions (US-026/US-027):
+//   - visibility extractor reads `ai.tool.visibility.selected` (visible tool
+//     names, schema hash, route continuation).
+//   - usage extractor reads the NormalizedUsage object logged on
+//     `ai.response.received` (provider modality detail + client image estimate),
+//     not flat token fields.
+//   - browser-outcome extractor surfaces each tool step's result code/data so
+//     missing-snapshot / stale-ref rejections are observable.
+//   - `expect` adds visibleTools/routeContinuation/imageModality/toolSchemas/
+//     noToolCode/hasToolCode; `--batch A|B` filters cases; `proof` tags each case
+//     with the checklist item it satisfies.
+//
+// Usage: npm run eval [-- --only <id>] [-- --spec <file>] [-- --batch A]
 
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -46,32 +58,29 @@ function argFlag(name) {
 }
 const specPath = argFlag("--spec") || defaultSpec;
 const onlyId = argFlag("--only");
+const batch = argFlag("--batch"); // "A" | "B" — real-trace proof batch filter
 
 const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
-const cases = (Array.isArray(spec) ? spec : spec.cases).filter((c) => !onlyId || c.id === onlyId);
+let cases = (Array.isArray(spec) ? spec : spec.cases).filter((c) => !onlyId || c.id === onlyId);
+if (batch) cases = cases.filter((c) => c.batch === batch);
 if (cases.length === 0) {
-  console.error(`eval: no cases${onlyId ? ` matching id "${onlyId}"` : ""} in ${specPath}.`);
+  console.error(`eval: no cases${onlyId ? ` matching id "${onlyId}"` : ""}${batch ? ` in batch "${batch}"` : ""} in ${specPath}.`);
   process.exit(2);
 }
 
 // --- per-case run ----------------------------------------------------------
 
-function runCase(c, index) {
-  const env = { ...process.env, AGENT_DB_FILE: dbFile };
+function runTurn(prompt, session, env, timeoutMs) {
   const startedAt = Date.now();
   let stdout = "";
   let exitCode = null;
   let timedOut = false;
   try {
-    // Evaluation cases intentionally receive distinct chat/session identities.
-    // The shared eval DB remains useful for one report, but must never become
-    // working history for a later case.
-    const session = `eval-${Date.now()}-${index}-${c.id}`;
-    stdout = execFileSync(process.execPath, [cliPath, "--json", "--session", session, c.prompt], {
+    stdout = execFileSync(process.execPath, [cliPath, "--json", "--session", session, prompt], {
       cwd: agentDir,
       encoding: "utf8",
       env,
-      timeout: c.timeoutMs || 120000,
+      timeout: timeoutMs || 120000,
       maxBuffer: 8 * 1024 * 1024,
     });
     exitCode = 0;
@@ -80,27 +89,48 @@ function runCase(c, index) {
     stdout = err.stdout || "";
     exitCode = err.status == null ? null : err.status;
   }
-  const totalMs = Date.now() - startedAt;
-
   let parsed = null;
   try { parsed = JSON.parse(stdout.split("\n").find((l) => l.startsWith("{")) || stdout); } catch { /* CLI did not emit JSON */ }
-  const traceId = parsed?.traceId || null;
-  return { traceId, exitCode, timedOut, totalMs, parsed };
+  return { traceId: parsed?.traceId || null, exitCode, timedOut, totalMs: Date.now() - startedAt, parsed };
+}
+
+function runCase(c, index) {
+  const env = { ...process.env, AGENT_DB_FILE: dbFile };
+  // Multi-turn cases share one session so capability lease state carries across
+  // turns (continuation/clearing proofs). Each turn still gets a distinct trace.
+  const session = `eval-${Date.now()}-${index}-${c.id}`;
+  const prompts = Array.isArray(c.prompts) ? c.prompts : [c.prompt];
+  const turns = prompts.map((prompt) => runTurn(prompt, session, env, c.timeoutMs));
+  return { turns };
 }
 
 // --- metric aggregation (reuses existing telemetry) ------------------------
 
-function normalizeUsage(u) {
+// `ai.response.received.usage` is a NormalizedUsage object, not flat tokens.
+function readNormalizedUsage(u) {
   if (!u || typeof u !== "object") return null;
-  const prompt = u.prompt_tokens ?? u.promptTokenCount;
-  const completion = u.completion_tokens ?? u.candidatesTokenCount;
-  const total = u.total_tokens ?? u.totalTokenCount;
-  // Thinking/reasoning tokens (hidden inside completion unless surfaced): Gemini
-  // thoughtsTokenCount, OpenAI completion_tokens_details.reasoning_tokens.
-  const reasoning = u.reasoning_tokens ?? u.completion_tokens_details?.reasoning_tokens ?? null;
-  const thoughts = u.thoughtsTokenCount ?? null;
-  if (prompt == null && completion == null && total == null && reasoning == null && thoughts == null) return null;
-  return { prompt: prompt ?? null, completion: completion ?? null, total: total ?? null, reasoning, thoughts };
+  const pr = u.providerReported || {};
+  const ce = u.clientEstimated || {};
+  const rs = pr.rawSummary || {};
+  const prompt = pr.inputTokensTotal ?? null;
+  const completion = pr.outputTokens ?? null;
+  // NormalizedUsage.providerReported has no flat `totalTokens`; the provider
+  // total lives in the slimmed rawSummary (Gemini totalTokenCount / OpenAI
+  // total_tokens).
+  const total = pr.totalTokens ?? rs.totalTokenCount ?? rs.total_tokens ?? null;
+  const imageModality = pr.inputByModality && typeof pr.inputByModality === "object"
+    ? pr.inputByModality.IMAGE ?? pr.inputByModality.image ?? null
+    : null;
+  if (prompt == null && completion == null && total == null && imageModality == null) return null;
+  return {
+    prompt, completion, total,
+    cacheRead: pr.cacheReadTokens ?? null,
+    imageModality,
+    observedModalities: Array.isArray(pr.observedModalities) ? pr.observedModalities : [],
+    clientImageTokens: typeof ce.imageTokens === "number" ? ce.imageTokens : null,
+    clientToolSchemaTokens: typeof ce.toolSchemaTokens === "number" ? ce.toolSchemaTokens : null,
+    clientToolResultTokens: typeof ce.toolResultTokens === "number" ? ce.toolResultTokens : null,
+  };
 }
 
 function sumUsage(a, b) {
@@ -109,18 +139,22 @@ function sumUsage(a, b) {
   if (!b) return a;
   const add = (x, y) => (x == null || y == null ? (x ?? y ?? null) : x + y);
   return {
+    ...a,
     prompt: add(a.prompt, b.prompt),
     completion: add(a.completion, b.completion),
     total: add(a.total, b.total),
-    reasoning: add(a.reasoning, b.reasoning),
-    thoughts: add(a.thoughts, b.thoughts),
+    cacheRead: add(a.cacheRead, b.cacheRead),
+    imageModality: add(a.imageModality, b.imageModality),
+    clientImageTokens: add(a.clientImageTokens, b.clientImageTokens),
+    clientToolSchemaTokens: add(a.clientToolSchemaTokens, b.clientToolSchemaTokens),
+    clientToolResultTokens: add(a.clientToolResultTokens, b.clientToolResultTokens),
+    observedModalities: Array.from(new Set([...(a.observedModalities || []), ...(b.observedModalities || [])])),
   };
 }
 
-function aggregate(traceId, runResult) {
-  const events = traceId ? listTraceEvents(traceId, 500) : [];
-  const run = traceId ? getRun(traceId) : null;
-  const steps = traceId ? listRunSteps(traceId) : [];
+function aggregate(turns) {
+  const lastTurn = turns[turns.length - 1];
+  const traceIds = turns.map((t) => t.traceId).filter(Boolean);
 
   let aiMs = 0;
   let toolMs = 0;
@@ -128,52 +162,79 @@ function aggregate(traceId, runResult) {
   let provider = null;
   let model = null;
   let tokenAttribution = null;
+  let visibility = null; // from the last turn (what we assert lease proofs against)
   const denyReasons = [];
-  for (const row of events) {
-    const p = safeParse(row.payload_json);
-    if (row.event === "ai.response.received") {
-      if (typeof p.latencyMs === "number") aiMs += p.latencyMs;
-      const u = normalizeUsage(p.usage);
-      if (u) tokens = sumUsage(tokens, u);
-    } else if (row.event === "gateway.executed") {
-      if (typeof p.latencyMs === "number") toolMs += p.latencyMs;
-    } else if (row.event === "ai.request.created") {
-      provider = provider || p.provider;
-      model = model || p.model;
-      tokenAttribution = tokenAttribution || p.tokenAttribution || null;
-    } else if (row.event === "gateway.decision" && p.outcome === "deny") {
-      denyReasons.push(`${p.reasonCode || "DENY"}: ${p.reason || ""}`.trim());
+  const toolSteps = [];
+
+  for (let i = 0; i < turns.length; i += 1) {
+    const { traceId } = turns[i];
+    if (!traceId) continue;
+    const events = listTraceEvents(traceId, 500);
+    for (const row of events) {
+      const p = safeParse(row.payload_json);
+      if (row.event === "ai.response.received") {
+        if (typeof p.latencyMs === "number") aiMs += p.latencyMs;
+        const u = readNormalizedUsage(p.usage);
+        if (u) tokens = sumUsage(tokens, u);
+      } else if (row.event === "gateway.executed") {
+        if (typeof p.latencyMs === "number") toolMs += p.latencyMs;
+      } else if (row.event === "ai.request.created") {
+        provider = provider || p.provider;
+        model = model || p.model;
+        tokenAttribution = tokenAttribution || p.tokenAttribution || null;
+      } else if (row.event === "ai.tool.visibility.selected") {
+        if (i === turns.length - 1) {
+          visibility = {
+            visibleToolNames: Array.isArray(p.visibleToolNames) ? p.visibleToolNames : [],
+            schemaHash: p.schemaHash || null,
+            continuation: p.continuation || null,
+            capabilities: Array.isArray(p.capabilities) ? p.capabilities : [],
+            selectionReason: p.selectionReason || null,
+          };
+        }
+      } else if (row.event === "gateway.decision" && p.outcome === "deny") {
+        denyReasons.push(`${p.reasonCode || "DENY"}: ${p.reason || ""}`.trim());
+      }
+    }
+    for (const s of listRunSteps(traceId)) {
+      const result = safeParse(s.result_json);
+      toolSteps.push({
+        name: s.tool_name,
+        ok: !!result.ok,
+        code: result.code || null,
+        // Surface structured browser/contract outcome data (recovery reason,
+        // stale ref, missing snapshot) so real-trace proofs are observable.
+        data: result.data && typeof result.data === "object" ? result.data : null,
+      });
     }
   }
 
-  const toolSteps = steps.map((s) => {
-    const result = safeParse(s.result_json);
-    return { name: s.tool_name, ok: !!result.ok, code: result.code || null };
-  });
+  const run = lastTurn.traceId ? getRun(lastTurn.traceId) : null;
   const failedSteps = toolSteps.filter((s) => !s.ok);
-
-  const artifact = runResult.parsed?.artifact
-    ? { id: runResult.parsed.artifact.id, mime: runResult.parsed.artifact.mimeType, bytes: runResult.parsed.artifact.byteSize, path: runResult.parsed.artifact.path }
+  const artifact = lastTurn.parsed?.artifact
+    ? { id: lastTurn.parsed.artifact.id, mime: lastTurn.parsed.artifact.mimeType, bytes: lastTurn.parsed.artifact.byteSize, path: lastTurn.parsed.artifact.path }
     : null;
 
   return {
-    traceId,
-    exitCode: runResult.exitCode,
-    timedOut: runResult.timedOut,
+    traceIds,
+    lastTraceId: lastTurn.traceId,
+    exitCode: lastTurn.exitCode,
+    timedOut: lastTurn.timedOut,
     runStatus: run?.status || null,
-    totalMs: runResult.totalMs,
+    totalMs: turns.reduce((sum, t) => sum + t.totalMs, 0),
     aiMs,
     toolMs,
-    aiSteps: events.filter((e) => e.event === "ai.response.received").length,
+    aiSteps: turns.reduce((sum, t) => sum + (t.traceId ? listTraceEvents(t.traceId, 500).filter((e) => e.event === "ai.response.received").length : 0), 0),
     toolSteps,
     failedSteps,
     denyReasons,
     artifact,
     tokenUsage: tokens,
     tokenAttribution,
+    visibility,
     provider,
     model,
-    reply: runResult.parsed?.reply || null,
+    reply: lastTurn.parsed?.reply || null,
   };
 }
 
@@ -187,19 +248,51 @@ function evaluate(c, m) {
   if (e.exitCode !== undefined && m.exitCode !== e.exitCode) reasons.push(`exitCode ${m.exitCode} !== ${e.exitCode}`);
   if (e.runStatus && m.runStatus !== e.runStatus) reasons.push(`runStatus ${m.runStatus} !== ${e.runStatus}`);
   if (e.replyContains && !(m.reply || "").includes(e.replyContains)) reasons.push(`reply missing "${e.replyContains}"`);
+  if (e.replyMatches && !(new RegExp(e.replyMatches).test(m.reply || ""))) reasons.push(`reply !~ /${e.replyMatches}/`);
   if (e.artifactMime && (!m.artifact || m.artifact.mime !== e.artifactMime)) reasons.push(`artifact mime ${m.artifact?.mime || "none"} !== ${e.artifactMime}`);
   if (e.maxToolSteps !== undefined && m.toolSteps.length > e.maxToolSteps) reasons.push(`toolSteps ${m.toolSteps.length} > ${e.maxToolSteps}`);
   if (m.timedOut) reasons.push("timed out");
+
+  // US-026 capability-routing proofs.
+  const names = m.visibility?.visibleToolNames || [];
+  if (e.visibleToolsEmpty && names.length > 0) reasons.push(`expected no visible tools, got [${names.join(", ")}]`);
+  if (e.visibleToolsNotEmpty && names.length === 0) reasons.push("expected a scoped visible-tool set, got []");
+  if (e.visibleToolsMax !== undefined && names.length > e.visibleToolsMax) reasons.push(`visibleTools ${names.length} > ${e.visibleToolsMax}`);
+  if (e.routeContinuation && m.visibility?.continuation !== e.routeContinuation) reasons.push(`route continuation ${m.visibility?.continuation} !== ${e.routeContinuation}`);
+  if (e.toolSchemasZero && (m.tokenAttribution?.toolSchemas ?? 0) > 0) reasons.push(`toolSchemas attribution ${m.tokenAttribution?.toolSchemas} !== 0`);
+
+  // US-027 media-modality proof.
+  if (e.imageModalityNonzero) {
+    const ok = (m.tokenUsage?.imageModality ?? 0) > 0;
+    if (!ok) reasons.push(`expected nonzero provider image modality, got ${m.tokenUsage?.imageModality ?? "none"}`);
+  }
+
+  // US-027 browser-contract proofs (structured outcome codes).
+  const codes = m.toolSteps.map((s) => s.code).filter(Boolean);
+  if (Array.isArray(e.noToolCode)) {
+    for (const bad of e.noToolCode) if (codes.includes(bad)) reasons.push(`forbidden tool code ${bad} appeared`);
+  }
+  if (Array.isArray(e.hasToolCode)) {
+    if (!e.hasToolCode.some((want) => codes.includes(want))) reasons.push(`expected one of [${e.hasToolCode.join(", ")}], got [${codes.join(", ")}]`);
+  }
+
+  // US-026 #5: a risky action in an inherited task still pauses (confirmation)
+  // or blocks (gateway deny) — it must never execute silently.
+  if (e.pausesOrBlocks) {
+    const paused = /xác nhận|approval|approve/i.test(m.reply || "");
+    if (!(m.denyReasons.length > 0 || paused)) reasons.push("risky action did not pause or block");
+  }
+
   return { pass: reasons.length === 0, reasons };
 }
 
 // --- run all + report ------------------------------------------------------
 
 const results = cases.map((c, index) => {
-  const runResult = runCase(c, index);
-  const metrics = aggregate(runResult.traceId, runResult);
+  const { turns } = runCase(c, index);
+  const metrics = aggregate(turns);
   const verdict = evaluate(c, metrics);
-  return { id: c.id, prompt: c.prompt, expect: c.expect || {}, ...metrics, ...verdict };
+  return { id: c.id, proof: c.proof || null, batch: c.batch || null, prompts: Array.isArray(c.prompts) ? c.prompts : [c.prompt], expect: c.expect || {}, ...metrics, ...verdict };
 });
 
 closeDb();
@@ -227,29 +320,50 @@ console.log(renderMarkdown(report));
 
 // ---------------------------------------------------------------------------
 function renderMarkdown(r) {
-  const head = [
-    `# Eval ${r.at}`,
-    ``,
-    `provider: ${r.provider || "?"} | model: ${r.model || "?"}`,
-    `Summary: ${r.total} cases — ${r.passed} passed, ${r.failed} failed | avg ${r.avgMs}ms | ${r.totalTokens} tokens`,
-    ``,
-    `| id | pass | ms | tokens | steps | reason |`,
-    `|---|---|---:|---:|---:|---|`,
-  ];
-  const table = r.cases.map((c) =>
-    `| ${c.id} | ${c.pass ? "✅" : "❌"} | ${c.totalMs} | ${c.tokenUsage?.total ?? "-"} | ${c.toolSteps.length} | ${c.reasons.join("; ") || ""} |`,
-  );
-  const detail = r.cases.map((c) => [
-    ``,
-    `## ${c.id}`,
-    `- traceId: \`${c.traceId || "(none)"}\``,
-    `- exit: ${c.exitCode} | run: ${c.runStatus || "?"} | aiMs: ${c.aiMs} | toolMs: ${c.toolMs} | aiSteps: ${c.aiSteps} | tokens: ${c.tokenUsage ? JSON.stringify(c.tokenUsage) : "n/a"}`,
-    c.tokenAttribution ? `- estimated input attribution: ${JSON.stringify(c.tokenAttribution)}` : "",
-    `- tool steps: ${c.toolSteps.length ? c.toolSteps.map((s) => `${s.name}(${s.ok ? "ok" : s.code || "fail"})`).join(" → ") : "(none)"}`,
-    c.failedSteps.length ? `- failed steps: ${c.failedSteps.map((s) => `${s.name}:${s.code}`).join(", ")}` : ``,
-    c.denyReasons.length ? `- gateway denies: ${c.denyReasons.join("; ")}` : ``,
-    c.artifact ? `- artifact: ${c.artifact.mime} ${c.artifact.bytes} bytes` : ``,
-    c.traceId ? `- drill-down: \`node scripts/ai-logs.js show ${c.traceId}\`` : ``,
-  ].filter(Boolean).join("\n"));
-  return [...head, ...table, ...detail].join("\n") + "\n";
+  const BT = "`";
+  const lines = [];
+  lines.push(`# Eval ${r.at}`);
+  lines.push("");
+  lines.push(`provider: ${r.provider || "?"} | model: ${r.model || "?"}`);
+  lines.push(`Summary: ${r.total} cases — ${r.passed} passed, ${r.failed} failed | avg ${r.avgMs}ms | ${r.totalTokens} tokens`);
+  lines.push("");
+  lines.push("| id | proof | pass | ms | tokens | img-mod | tools | steps | reason |");
+  lines.push("|---|---|---|---:|---:|---:|---:|---:|---|");
+  for (const c of r.cases) {
+    const tok = c.tokenUsage?.total ?? "-";
+    const img = c.tokenUsage?.imageModality ?? "-";
+    const ntools = (c.visibility?.visibleToolNames || []).length;
+    const reason = c.reasons.join("; ") || "";
+    lines.push(`| ${c.id} | ${c.proof || ""} | ${c.pass ? "✅" : "❌"} | ${c.totalMs} | ${tok} | ${img} | ${ntools} | ${c.toolSteps.length} | ${reason} |`);
+  }
+  for (const c of r.cases) {
+    lines.push("");
+    lines.push(`## ${c.id}`);
+    if (c.proof) lines.push(`- proof: ${c.proof}${c.batch ? ` (batch ${c.batch})` : ""}`);
+    const trace = c.traceIds.length > 1 ? c.traceIds.map((t) => BT + t + BT).join(" → ") : BT + (c.lastTraceId || "(none)") + BT;
+    lines.push(`- trace: ${trace}`);
+    lines.push(`- prompts: ${c.prompts.map((p) => JSON.stringify(p)).join(" → ")}`);
+    const tokStr = c.tokenUsage
+      ? JSON.stringify({ prompt: c.tokenUsage.prompt, completion: c.tokenUsage.completion, total: c.tokenUsage.total, imageModality: c.tokenUsage.imageModality })
+      : "n/a";
+    lines.push(`- exit: ${c.exitCode} | run: ${c.runStatus || "?"} | aiMs: ${c.aiMs} | toolMs: ${c.toolMs} | aiSteps: ${c.aiSteps} | tokens: ${tokStr}`);
+    if (c.visibility) {
+      lines.push(`- visibility: continuation=${c.visibility.continuation || "?"} tools=[${(c.visibility.visibleToolNames || []).join(", ")}] capabilities=[${(c.visibility.capabilities || []).join(", ")}]`);
+    } else {
+      lines.push("- visibility: (none)");
+    }
+    if (c.tokenAttribution) {
+      lines.push(`- client attribution: toolSchemas=${c.tokenAttribution.toolSchemas ?? 0} toolSteps=${c.tokenAttribution.toolSteps ?? 0} total=${c.tokenAttribution.totalEstimated ?? "?"}`);
+    }
+    if (c.tokenUsage?.clientImageTokens != null) {
+      lines.push(`- client image estimate: ${c.tokenUsage.clientImageTokens} tokens (never subtracted from provider total)`);
+    }
+    const stepsStr = c.toolSteps.length ? c.toolSteps.map((s) => s.name + "(" + (s.ok ? "ok" : s.code || "fail") + ")").join(" → ") : "(none)";
+    lines.push(`- tool steps: ${stepsStr}`);
+    if (c.failedSteps.length) lines.push(`- failed steps: ${c.failedSteps.map((s) => s.name + ":" + s.code).join(", ")}`);
+    if (c.denyReasons.length) lines.push(`- gateway denies: ${c.denyReasons.join("; ")}`);
+    if (c.artifact) lines.push(`- artifact: ${c.artifact.mime} ${c.artifact.bytes} bytes`);
+    if (c.lastTraceId) lines.push(`- drill-down: ${BT}node scripts/ai-logs.js show ${c.lastTraceId}${BT}`);
+  }
+  return lines.join("\n") + "\n";
 }
