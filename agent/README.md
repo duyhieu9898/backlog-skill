@@ -84,11 +84,7 @@ my-agent status
 my-agent logs
 ```
 
-To keep the user service running after logout:
-
-```bash
-my-agent enable-login
-```
+`install` also enables systemd linger, so the service keeps running after logout/reboot (best-effort — it warns if `loginctl` is unavailable). `uninstall` stops, disables, and removes the service.
 
 The service uses `npm run start` in this `agent` directory and restarts automatically on failure.
 

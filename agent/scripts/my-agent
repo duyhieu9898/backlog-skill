@@ -27,7 +27,6 @@ Commands:
   logs          Follow service logs
   clear-logs    Delete agent.log, logs/ai-interactions/*, the trace_events table, and vacuum the service journal (keeps runs/approvals/schedules/chat history). Use -y/--force to skip the prompt
   run           Run a prompt locally and print trace/artifact JSON; does not send Telegram
-  enable-login  Keep user services running after logout
 EOF
 }
 
@@ -132,6 +131,28 @@ ensure_installed() {
   fi
 }
 
+# Linger keeps the user systemd manager (and my-agent.service) running after
+# logout/reboot. It is a user-wide setting, so install/uninstall toggle it as a
+# best-effort step rather than failing the whole command on a polkit quirk.
+enable_linger() {
+  if ! command -v loginctl >/dev/null 2>&1; then
+    echo "loginctl not found; the service will only run while you are logged in." >&2
+    return
+  fi
+  if loginctl enable-linger "${USER}" 2>/dev/null; then
+    echo "Enabled linger for ${USER} — service runs after logout/reboot."
+  else
+    echo "Could not enable linger; the service will only run while logged in." >&2
+  fi
+}
+
+disable_linger() {
+  if command -v loginctl >/dev/null 2>&1 && loginctl show-user "${USER}" 2>/dev/null | grep -q "^Linger=yes"; then
+    loginctl disable-linger "${USER}" 2>/dev/null || true
+    echo "Disabled linger for ${USER} (user-wide)."
+  fi
+}
+
 clear_logs() {
   local force=0
   if [[ "${2:-}" == "-y" || "${2:-}" == "--force" ]]; then force=1; fi
@@ -169,6 +190,7 @@ case "${1:-}" in
     install_linux_x11_desktop_dependencies
     install_cli
     install_service
+    enable_linger
     echo "Installed ${SERVICE_FILE}"
     echo "Installed ${BIN_LINK}"
     ;;
@@ -183,6 +205,7 @@ case "${1:-}" in
     if [[ -L "${BIN_LINK}" && "$(readlink -f "${BIN_LINK}")" == "${SCRIPT_PATH}" ]]; then
       rm -f "${BIN_LINK}"
     fi
+    disable_linger
     echo "Uninstalled ${SERVICE_NAME}"
     ;;
   start)
@@ -210,10 +233,6 @@ case "${1:-}" in
     ;;
   clear-logs)
     clear_logs "$@"
-    ;;
-  enable-login)
-    loginctl enable-linger "${USER}"
-    echo "Enabled linger for ${USER}"
     ;;
   -h|--help|help|"")
     usage
