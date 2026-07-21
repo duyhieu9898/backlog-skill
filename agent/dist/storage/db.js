@@ -64,7 +64,12 @@ function initializeSchema(database = getDb()) {
       local_path TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       delivered_at TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      -- US-027 mảng 4: media replay metadata. Bytes (local_path) may be pruned
+      -- after delivery while these columns stay queryable for audit + replay.
+      width INTEGER,
+      height INTEGER,
+      observation_summary TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_artifacts_expiry ON artifacts(expires_at);
@@ -218,6 +223,7 @@ function initializeSchema(database = getDb()) {
   `);
     migrateScheduledJobs();
     migrateChatMessages();
+    migrateArtifacts();
 }
 function migrateScheduledJobs() {
     const columns = new Set(db
@@ -254,6 +260,21 @@ function migrateChatMessages() {
     if (!columns.has("session_id")) {
         db.prepare(`ALTER TABLE chat_messages ADD COLUMN session_id TEXT`).run();
         db.prepare(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)`).run();
+    }
+}
+function migrateArtifacts() {
+    const columns = new Set(db
+        .prepare(`PRAGMA table_info(artifacts)`)
+        .all()
+        .map((row) => row.name));
+    if (!columns.has("width")) {
+        db.prepare(`ALTER TABLE artifacts ADD COLUMN width INTEGER`).run();
+    }
+    if (!columns.has("height")) {
+        db.prepare(`ALTER TABLE artifacts ADD COLUMN height INTEGER`).run();
+    }
+    if (!columns.has("observation_summary")) {
+        db.prepare(`ALTER TABLE artifacts ADD COLUMN observation_summary TEXT`).run();
     }
 }
 function closeDb() {

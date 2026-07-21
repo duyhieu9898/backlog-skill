@@ -20,14 +20,53 @@ export type ArtifactRow = {
   expires_at: string;
   delivered_at: string | null;
   created_at: string;
+  // US-027 mảng 4: media replay metadata. Nullable for pre-migration rows and
+  // for non-image artifacts. Survive byte pruning for audit + replay-by-asset-id.
+  width: number | null;
+  height: number | null;
+  observation_summary: string | null;
 };
 
 export function insertArtifact(row: ArtifactRow): void {
-  getDb().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at)`).run(row);
+  getDb().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at, width, height, observation_summary) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at, @width, @height, @observation_summary)`).run(row);
 }
 
 export function getArtifact(id: string): ArtifactRow | null {
   return (getDb().prepare(`SELECT * FROM artifacts WHERE id = ?`).get(id) as ArtifactRow | undefined) || null;
+}
+
+/**
+ * Metadata-only projection of an artifact (excludes the byte pointer
+ * `local_path`). Stays queryable after `markDelivered` prunes the bytes, so an
+ * old screenshot can be represented/retrieved by asset id for audit and replay.
+ */
+export type ArtifactMetadata = {
+  id: string;
+  mime_type: string;
+  sha256: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  observation_summary: string | null;
+  delivered_at: string | null;
+  created_at: string;
+};
+
+export function getArtifactMetadata(id: string): ArtifactMetadata | null {
+  return (getDb().prepare(
+    `SELECT id, mime_type, sha256, byte_size, width, height, observation_summary, delivered_at, created_at
+     FROM artifacts WHERE id = ?`,
+  ).get(id) as ArtifactMetadata | undefined) || null;
+}
+
+/** Find an available (undelivered, unexpired) artifact by content hash for
+ *  deduplication, so identical media is persisted once (research §182). */
+export function getArtifactByHash(sha256: string, ownerChatId: string): ArtifactRow | null {
+  return (getDb().prepare(
+    `SELECT * FROM artifacts
+     WHERE sha256 = ? AND owner_chat_id = ? AND delivered_at IS NULL AND expires_at > ?
+     ORDER BY created_at DESC LIMIT 1`,
+  ).get(sha256, ownerChatId, nowIso()) as ArtifactRow | undefined) || null;
 }
 
 export function markArtifactDelivered(id: string): void {

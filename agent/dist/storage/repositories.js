@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.insertArtifact = insertArtifact;
 exports.getArtifact = getArtifact;
+exports.getArtifactMetadata = getArtifactMetadata;
+exports.getArtifactByHash = getArtifactByHash;
 exports.markArtifactDelivered = markArtifactDelivered;
 exports.deleteArtifact = deleteArtifact;
 exports.listExpiredArtifacts = listExpiredArtifacts;
@@ -55,10 +57,21 @@ const node_crypto_1 = require("node:crypto");
 const db_1 = require("./db");
 const app_1 = require("../config/app");
 function insertArtifact(row) {
-    (0, db_1.getDb)().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at)`).run(row);
+    (0, db_1.getDb)().prepare(`INSERT INTO artifacts (id, owner_chat_id, source_trace_id, mime_type, byte_size, sha256, local_path, expires_at, delivered_at, created_at, width, height, observation_summary) VALUES (@id, @owner_chat_id, @source_trace_id, @mime_type, @byte_size, @sha256, @local_path, @expires_at, @delivered_at, @created_at, @width, @height, @observation_summary)`).run(row);
 }
 function getArtifact(id) {
     return (0, db_1.getDb)().prepare(`SELECT * FROM artifacts WHERE id = ?`).get(id) || null;
+}
+function getArtifactMetadata(id) {
+    return (0, db_1.getDb)().prepare(`SELECT id, mime_type, sha256, byte_size, width, height, observation_summary, delivered_at, created_at
+     FROM artifacts WHERE id = ?`).get(id) || null;
+}
+/** Find an available (undelivered, unexpired) artifact by content hash for
+ *  deduplication, so identical media is persisted once (research §182). */
+function getArtifactByHash(sha256, ownerChatId) {
+    return (0, db_1.getDb)().prepare(`SELECT * FROM artifacts
+     WHERE sha256 = ? AND owner_chat_id = ? AND delivered_at IS NULL AND expires_at > ?
+     ORDER BY created_at DESC LIMIT 1`).get(sha256, ownerChatId, nowIso()) || null;
 }
 function markArtifactDelivered(id) {
     (0, db_1.getDb)().prepare(`UPDATE artifacts SET delivered_at = ? WHERE id = ?`).run(nowIso(), id);

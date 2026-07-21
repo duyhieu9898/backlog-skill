@@ -266,7 +266,11 @@ class AgentToolLoop {
             (0, repositories_1.finishRun)(pending.run_id, result.ok ? "completed" : "failed", result.ok ? undefined : result.summary);
             return formatResult(result);
         }
-        const steps = payload.continuation.steps.map((step) => ({ ...step, image: modelImageForResult(step.result, message.chatId) }));
+        // US-027 mảng 4: selective hydrate on resume. Continuation steps are
+        // historical — they replay as text/observation markers, never re-read as
+        // base64. Only the step about to become current (the freshly executed action)
+        // hydrates inline bytes, keeping the resumed turn inside the image budget.
+        const steps = payload.continuation.steps.map((step) => ({ ...step }));
         appendStep(pending.run_id, steps, { call: payload.call, result, image: modelImageForResult(result, message.chatId) });
         const reply = await this.run(message, payload.continuation.context, onReplyMarkup, onArtifact, steps, payload.continuation.userMessage, pending.run_id, signal);
         (0, repositories_1.finishRun)(pending.run_id, signal?.aborted ? "cancelled" : "completed");

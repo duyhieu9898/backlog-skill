@@ -1,9 +1,10 @@
 import { loadCommandCatalog, type AgentCommand } from "../commands";
 import { loadAgentConfig } from "../config/app";
-import { getContextCheckpoint, listActiveSessionChat, listRecentCommandRuns, listSessionToolContextBlocks, listTraceEvents, getLastFailedCommandRun, getLastFailedToolEvent, getActiveSessionId, getJsonState, setJsonState } from "../storage/repositories";
+import { getContextCheckpoint, getArtifactMetadata, listActiveSessionChat, listRecentCommandRuns, listSessionToolContextBlocks, listTraceEvents, getLastFailedCommandRun, getLastFailedToolEvent, getActiveSessionId, getJsonState, setJsonState } from "../storage/repositories";
 import { ContextAssembler } from "./assembler";
 import { renderCheckpoint, type ContextCheckpoint } from "./checkpoint";
 import { retrieveRelevantDurableMemory } from "./memory";
+import { defaultReplayLimits, extractArtifactId, observationMarkerFromRef, renderObservationMarker, selectAssetsForReplay, type MediaAssetRef } from "./media-asset";
 import type { SkillMetadata, SkillRegistry } from "../skills/registry";
 import type { ActiveScopeLease, AiPromptContext } from "../brain/provider";
 import type { StandardMessage } from "../types/messages";
@@ -40,14 +41,68 @@ function softTrimToolResult(value: string, maxChars: number): string {
   return `${value.slice(0, head)}\n[...old tool result trimmed in working context...]\n${value.slice(-tail)}`;
 }
 
-function toolContextBlock(callJson: string, resultJson: string, maxChars: number): string {
+function toolContextBlock(callJson: string, resultJson: string, maxChars: number, mediaMarker?: string): string {
   let call = callJson;
   let result = resultJson;
   try { call = JSON.stringify(JSON.parse(callJson)); } catch {}
   try { result = JSON.stringify(JSON.parse(resultJson)); } catch {}
   // Call and result are deliberately one context entry. The assembler may keep
   // or omit the block, but can never split an orphaned tool result from its call.
-  return `[TOOL CALL]\n${call}\n[TOOL RESULT]\n${softTrimToolResult(result, maxChars)}`;
+  const body = `[TOOL CALL]\n${call}\n[TOOL RESULT]\n${softTrimToolResult(result, maxChars)}`;
+  // US-027 mảng 4: an old tool screenshot is replayed as an informative text
+  // marker instead of re-embedded pixels. The marker is metadata-only and never
+  // revives the snapshot-bound browser ref that produced the screenshot.
+  return mediaMarker ? `${body}\n${mediaMarker}` : body;
+}
+
+type ToolContextEntry = ReturnType<typeof listSessionToolContextBlocks>[number];
+
+/** Build replay tool-context blocks, attaching a media marker to any block whose
+ *  result references a persisted artifact. The configured budget of most-recent
+ *  screenshots hydrate with a full marker; older ones are reduced to minimal. */
+function buildToolBlocks(
+  entries: ToolContextEntry[],
+  currentTraceId: string,
+  maxChars: number,
+  limits: ReturnType<typeof defaultReplayLimits>,
+): Array<{ role: "system"; content: string; createdAt: string }> {
+  const blocks = entries.filter((entry) => entry.trace_id !== currentTraceId);
+
+  // Resolve asset refs in block order (created_at ASC, id ASC = recency order).
+  const refs: Array<{ index: number; ref: MediaAssetRef }> = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(blocks[index].result_json); } catch { continue; }
+    const id = extractArtifactId(parsed);
+    if (!id) continue;
+    const meta = getArtifactMetadata(id);
+    if (!meta) continue;
+    refs.push({
+      index,
+      ref: {
+        assetId: meta.id,
+        mimeType: meta.mime_type,
+        sha256: meta.sha256,
+        byteSize: meta.byte_size,
+        ...(meta.width !== null ? { width: meta.width } : {}),
+        ...(meta.height !== null ? { height: meta.height } : {}),
+        ...(meta.observation_summary ? { observationSummary: meta.observation_summary } : {}),
+      },
+    });
+  }
+
+  // The budget applies to artifact-bearing blocks by recency.
+  const detailByPosition = selectAssetsForReplay(refs.map((entry) => entry.ref), limits);
+  const markerByIndex = new Map<number, string>();
+  refs.forEach((entry, position) => {
+    markerByIndex.set(entry.index, renderObservationMarker(observationMarkerFromRef(entry.ref, detailByPosition[position])));
+  });
+
+  return blocks.map((entry, index) => ({
+    role: "system" as const,
+    content: toolContextBlock(entry.call_json, entry.result_json, maxChars, markerByIndex.get(index)),
+    createdAt: entry.created_at,
+  }));
 }
 
 function runtimeContext(timestamp: Date, lastFailureSummary?: string): AiPromptContext["runtime"] {
@@ -132,13 +187,12 @@ export class ContextHydrator {
               createdAt: entry.created_at,
             }))
             .filter((entry) => entry.content.length > 0),
-            ...listSessionToolContextBlocks(message.chatId)
-              .filter((entry) => entry.trace_id !== message.traceId)
-              .map((entry) => ({
-                role: "system" as const,
-                content: toolContextBlock(entry.call_json, entry.result_json, loadAgentConfig().context?.toolResultSoftTrimChars || 4_000),
-                createdAt: entry.created_at,
-              })),
+            ...buildToolBlocks(
+              listSessionToolContextBlocks(message.chatId),
+              message.traceId,
+              loadAgentConfig().context?.toolResultSoftTrimChars || 4_000,
+              defaultReplayLimits(loadAgentConfig().context?.mediaReplay),
+            ),
           ]
             .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
             .map(({ role, content }) => ({ role, content }))

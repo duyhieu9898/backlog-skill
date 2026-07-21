@@ -62,6 +62,11 @@ export type AgentConfig = {
     retrievedMemoryMaxTokens?: number;
     toolResultSoftTrimChars?: number;
     keepRecentAssistantTurnsFromPruning?: number;
+    mediaReplay?: {
+      maxHydratedScreenshots?: number;
+      imageInputBudgetTokens?: number;
+      maxRecentTurns?: number;
+    };
   };
   logging?: {
     rawAiInteractions?: boolean;
@@ -161,6 +166,11 @@ const defaultConfig: AgentConfig = {
     retrievedMemoryMaxTokens: 3_000,
     toolResultSoftTrimChars: 4_000,
     keepRecentAssistantTurnsFromPruning: 3,
+    mediaReplay: {
+      maxHydratedScreenshots: 2,
+      imageInputBudgetTokens: 6_000,
+      maxRecentTurns: 3,
+    },
   },
   logging: {
     rawAiInteractions: true,

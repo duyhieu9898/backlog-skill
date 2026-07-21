@@ -78,11 +78,15 @@ Date: 2026-07-17
 
 ## Completion Checklist
 
-- [x] Browser/usage tests added and passing (media-replay tests deferred to the
-  mảng-4 round; see Status below). `npm run verify` 216/216 on 2026-07-21.
+- [x] Browser/usage tests added and passing. `npm run verify` 230/230 on
+  2026-07-21 (216 round-1 + 14 media-replay from the mảng-4 round).
+- [x] Mảng 4 (media replay / asset marker) landed with deterministic tests:
+  `agent/test/media-replay.test.js` — asset persistence + dimensions, hash
+  dedup, current/recent hydrate vs old observation marker, rehydrate-by-asset
+  (metadata-only, no ref revival), and audit retention past byte deletion.
 - [x] Legacy stale-ref behavior reconciled with ADR-0020 (document-generation
   gate; exact→non-exact fallback removed; confirmation generation gate).
-- [x] `cd agent && npm run verify` passes (216 tests, 2026-07-21).
+- [x] `cd agent && npm run verify` passes (230 tests, 2026-07-21).
 - [x] US-026 capability map supports final browser schema set (tool name kept as
   `browser`; flat envelope normalized to canonical variant, no split this round).
 - [ ] Real-provider traces meet all five checks (deferred — needs live Gemini +
@@ -106,10 +110,27 @@ schemas, usage normalization) with deterministic tests only:
 - Usage: `providerReported.rawSummary` (slim) + `observedModalities`; client
   image estimate never subtracted from provider totals.
 
+Mảng 4 (media replay / asset marker) landed on 2026-07-21 with deterministic
+tests only:
+
+- New `agent/src/context/media-asset.ts`: `MediaAssetRef` (metadata-only, no
+  browser-ref authority), `ObservationMarker` + `renderObservationMarker`,
+  metadata-only `rehydrateAssetRef`, `pngDimensions`, and the config-driven
+  `selectAssetsForReplay` budget selector.
+- Artifacts persist dimensions + observation summary once; identical media
+  deduplicates by content hash (`getArtifactByHash`); `markDelivered` prunes
+  bytes but keeps the metadata row queryable for audit / replay-by-asset-id.
+- The replay view (`hydrator.buildToolBlocks`) renders old screenshots as text
+  markers — full for the configured budget of recent screenshots, minimal for
+  older ones — and never re-embeds base64 or revives snapshot-bound refs.
+- Resume (`loop.consumeScopedApproval`) no longer re-reads bytes for historical
+  continuation steps; only the step about to become current hydrates inline.
+
 Deferred to a later round:
 
-- Mảng 4 (media replay / asset marker) — greenfield, needs real-provider proof.
-- The five Required Real-Trace Proof items (needs live Gemini + browser).
+- The five Required Real-Trace Proof items (needs live Gemini + browser),
+  including the mảng-4 proof: an old screenshot rehydrates by asset id while its
+  old ref stays non-actionable against a live `RefStore`.
 - `click_at` coordinate-bound variant — browser currently exposes only ref
   actions, so the coordinate AC is not yet exercised at runtime.
 - Architectural follow-ups noted separately: split `BrowserRuntimeManager` from

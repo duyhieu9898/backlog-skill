@@ -6,6 +6,7 @@ const repositories_1 = require("../storage/repositories");
 const assembler_1 = require("./assembler");
 const checkpoint_1 = require("./checkpoint");
 const memory_1 = require("./memory");
+const media_asset_1 = require("./media-asset");
 const capability_routing_1 = require("./capability-routing");
 const DEBUG_WORDS = ["lỗi", "bug", "vừa rồi", "lúc nãy", "tại sao", "failed", "error"];
 const DESKTOP_WORDS = ["desktop", "màn hình", "screenshot", "chụp màn hình", "vscode", "vs code", "visual studio code", "app ", "mở app"];
@@ -29,7 +30,7 @@ function softTrimToolResult(value, maxChars) {
     const tail = maxChars - head;
     return `${value.slice(0, head)}\n[...old tool result trimmed in working context...]\n${value.slice(-tail)}`;
 }
-function toolContextBlock(callJson, resultJson, maxChars) {
+function toolContextBlock(callJson, resultJson, maxChars, mediaMarker) {
     let call = callJson;
     let result = resultJson;
     try {
@@ -42,7 +43,57 @@ function toolContextBlock(callJson, resultJson, maxChars) {
     catch { }
     // Call and result are deliberately one context entry. The assembler may keep
     // or omit the block, but can never split an orphaned tool result from its call.
-    return `[TOOL CALL]\n${call}\n[TOOL RESULT]\n${softTrimToolResult(result, maxChars)}`;
+    const body = `[TOOL CALL]\n${call}\n[TOOL RESULT]\n${softTrimToolResult(result, maxChars)}`;
+    // US-027 mảng 4: an old tool screenshot is replayed as an informative text
+    // marker instead of re-embedded pixels. The marker is metadata-only and never
+    // revives the snapshot-bound browser ref that produced the screenshot.
+    return mediaMarker ? `${body}\n${mediaMarker}` : body;
+}
+/** Build replay tool-context blocks, attaching a media marker to any block whose
+ *  result references a persisted artifact. The configured budget of most-recent
+ *  screenshots hydrate with a full marker; older ones are reduced to minimal. */
+function buildToolBlocks(entries, currentTraceId, maxChars, limits) {
+    const blocks = entries.filter((entry) => entry.trace_id !== currentTraceId);
+    // Resolve asset refs in block order (created_at ASC, id ASC = recency order).
+    const refs = [];
+    for (let index = 0; index < blocks.length; index += 1) {
+        let parsed;
+        try {
+            parsed = JSON.parse(blocks[index].result_json);
+        }
+        catch {
+            continue;
+        }
+        const id = (0, media_asset_1.extractArtifactId)(parsed);
+        if (!id)
+            continue;
+        const meta = (0, repositories_1.getArtifactMetadata)(id);
+        if (!meta)
+            continue;
+        refs.push({
+            index,
+            ref: {
+                assetId: meta.id,
+                mimeType: meta.mime_type,
+                sha256: meta.sha256,
+                byteSize: meta.byte_size,
+                ...(meta.width !== null ? { width: meta.width } : {}),
+                ...(meta.height !== null ? { height: meta.height } : {}),
+                ...(meta.observation_summary ? { observationSummary: meta.observation_summary } : {}),
+            },
+        });
+    }
+    // The budget applies to artifact-bearing blocks by recency.
+    const detailByPosition = (0, media_asset_1.selectAssetsForReplay)(refs.map((entry) => entry.ref), limits);
+    const markerByIndex = new Map();
+    refs.forEach((entry, position) => {
+        markerByIndex.set(entry.index, (0, media_asset_1.renderObservationMarker)((0, media_asset_1.observationMarkerFromRef)(entry.ref, detailByPosition[position])));
+    });
+    return blocks.map((entry, index) => ({
+        role: "system",
+        content: toolContextBlock(entry.call_json, entry.result_json, maxChars, markerByIndex.get(index)),
+        createdAt: entry.created_at,
+    }));
 }
 function runtimeContext(timestamp, lastFailureSummary) {
     const runtime = (0, app_1.loadAgentConfig)().runtime;
@@ -125,13 +176,7 @@ class ContextHydrator {
                     createdAt: entry.created_at,
                 }))
                     .filter((entry) => entry.content.length > 0),
-                ...(0, repositories_1.listSessionToolContextBlocks)(message.chatId)
-                    .filter((entry) => entry.trace_id !== message.traceId)
-                    .map((entry) => ({
-                    role: "system",
-                    content: toolContextBlock(entry.call_json, entry.result_json, (0, app_1.loadAgentConfig)().context?.toolResultSoftTrimChars || 4_000),
-                    createdAt: entry.created_at,
-                })),
+                ...buildToolBlocks((0, repositories_1.listSessionToolContextBlocks)(message.chatId), message.traceId, (0, app_1.loadAgentConfig)().context?.toolResultSoftTrimChars || 4_000, (0, media_asset_1.defaultReplayLimits)((0, app_1.loadAgentConfig)().context?.mediaReplay)),
             ]
                 .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
                 .map(({ role, content }) => ({ role, content })));
