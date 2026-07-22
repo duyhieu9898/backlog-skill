@@ -81,7 +81,7 @@ test("SkillRegistry does not select on a description-only token match", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-skills-"));
   // The description contains a common word ("một") that an unrelated query also uses.
   // Without a slug/name signal this must NOT select the skill — a single description
-  // token picking a skill caused the rt-u026-3 over-match (debug-skill via "một").
+  // token picking a skill caused the rt-u026-3 over-match (debug-eval-loop-skill via "một").
   writeSkill(root, "probe", "name: Probe\ndescription: debug một case fail/timeout.");
   const registry = new SkillRegistry(root);
   assert.equal(registry.findLikelySkill("chụp lại ảnh đó một lần nữa"), undefined);

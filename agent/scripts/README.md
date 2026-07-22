@@ -39,11 +39,11 @@ compares only provider-native, un-redacted fields (declaration count, image
 presence, turns). For token deltas, use `eval diff` — eval reports read the
 un-redacted `trace_events` table.
 
-### command_runs drill-down (debug-skill)
+### command_runs drill-down (debug-eval-loop-skill)
 
 `dev.js` surfaces trace_events + AI logs but NOT `command_runs` (terminal command
 history: exit code, output tail, error). For that one drill-down, use the narrowed
-`skills/debug-skill/scripts/query.py commands|runs <traceId>` — it respects
+`skills/debug-eval-loop-skill/scripts/query.py commands|runs <traceId>` — it respects
 `AGENT_DB_FILE` (set to `agent/eval/eval.sqlite` inside the eval loop). trace_events
 and raw AI-log queries stay in `dev.js eval|logs`; query.py no longer duplicates them.
 

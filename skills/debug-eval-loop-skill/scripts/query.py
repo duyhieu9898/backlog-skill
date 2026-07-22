@@ -16,7 +16,7 @@ import os
 import sqlite3
 import json
 
-# Resolve paths: skills/debug-skill/scripts/query.py -> my-agents/agent
+# Resolve paths: skills/debug-eval-loop-skill/scripts/query.py -> my-agents/agent
 skills_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 agent_dir = os.path.join(os.path.dirname(skills_dir), 'agent')
 DEFAULT_SQLITE = os.path.join(agent_dir, 'data', 'agent.sqlite')
