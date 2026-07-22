@@ -22,13 +22,16 @@ function flag(args, name) {
 function usage(stream = process.stdout) {
   stream.write(`Usage: node scripts/dev.js <command> [sub] [flags…]
 
-  eval [--spec <file>] [--only <id>] [--batch smoke|A|B|all]
+  eval [--spec <file>] [--only <id>] [--batch smoke|A|B|all] [--us US-NNN]
       Run an eval spec against the real CLI. Default spec eval/real-trace.json;
       default batch "smoke" (cheap daily). Proof runs: --batch A (provider-only)
-      | B (browser) | all. Provider-resilience env: EVAL_INTER_CASE_MS (cool-down
-      between cases; default 10000 for A/B, 0 for smoke) and EVAL_TIMEOUT_MS
-      (per-turn override — raise during a Gemini 503/429 spike). A case where
-      every turn dies on provider retries is marked ⏳ inconclusive, not failed.
+      | B (browser) | all. --us US-026 selects a story across batches (us inferred
+      from id rt-u026-… or an explicit 'us' field). Filters compose: --us US-026
+      --batch A = US-026's provider-only cases. Provider-resilience env:
+      EVAL_INTER_CASE_MS (cool-down between cases; default 10000 for any non-smoke
+      run, 0 for smoke) and EVAL_TIMEOUT_MS (per-turn override — raise during a
+      Gemini 503/429 spike). A case where every turn dies on provider retries is
+      marked ⏳ inconclusive, not failed.
   eval diff <oldReport.json> <newReport.json> | --last
       Diff two eval reports (pass/fail + token deltas per case). --last auto-picks
       the two newest reports in eval/reports/ (frictionless review step). NOTE:
@@ -110,6 +113,7 @@ async function main() {
       specPath: flag([sub, ...rest], "--spec"),
       onlyId: flag([sub, ...rest], "--only"),
       batch: flag([sub, ...rest], "--batch"),
+      us: flag([sub, ...rest], "--us"),
     });
     return;
   }

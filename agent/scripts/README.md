@@ -14,7 +14,7 @@ node scripts/dev.js <command> [sub] [flags…]
 
 | Command | What it does |
 |---|---|
-| `eval [--spec <file>] [--only <id>] [--batch smoke\|A\|B\|all]` | Run an eval spec through the real CLI (`dist/cli.js --json`) in an isolated eval DB; aggregate telemetry; write JSON+MD report to `eval/reports/`. Default spec `eval/real-trace.json`; default batch `smoke`. |
+| `eval [--spec <file>] [--only <id>] [--batch smoke\|A\|B\|all] [--us US-NNN]` | Run an eval spec through the real CLI (`dist/cli.js --json`) in an isolated eval DB; aggregate telemetry; write JSON+MD report to `eval/reports/`. Default spec `eval/real-trace.json`; default batch `smoke`. Filters compose: `--us US-026 --batch A` = that story's provider-only cases. `us` is an explicit case field or inferred from id `rt-uNNN`. |
 | `eval diff <old.json> <new.json> \| --last` | Diff two eval reports: pass/fail + token deltas per case. `--last` auto-picks the two newest reports (review step of the improvement loop). Tokens ARE meaningful here (reports read the un-redacted `trace_events` table). |
 | `logs list [--limit N]` | Recent raw AI-interaction index entries (1-200, default 20). |
 | `logs show <traceId> [--direction request\|response\|error]` | Print every raw record for a trace. |
@@ -54,7 +54,7 @@ and raw AI-log queries stay in `dev.js eval|logs`; query.py no longer duplicates
 | `bootstrap.js` | `getContext()` (lazy dist require: paths + `.env`), `loadEnv` re-export |
 | `traces.js` | `findTraceFile`, `readTraceStats`, `listTraceIds`, `showTrace`, `diffTraces` |
 | `reports.js` | `loadReport`, `diffReports` |
-| `eval.js` | `runEval` (+ pure `renderMarkdown`, `readNormalizedUsage`, `evaluate`, `aggregate`) |
+| `eval.js` | `runEval` (+ pure `renderMarkdown`, `readNormalizedUsage`, `evaluate`, `aggregate`, `ASSERTIONS`, `usOf`). New proof type = add one `ASSERTIONS[name] = (m, e) => reason\|null`; `evaluate()` never grows. |
 | `smoke.js` | `smokeGemini`, `smokeTelegram`, `smokeWeb` |
 
 **Load-bearing rule:** no `lib/*` module requires `../dist/*` at module top

@@ -62,12 +62,25 @@ function resolveTraceId(getDb, chatId, turnIndex) {
 }
 
 /**
+ * Resolve a case's US tag for `--us` selection: explicit `us` field wins, else
+ * inferred from id (rt-u026-… → US-026), else from `proof` text (US-026). Keeps
+ * batch (cost-tier) and us (story) as two independent selection axes.
+ */
+function usOf(c) {
+  if (c.us) return c.us;
+  const m = (c.id || "").match(/u(\d{3,4})/i);
+  if (m) return "US-" + m[1];
+  const pm = (c.proof || "").match(/\bUS-\d+\b/);
+  return pm ? pm[0] : null;
+}
+
+/**
  * Run an eval spec. Sets AGENT_DB_FILE, lazy-requires dist modules, asserts the
  * DB routing, runs each case through the real CLI in an isolated DB, aggregates
  * telemetry, writes JSON+MD reports, and prints the markdown to stdout.
  * Exits 2 if no cases match the filter.
  */
-function runEval({ specPath = path.join(evalDir, "real-trace.json"), onlyId, batch } = {}) {
+function runEval({ specPath = path.join(evalDir, "real-trace.json"), onlyId, batch, us } = {}) {
   process.env.AGENT_DB_FILE = dbFile;
   fs.mkdirSync(reportsDir, { recursive: true });
 
@@ -85,28 +98,29 @@ function runEval({ specPath = path.join(evalDir, "real-trace.json"), onlyId, bat
 
   const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
   const allCases = Array.isArray(spec) ? spec : spec.cases;
-  let cases;
-  if (onlyId) {
-    cases = allCases.filter((c) => c.id === onlyId);
-  } else if (batch === "all") {
-    cases = allCases;
-  } else {
-    // Default (no --batch, no --only) runs the cheap `smoke` batch so the daily
-    // eval stays a fast health check. Scope proof with --batch A | B.
-    const want = batch || "smoke";
-    cases = allCases.filter((c) => c.batch === want);
-  }
+  // Filters compose (AND): --only, --us, --batch are independent axes. With no
+  // selector at all, default to the cheap `smoke` batch (daily health check).
+  const hasSelector = !!(onlyId || us || (batch && batch !== "all"));
+  let cases = allCases;
+  if (onlyId) cases = cases.filter((c) => c.id === onlyId);
+  if (us) cases = cases.filter((c) => usOf(c) === us);
+  if (batch && batch !== "all") cases = cases.filter((c) => c.batch === batch);
+  else if (!hasSelector) cases = cases.filter((c) => c.batch === "smoke");
   if (cases.length === 0) {
-    console.error(`eval: no cases${onlyId ? ` matching id "${onlyId}"` : ` in batch "${batch || "smoke"}"`} in ${specPath}.`);
+    const which = [
+      onlyId && `id="${onlyId}"`,
+      us && `us="${us}"`,
+      (batch && batch !== "all") ? `batch="${batch}"` : (!hasSelector ? `batch="smoke"` : null),
+    ].filter(Boolean).join(", ");
+    console.error(`eval: no cases matching ${which || "any filter"} in ${specPath}.`);
     process.exit(2);
   }
 
   const env = { ...process.env, AGENT_DB_FILE: dbFile };
-  // Inter-case cool-down so a batch doesn't burst provider calls and trip 503/429.
-  // smoke is a fast daily health check (no delay); A/B proof runs space out. Tunable
-  // via EVAL_INTER_CASE_MS (ms). A single --only case never sleeps.
-  const effectiveBatch = onlyId ? "only" : (batch || "smoke");
-  const interCaseMs = clampEnvMs("EVAL_INTER_CASE_MS", effectiveBatch === "smoke" ? 0 : 10000);
+  // Cool-down is suppressed only for the default smoke run; any selector
+  // (--only/--us/A/B) is a proof run → space cases out to avoid bursting provider
+  // calls (503/429). Tunable via EVAL_INTER_CASE_MS (ms).
+  const interCaseMs = clampEnvMs("EVAL_INTER_CASE_MS", !hasSelector ? 0 : 10000);
 
   const results = [];
   for (let index = 0; index < cases.length; index += 1) {
@@ -123,7 +137,7 @@ function runEval({ specPath = path.join(evalDir, "real-trace.json"), onlyId, bat
     const verdict = metrics.providerUnavailable
       ? { pass: null, inconclusive: true, reasons: ["provider unavailable — timed out retrying 503/429/5xx; not an agent regression"] }
       : evaluate(c, metrics);
-    results.push({ id: c.id, proof: c.proof || null, batch: c.batch || null, prompts: Array.isArray(c.prompts) ? c.prompts : [c.prompt], expect: c.expect || {}, ...metrics, ...verdict });
+    results.push({ id: c.id, us: usOf(c) || null, proof: c.proof || null, batch: c.batch || null, prompts: Array.isArray(c.prompts) ? c.prompts : [c.prompt], expect: c.expect || {}, ...metrics, ...verdict });
     if (interCaseMs > 0 && index < cases.length - 1) sleepSync(interCaseMs);
   }
 
@@ -346,47 +360,62 @@ function aggregate(turns, repo) {
 
 function safeParse(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
 
-function evaluate(c, m) {
-  const reasons = [];
-  const e = c.expect || {};
-  if (e.exitCode !== undefined && m.exitCode !== e.exitCode) reasons.push(`exitCode ${m.exitCode} !== ${e.exitCode}`);
-  if (e.runStatus && m.runStatus !== e.runStatus) reasons.push(`runStatus ${m.runStatus} !== ${e.runStatus}`);
-  if (e.replyContains && !(m.reply || "").includes(e.replyContains)) reasons.push(`reply missing "${e.replyContains}"`);
-  if (e.replyMatches && !(new RegExp(e.replyMatches).test(m.reply || ""))) reasons.push(`reply !~ /${e.replyMatches}/`);
-  if (e.artifactMime && (!m.artifact || m.artifact.mime !== e.artifactMime)) reasons.push(`artifact mime ${m.artifact?.mime || "none"} !== ${e.artifactMime}`);
-  if (e.maxToolSteps !== undefined && m.toolSteps.length > e.maxToolSteps) reasons.push(`toolSteps ${m.toolSteps.length} > ${e.maxToolSteps}`);
-  if (m.timedOut) reasons.push("timed out");
-
-  // US-026 capability-routing proofs.
-  const names = m.visibility?.visibleToolNames || [];
-  if (e.visibleToolsEmpty && names.length > 0) reasons.push(`expected no visible tools, got [${names.join(", ")}]`);
-  if (e.visibleToolsNotEmpty && names.length === 0) reasons.push("expected a scoped visible-tool set, got []");
-  if (e.visibleToolsMax !== undefined && names.length > e.visibleToolsMax) reasons.push(`visibleTools ${names.length} > ${e.visibleToolsMax}`);
-  if (e.routeContinuation && m.visibility?.continuation !== e.routeContinuation) reasons.push(`route continuation ${m.visibility?.continuation} !== ${e.routeContinuation}`);
-  if (e.toolSchemasZero && (m.tokenAttribution?.toolSchemas ?? 0) > 0) reasons.push(`toolSchemas attribution ${m.tokenAttribution?.toolSchemas} !== 0`);
-
-  // US-027 media-modality proof.
-  if (e.imageModalityNonzero) {
-    const ok = (m.tokenUsage?.imageModality ?? 0) > 0;
-    if (!ok) reasons.push(`expected nonzero provider image modality, got ${m.tokenUsage?.imageModality ?? "none"}`);
-  }
-
-  // US-027 browser-contract proofs (structured outcome codes).
-  const codes = m.toolSteps.map((s) => s.code).filter(Boolean);
-  if (Array.isArray(e.noToolCode)) {
-    for (const bad of e.noToolCode) if (codes.includes(bad)) reasons.push(`forbidden tool code ${bad} appeared`);
-  }
-  if (Array.isArray(e.hasToolCode)) {
-    if (!e.hasToolCode.some((want) => codes.includes(want))) reasons.push(`expected one of [${e.hasToolCode.join(", ")}], got [${codes.join(", ")}]`);
-  }
-
-  // US-026 #5: a risky action in an inherited task still pauses (confirmation)
-  // or blocks (gateway deny) — it must never execute silently.
-  if (e.pausesOrBlocks) {
+/**
+ * Assertion registry — each entry maps an `expect` key to a check
+ * `(metrics, expected) => reason | null` (null = pass). Adding a new proof type
+ * means adding ONE entry here; evaluate() itself never grows. A case's `expect`
+ * picks which assertions apply; an UNKNOWN key fails the case loudly (catches
+ * typos that would otherwise silently "pass" without testing anything).
+ *
+ * Deterministic signals (resolver/gateway/tooling) are stable across runs;
+ * stochastic ones (reply text, model tool choice, exact tokens) vary — don't
+ * gate a single run on the latter without re-running.
+ */
+const ASSERTIONS = {
+  exitCode: (m, e) => (m.exitCode !== e ? `exitCode ${m.exitCode} !== ${e}` : null),
+  runStatus: (m, e) => (m.runStatus !== e ? `runStatus ${m.runStatus} !== ${e}` : null),
+  replyContains: (m, e) => (!(m.reply || "").includes(e) ? `reply missing "${e}"` : null),
+  replyMatches: (m, e) => (!new RegExp(e).test(m.reply || "") ? `reply !~ /${e}/` : null),
+  artifactMime: (m, e) => (!m.artifact || m.artifact.mime !== e ? `artifact mime ${m.artifact?.mime || "none"} !== ${e}` : null),
+  maxToolSteps: (m, e) => (m.toolSteps.length > e ? `toolSteps ${m.toolSteps.length} > ${e}` : null),
+  visibleToolsEmpty: (m) => ((m.visibility?.visibleToolNames || []).length > 0 ? `expected no visible tools, got [${(m.visibility?.visibleToolNames || []).join(", ")}]` : null),
+  visibleToolsNotEmpty: (m) => ((m.visibility?.visibleToolNames || []).length === 0 ? "expected a scoped visible-tool set, got []" : null),
+  visibleToolsMax: (m, e) => ((m.visibility?.visibleToolNames || []).length > e ? `visibleTools ${(m.visibility?.visibleToolNames || []).length} > ${e}` : null),
+  routeContinuation: (m, e) => (m.visibility?.continuation !== e ? `route continuation ${m.visibility?.continuation} !== ${e}` : null),
+  toolSchemasZero: (m) => ((m.tokenAttribution?.toolSchemas ?? 0) > 0 ? `toolSchemas attribution ${m.tokenAttribution?.toolSchemas} !== 0` : null),
+  imageModalityNonzero: (m) => ((m.tokenUsage?.imageModality ?? 0) <= 0 ? `expected nonzero provider image modality, got ${m.tokenUsage?.imageModality ?? "none"}` : null),
+  noToolCode: (m, e) => {
+    const codes = m.toolSteps.map((s) => s.code).filter(Boolean);
+    const hit = (Array.isArray(e) ? e : []).filter((b) => codes.includes(b));
+    return hit.length ? `forbidden tool code ${hit.join(", ")} appeared` : null;
+  },
+  hasToolCode: (m, e) => {
+    const codes = m.toolSteps.map((s) => s.code).filter(Boolean);
+    const want = Array.isArray(e) ? e : [];
+    return want.some((w) => codes.includes(w)) ? null : `expected one of [${want.join(", ")}], got [${codes.join(", ")}]`;
+  },
+  pausesOrBlocks: (m) => {
     const paused = /xác nhận|approval|approve/i.test(m.reply || "");
-    if (!(m.denyReasons.length > 0 || paused)) reasons.push("risky action did not pause or block");
-  }
+    return m.denyReasons.length > 0 || paused ? null : "risky action did not pause or block";
+  },
+};
 
+// Checks applied to EVERY case regardless of `expect` (structural, not opt-in).
+const ALWAYS = [
+  (m) => (m.timedOut ? "timed out" : null),
+];
+
+function evaluate(c, m) {
+  const e = c.expect || {};
+  const reasons = [];
+  for (const check of ALWAYS) { const r = check(m); if (r) reasons.push(r); }
+  for (const [key, val] of Object.entries(e)) {
+    if (val === undefined || val === null) continue;
+    const check = ASSERTIONS[key];
+    if (!check) { reasons.push(`unknown expect key "${key}" (typo? not in ASSERTIONS)`); continue; }
+    const r = check(m, val);
+    if (r) reasons.push(r);
+  }
   return { pass: reasons.length === 0, reasons };
 }
 
@@ -443,4 +472,4 @@ function renderMarkdown(r) {
   return lines.join("\n") + "\n";
 }
 
-module.exports = { runEval, renderMarkdown, readNormalizedUsage, evaluate, aggregate };
+module.exports = { runEval, renderMarkdown, readNormalizedUsage, evaluate, aggregate, ASSERTIONS, usOf };

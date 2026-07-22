@@ -18,7 +18,7 @@ description: Vòng lặp cải tiến agent có đo lường, chạy từng bư�
 
 | Việc | Lệnh | Build dist? |
 |---|---|---|
-| TEST (chạy eval) | `npm run eval -- --batch A` hoặc `--only <id>` | ✅ có |
+| TEST (chạy eval) | `npm run eval -- --batch A` / `--only <id>` / `--us US-026` | ✅ có |
 | REVIEW (so sánh) | `node scripts/dev.js eval diff --last` | ❌ |
 | Dọn report | `node scripts/dev.js eval prune --keep 20` | ❌ |
 | Drill raw từng turn | `node scripts/dev.js logs show <traceId>` | ❌ |
@@ -32,7 +32,8 @@ Ghi nhớ pha hiện tại. Làm xong → DỪNG → báo kết quả + **Bướ
 
 ### Pha TEST
 ```
-npm run eval -- --batch A            # hoặc: --only <id>   | --batch smoke (rẻ, không browser)
+npm run eval -- --batch A            # hoặc: --only <id>  |  --us US-026 (cả story)  |  --batch smoke (rẻ)
+# filter compose: --us US-026 --batch A = US-026 provider-only
 ```
 - `npm run eval` **build dist rồi mới chạy** — BẮT BUỘC nếu vừa sửa `src/` (eval chạy
   `dist/cli.js`; quên build = test dist cũ → "thay đổi không tác động", kết luận sai).

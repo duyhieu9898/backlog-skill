@@ -1,5 +1,5 @@
 {
-  "_readme": "Eval spec — daily smoke + US-026/US-027 real-trace proof. `npm run eval` runs batch `smoke` by default (cheap, no browser). Scope proof with `--batch A` (provider-only) | `--batch B` (browser, needs Playwright + live page) | `--batch all`, or select one case with `--only <id>`. Each proof case `id` maps to a Required Real-Trace Proof item via `proof`; smoke cases have no proof. Batch B cases marked tuning:true need their expect confirmed against real recovery codes from the first run — auto pass/fail is secondary to the report's tool-step drill-down for those.",
+  "_readme": "Eval spec — daily smoke + US-026/US-027 real-trace proof. `npm run eval` runs batch `smoke` by default (cheap, no browser). Scope proof with `--batch A` (provider-only) | `--batch B` (browser, needs Playwright + live page) | `--batch all`, or select one case with `--only <id>`. Each proof case `id` maps to a Required Real-Trace Proof item via `proof`; smoke cases have no proof. Batch B cases marked tuning:true need their expect confirmed against real recovery codes from the first run — auto pass/fail is secondary to the report's tool-step drill-down for those. --us US-026 selects a whole story across batches (filters compose: --us US-026 --batch A). Each case carries a us tag (explicit field, else inferred from id rt-uNNN); smoke cases have none. expect keys are validated against the ASSERTIONS registry in scripts/lib/eval.js — an unknown key fails the case (catches typos).",
   "cases": [
     {
       "id": "smoke-math",
@@ -24,6 +24,7 @@
     },
     {
       "id": "rt-u026-1-general",
+      "us": "US-026",
       "proof": "US-026 #1 — general chat exposes no tools",
       "batch": "A",
       "prompt": "bạn là ai? trả lời ngắn gọn.",
@@ -32,6 +33,7 @@
     },
     {
       "id": "rt-u026-2-web",
+      "us": "US-026",
       "proof": "US-026 #2 — explicit web action exposes only its capability subset",
       "batch": "A",
       "prompt": "chụp ảnh trang https://english-tool-two.vercel.app/",
@@ -40,6 +42,7 @@
     },
     {
       "id": "rt-u026-3-continuation",
+      "us": "US-026",
       "proof": "US-026 #3 — elliptical continuation inherits the active target scope, not the whole catalog",
       "batch": "A",
       "prompts": [
@@ -53,6 +56,7 @@
     },
     {
       "id": "rt-u026-4-clear",
+      "us": "US-026",
       "proof": "US-026 #4 — a new self-contained question after an active task returns tools to zero",
       "batch": "A",
       "prompts": [
@@ -64,6 +68,7 @@
     },
     {
       "id": "rt-u026-5-risky",
+      "us": "US-026",
       "proof": "US-026 #5 — a risky action in an inherited task still pauses or blocks",
       "batch": "A",
       "prompts": [
@@ -77,6 +82,7 @@
     },
     {
       "id": "rt-u027-4-modality",
+      "us": "US-027",
       "proof": "US-027 #4 — a screenshot-bearing Gemini call records nonzero observed image modality, separate from client estimates",
       "batch": "A",
       "prompt": "chụp ảnh trang https://english-tool-two.vercel.app/",
@@ -86,6 +92,7 @@
     },
     {
       "id": "rt-u027-1-missing-snapshot",
+      "us": "US-027",
       "proof": "US-027 #1 — ref actions are well-formed (snapshot-bound); a missing snapshotId is rejected before execution (unit-covered; real-trace confirms the happy path emits no malformed action)",
       "batch": "B",
       "prompt": "vào trang https://english-tool-two.vercel.app/ rồi click vào nút vocabulary",
@@ -95,6 +102,7 @@
     },
     {
       "id": "rt-u027-2-vocab-grammar",
+      "us": "US-027",
       "proof": "US-027 #2 — Vocabulary → Grammar completes with snapshot-bound action only (no avoidable ACTION_FAILED)",
       "batch": "B",
       "prompt": "vào trang https://english-tool-two.vercel.app/ click vocabulary rồi chụp ảnh",
@@ -103,6 +111,7 @@
     },
     {
       "id": "rt-u027-3-nav-stale",
+      "us": "US-027",
       "proof": "US-027 #3 — navigation / new snapshot forces action from a fresh snapshot; old ref never silently rebinds",
       "batch": "B",
       "prompts": [
@@ -116,6 +125,7 @@
     },
     {
       "id": "rt-u027-5-asset-revival",
+      "us": "US-027",
       "proof": "US-027 #5 — an old screenshot rehydrates by asset id but its old ref is not actionable",
       "batch": "B",
       "prompts": [
