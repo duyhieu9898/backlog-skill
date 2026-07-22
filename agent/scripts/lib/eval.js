@@ -5,6 +5,7 @@
 // no other dist require has run in the process.
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
@@ -122,23 +123,31 @@ function runEval({ specPath = path.join(evalDir, "real-trace.json"), onlyId, bat
   // calls (503/429). Tunable via EVAL_INTER_CASE_MS (ms).
   const interCaseMs = clampEnvMs("EVAL_INTER_CASE_MS", !hasSelector ? 0 : 10000);
 
+  // Per-run sandbox dir for file-op cases (prompts use the {sandbox} token). Created
+  // here, removed after the run — isolates real file writes from the workspace so a
+  // case can't leak artifacts into agent/ (an earlier rt-u026-5 wrote agent/notes.txt).
+  const sandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), "eval-sandbox-"));
   const results = [];
-  for (let index = 0; index < cases.length; index += 1) {
-    const c = cases[index];
-    const { turns, chatId } = runCase(c, index, env);
-    // Recover traceIds the CLI didn't emit (timeout / provider kill) so the case
-    // stays drill-downable instead of reporting traces=[].
-    for (let k = 0; k < turns.length; k += 1) {
-      if (!turns[k].traceId) turns[k].traceId = resolveTraceId(getDb, chatId, k);
+  try {
+    for (let index = 0; index < cases.length; index += 1) {
+      const c = cases[index];
+      const { turns, chatId } = runCase(c, index, env, sandboxDir);
+      // Recover traceIds the CLI didn't emit (timeout / provider kill) so the case
+      // stays drill-downable instead of reporting traces=[].
+      for (let k = 0; k < turns.length; k += 1) {
+        if (!turns[k].traceId) turns[k].traceId = resolveTraceId(getDb, chatId, k);
+      }
+      const metrics = aggregate(turns, { listTraceEvents, listRunSteps, getRun });
+      // A case where every turn died on provider retries (503/429/5xx) is a provider
+      // outage, not an agent regression — mark it inconclusive instead of failed.
+      const verdict = metrics.providerUnavailable
+        ? { pass: null, inconclusive: true, reasons: ["provider unavailable — timed out retrying 503/429/5xx; not an agent regression"] }
+        : evaluate(c, metrics);
+      results.push({ id: c.id, us: usOf(c) || null, proof: c.proof || null, batch: c.batch || null, prompts: Array.isArray(c.prompts) ? c.prompts : [c.prompt], expect: c.expect || {}, ...metrics, ...verdict });
+      if (interCaseMs > 0 && index < cases.length - 1) sleepSync(interCaseMs);
     }
-    const metrics = aggregate(turns, { listTraceEvents, listRunSteps, getRun });
-    // A case where every turn died on provider retries (503/429/5xx) is a provider
-    // outage, not an agent regression — mark it inconclusive instead of failed.
-    const verdict = metrics.providerUnavailable
-      ? { pass: null, inconclusive: true, reasons: ["provider unavailable — timed out retrying 503/429/5xx; not an agent regression"] }
-      : evaluate(c, metrics);
-    results.push({ id: c.id, us: usOf(c) || null, proof: c.proof || null, batch: c.batch || null, prompts: Array.isArray(c.prompts) ? c.prompts : [c.prompt], expect: c.expect || {}, ...metrics, ...verdict });
-    if (interCaseMs > 0 && index < cases.length - 1) sleepSync(interCaseMs);
+  } finally {
+    fs.rmSync(sandboxDir, { recursive: true, force: true });
   }
 
   closeDb();
@@ -191,12 +200,15 @@ function runTurn(prompt, session, env, timeoutMs) {
 }
 
 let agentDir;
-function runCase(c, index, env) {
+function runCase(c, index, env, sandboxDir) {
   // Multi-turn cases share one session so capability lease state carries across
   // turns (continuation/clearing proofs). Each turn still gets a distinct trace.
   const session = `eval-${Date.now()}-${index}-${c.id}`;
   const chatId = `local-cli:session:${session}`;
-  const prompts = Array.isArray(c.prompts) ? c.prompts : [c.prompt];
+  const rawPrompts = Array.isArray(c.prompts) ? c.prompts : [c.prompt];
+  // Substitute the {sandbox} token (per-run temp dir) so file-op cases write
+  // somewhere isolated instead of leaking artifacts into the workspace.
+  const prompts = sandboxDir ? rawPrompts.map((p) => (p.includes("{sandbox}") ? p.split("{sandbox}").join(sandboxDir) : p)) : rawPrompts;
   // agentDir is set by runEval before runCase is reached; keep a local ref so
   // runTurn can read it without re-resolving.
   const timeout = resolveTimeout(c);
