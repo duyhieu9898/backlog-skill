@@ -40,6 +40,7 @@ npm run eval -- --batch A          # or: --only <id> | --us US-026 (whole story)
 ### ANALYZE
 - Read the report. Map each signal to a **hypothesis** (table below). **VERIFY the hypothesis in the trace before fixing** — the table is a hint, not ground truth.
 - Drill when the report is not enough: `node scripts/dev.js logs show <traceId>` (raw request/response).
+- **Never trust pass/fail alone.** A case can PASS its routing assertions while the model loops degenerately (e.g. capturing the same URL 6×, or an alternating capture→browser→capture cycle). Always check **toolSteps count + reply text**: a high step count, or a reply like "Đã dừng sau N bước" (hit the MAX_TOOL_STEPS cap) / "phát hiện loop" (cycle detector tripped) / "flail" (total-failure budget), means a hidden behavioral bug the pass/fail hid.
 - Report: likely root cause (verified) + whether it is deterministic or stochastic.
 - **STOP.** Next: **IMPROVE** (exactly one change).
 
@@ -79,6 +80,7 @@ node scripts/dev.js eval prune --keep 20 --dry-run   # preview
 |---|---|---|
 | ⏳ `inconclusive` + `providerRetries>0` | provider 503/429 overload | deterministic → re-run |
 | `routeContinuation: new`, expected `continued` | resolver didn't recognize an elliptical reference ("capture it again") | deterministic |
+| **case PASS but `toolSteps` high** / reply "Đã dừng sau N bước" or "phát hiện loop" | model tool-loop (same call ×N, or an alternating cycle) — pass/fail hid it | deterministic → add `maxToolSteps` (regression gate) |
 | `INVALID_TOOL_CALL` / `Unknown tool: X` | model called a tool outside the visible set | deterministic (visibility) |
 | `pausesOrBlocks` fail | a risky action ran silently (no confirm/deny) | deterministic (gateway) |
 | token spike | `toolSchemas`/`toolSteps` attribution | deterministic (see `client attribution`) |
@@ -86,6 +88,8 @@ node scripts/dev.js eval prune --keep 20 --dry-run   # preview
 | `traces=[]` | CLI crashed before `route.started` (missing dist / config / build) | deterministic → check build |
 | `replyContains`/`replyMatches` fail | model answered differently than expected | ⚠️ **STOCHASTIC** — run N times |
 | multi-turn case fails on a wrong-turn metric | metric taken from the wrong turn (must be the last) | deterministic → check `eval.js aggregate` |
+
+> **`maxToolSteps` is a REGRESSION gate, not a quality gate.** Set it just below the cap (e.g. 7 when `MAX_TOOL_STEPS=8`): it passes when a loop guard bounds the loop (cycle detector / total-failure budget catch it) and fails only if the loop runs away to the cap. Don't set it tight (e.g. 2) — the model's loop pattern is stochastic (a period-2 alternating cycle legitimately reaches 3 steps), so a tight value flakes.
 
 ## Deterministic vs Stochastic — important
 
