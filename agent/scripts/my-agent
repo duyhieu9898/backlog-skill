@@ -24,7 +24,7 @@ Commands:
   restart       Restart background agent service
   status        Show service status
   logs          Follow service logs
-  clear-logs    Delete agent.log, logs/ai-interactions/*, the trace_events table, and vacuum the service journal (keeps runs/approvals/schedules/chat history). Use -y/--force to skip the prompt
+  clear-logs    FULL WIPE → fresh session: stop service, delete data/agent.sqlite + data/artifacts/* + logs + eval/eval.sqlite + eval/reports/* (keeps .env/config/code/skills/eval spec), then restart the service. Irreversible. Use -y/--force to skip the prompt
   run           Run a prompt locally and print trace/artifact JSON; does not send Telegram
 EOF
 }
@@ -181,32 +181,48 @@ clear_logs() {
   local force=0
   if [[ "${2:-}" == "-y" || "${2:-}" == "--force" ]]; then force=1; fi
 
-  echo "Clearing logs/telemetry under ${AGENT_DIR}:"
-  echo "  - truncate logs/agent.log"
-  echo "  - remove logs/ai-interactions/*"
-  echo "  - DELETE FROM trace_events (SQLite)"
-  echo "  - vacuum the systemd service journal"
-  echo "Business data is KEPT (runs, run_steps, command_runs, approvals, schedules, chat history, artifacts, telegram-state.json)."
+  echo "FULL WIPE under ${AGENT_DIR} — the agent starts with a FRESH session:"
+  echo "  - stop service ${SERVICE_NAME} (releases the DB connection)"
+  echo "  - delete data/agent.sqlite (+wal/shm) — chat history, runs, run_steps, command_runs, trace_events, approvals, schedules, sessions, artifact metadata"
+  echo "  - delete data/artifacts/* — all generated images/files"
+  echo "  - truncate logs/agent.log, remove logs/ai-interactions/*"
+  echo "  - delete eval/eval.sqlite + eval/reports/* (keeps eval/real-trace.json spec)"
+  echo "  - vacuum the systemd journal, then restart the service (opens a fresh DB)"
+  echo "KEPT: .env, config.json, commands.json, code (src/dist/scripts/skills), systemd unit, git."
 
   if (( ! force )); then
     if [[ ! -t 0 ]]; then
-      echo "Refusing to clear non-interactively without -y/--force." >&2
+      echo "Refusing to wipe non-interactively without -y/--force." >&2
       exit 1
     fi
-    read -r -p "Proceed? [y/N] " ans
+    read -r -p "This deletes ALL state incl. chat history (irreversible). Proceed? [y/N] " ans
     if [[ "${ans:-}" != "y" && "${ans:-}" != "Y" ]]; then
       echo "Aborted."
       exit 0
     fi
   fi
 
+  # Stop the service so it releases the DB; it reopens a fresh one on restart.
+  systemctl --user stop "${SERVICE_NAME}.service" 2>/dev/null || true
+
+  # State: production DB (recreated fresh by getDb on next start) + artifacts.
+  rm -f "${AGENT_DIR}/data/agent.sqlite" "${AGENT_DIR}/data/agent.sqlite-wal" "${AGENT_DIR}/data/agent.sqlite-shm"
+  rm -rf "${AGENT_DIR}/data/artifacts"/* 2>/dev/null || true
+  # Logs.
   : > "${AGENT_DIR}/logs/agent.log" 2>/dev/null || true
   rm -rf "${AGENT_DIR}/logs/ai-interactions"/* 2>/dev/null || true
-  "${NODE_BIN}" -e \
-    "const {getDb,closeDb}=require('${AGENT_DIR}/dist/storage/db');const db=getDb();const n=db.prepare('DELETE FROM trace_events').run().changes;closeDb();console.log('  trace_events rows deleted: '+n);" \
-    2>/dev/null || echo "  (could not clear trace_events — run \`npm run build\` first)" >&2
+  # Eval (keep the real-trace.json spec).
+  rm -f "${AGENT_DIR}/eval/eval.sqlite" "${AGENT_DIR}/eval/eval.sqlite-wal" "${AGENT_DIR}/eval/eval.sqlite-shm"
+  rm -rf "${AGENT_DIR}/eval/reports"/* 2>/dev/null || true
+  # Service journal.
   journalctl --user --vacuum-time=1s 2>/dev/null || true
-  echo "Logs cleared."
+
+  # Restart so the service opens a fresh agent.sqlite (new session).
+  if systemctl --user start "${SERVICE_NAME}.service" 2>/dev/null; then
+    echo "Wiped + service restarted. Agent starts fresh on next message."
+  else
+    echo "Wiped. Service not started (not installed?) — run \`my-agent start\` when ready."
+  fi
 }
 
 case "${1:-}" in
