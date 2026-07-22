@@ -23,8 +23,7 @@ Commands:
   stop          Stop background agent service
   restart       Restart background agent service
   status        Show service status
-  logs          Follow service logs
-  clear-logs    FULL WIPE → fresh session: stop service, delete data/agent.sqlite + data/artifacts/* + logs + eval/eval.sqlite + eval/reports/* (keeps .env/config/code/skills/eval spec), then restart the service. Irreversible. Use -y/--force to skip the prompt
+  reset         FULL WIPE → fresh session: stop service, delete data/agent.sqlite + data/artifacts/* + logs + eval/eval.sqlite + eval/reports/* (keeps .env/config/code/skills/eval spec), then restart the service. Irreversible. Use -y/--force to skip the prompt
   run           Run a prompt locally and print trace/artifact JSON; does not send Telegram
 EOF
 }
@@ -177,7 +176,7 @@ wait_healthy() {
   echo "Agent active."
 }
 
-clear_logs() {
+reset_state() {
   local force=0
   if [[ "${2:-}" == "-y" || "${2:-}" == "--force" ]]; then force=1; fi
 
@@ -265,11 +264,8 @@ case "${1:-}" in
   status)
     systemctl --user --no-pager status "${SERVICE_NAME}.service"
     ;;
-  logs)
-    journalctl --user -u "${SERVICE_NAME}.service" -f
-    ;;
-  clear-logs)
-    clear_logs "$@"
+  reset)
+    reset_state "$@"
     ;;
   -h|--help|help|"")
     usage

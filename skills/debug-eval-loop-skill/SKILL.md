@@ -70,7 +70,7 @@ node scripts/dev.js eval prune --keep 20 --dry-run   # preview
 ```
 - Keep enough history to trace; don't flood the dir. `logs/ai-interactions/` auto-prunes after 14 days.
 - `eval/eval.sqlite` accumulates `trace_events` across runs (needed for recovery/drill-down); if it grows large, back it up then delete the file (it is recreated next run).
-- For a fully pristine slate (fresh session): `./scripts/my-agent clear-logs -y` — a FULL WIPE that stops the service, deletes `data/agent.sqlite` (chat/runs/approvals/schedules/sessions), `data/artifacts/*`, `logs/*`, `eval/eval.sqlite` + `eval/reports/*`, then restarts the service so it opens a fresh DB. Keeps `.env`, config, code, skills, and the `eval/real-trace.json` spec. Irreversible.
+- For a fully pristine slate (fresh session): `./scripts/my-agent reset -y` — a FULL WIPE that stops the service, deletes `data/agent.sqlite` (chat/runs/approvals/schedules/sessions), `data/artifacts/*`, `logs/*`, `eval/eval.sqlite` + `eval/reports/*`, then restarts the service so it opens a fresh DB. Keeps `.env`, config, code, skills, and the `eval/real-trace.json` spec. Irreversible.
 - Report: cleaned.
 - **STOP.** Next: resume the phase you were on.
 
