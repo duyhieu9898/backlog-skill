@@ -47,6 +47,12 @@ function usage(stream = process.stdout) {
   logs diff <oldTraceId> <newTraceId>
       Diff two raw traces by provider-native fields only (declarations, image,
       turns). Token counts are redacted in raw logs — use "eval diff" for tokens.
+  cmds list [--limit N]
+      Recent terminal command_runs (exit code, status, error), newest first
+      (default 10). Honors AGENT_DB_FILE (set to eval/eval.sqlite to inspect an
+      eval run; default is the production agent/data/agent.sqlite).
+  cmds show <traceId>
+      Full command_runs for one trace (adds cwd, command line, output_tail).
   smoke gemini | telegram | web
       One-shot transport/IO probes (need the relevant credentials in .env).
   help | --help
@@ -142,6 +148,24 @@ async function main() {
     }
     process.stderr.write(`Unknown logs subcommand: ${sub ?? "(none)"}\n`);
     process.exit(2);
+  }
+
+  if (cmd === "cmds") {
+    require("./lib/bootstrap").getContext(); // load dist + .env (paths resolves sqliteFile via AGENT_DB_FILE)
+    const { listCommandRuns, getCommandRuns } = require("./lib/commandRuns");
+    if (sub === "show") {
+      const traceId = rest[0];
+      if (!traceId) { process.stderr.write("cmds show needs <traceId>\n"); process.exit(2); }
+      const rows = getCommandRuns(traceId);
+      if (!rows.length) { console.log(`No command_runs for ${traceId}`); return; }
+      for (const r of rows) console.log(JSON.stringify(r));
+      return;
+    }
+    if (sub && sub !== "list") { process.stderr.write(`Unknown cmds subcommand: ${sub} (try list|show)\n`); process.exit(2); }
+    const limit = Number(flag(rest, "--limit") ?? 10);
+    if (!Number.isInteger(limit) || limit < 1) { process.stderr.write("cmds list --limit must be a positive integer\n"); process.exit(2); }
+    for (const r of listCommandRuns(limit)) console.log(JSON.stringify(r));
+    return;
   }
 
   if (cmd === "smoke") {

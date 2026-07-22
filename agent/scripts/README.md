@@ -19,6 +19,8 @@ node scripts/dev.js <command> [sub] [flags…]
 | `logs list [--limit N]` | Recent raw AI-interaction index entries (1-200, default 20). |
 | `logs show <traceId> [--direction request\|response\|error]` | Print every raw record for a trace. |
 | `logs diff <oldTraceId> <newTraceId>` | Diff two raw traces by provider-native fields only (tool-declaration count, image presence, turn count). |
+| `cmds list [--limit N]` | Recent terminal `command_runs` (exit code, status, error), newest first (default 10). Honors `AGENT_DB_FILE`. |
+| `cmds show <traceId>` | Full `command_runs` for one trace (adds cwd, command line, output_tail). |
 | `smoke gemini \| telegram \| web` | One-shot transport/IO probes (need the relevant credentials in `.env`). |
 
 ### npm shortcuts (package.json)
@@ -39,13 +41,12 @@ compares only provider-native, un-redacted fields (declaration count, image
 presence, turns). For token deltas, use `eval diff` — eval reports read the
 un-redacted `trace_events` table.
 
-### command_runs drill-down (debug-eval-loop-skill)
+### command_runs drill-down
 
-`dev.js` surfaces trace_events + AI logs but NOT `command_runs` (terminal command
-history: exit code, output tail, error). For that one drill-down, use the narrowed
-`skills/debug-eval-loop-skill/scripts/query.py commands|runs <traceId>` — it respects
-`AGENT_DB_FILE` (set to `agent/eval/eval.sqlite` inside the eval loop). trace_events
-and raw AI-log queries stay in `dev.js eval|logs`; query.py no longer duplicates them.
+`dev.js cmds list|show` surfaces `command_runs` (terminal command history: exit code,
+output tail, error) — the one telemetry surface `eval`/`logs` don't cover. Honors
+`AGENT_DB_FILE` (set to `agent/eval/eval.sqlite` to inspect an eval run; default is
+production `agent/data/agent.sqlite`).
 
 ## lib/
 
@@ -55,6 +56,7 @@ and raw AI-log queries stay in `dev.js eval|logs`; query.py no longer duplicates
 | `traces.js` | `findTraceFile`, `readTraceStats`, `listTraceIds`, `showTrace`, `diffTraces` |
 | `reports.js` | `loadReport`, `diffReports` |
 | `eval.js` | `runEval` (+ pure `renderMarkdown`, `readNormalizedUsage`, `evaluate`, `aggregate`, `ASSERTIONS`, `usOf`). New proof type = add one `ASSERTIONS[name] = (m, e) => reason\|null`; `evaluate()` never grows. |
+| `commandRuns.js` | `listCommandRuns`, `getCommandRuns` (backing `cmds list/show`) |
 | `smoke.js` | `smokeGemini`, `smokeTelegram`, `smokeWeb` |
 
 **Load-bearing rule:** no `lib/*` module requires `../dist/*` at module top

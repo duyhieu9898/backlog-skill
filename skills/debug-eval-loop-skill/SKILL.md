@@ -20,7 +20,7 @@ description: Evidence-driven agent improvement loop, run one step at a time. Run
 | REVIEW (compare) | `node scripts/dev.js eval diff --last` | no |
 | Prune reports | `node scripts/dev.js eval prune --keep 20` | no |
 | Drill a raw turn | `node scripts/dev.js logs show <traceId>` | no |
-| Prod command_runs | `python ../skills/debug-eval-loop-skill/scripts/query.py commands\|runs …` | no |
+| Prod command_runs | `node scripts/dev.js cmds list\|show <traceId>` | no |
 
 > Source of truth for flags: `node scripts/dev.js help` (don't memorize it — it can change).
 
@@ -96,16 +96,16 @@ LLM evals are **not fully deterministic**. Don't claim improvement/regression fr
 
 `eval diff` is most meaningful when: **same case-set** + **compare deterministic signals** + (for stochastic) **N runs already done**.
 
-## Production debug (OUTSIDE the eval loop) — `query.py`
+## Production `command_runs` drill-down — `dev.js cmds`
 
-`query.py` is **not part of the eval loop**: the eval DB is usually **empty** for `command_runs` (eval runs go through the gateway tool executor, not `runTrackedCommand`). Use it only to debug **production**:
+`command_runs` (terminal command history: exit code, output tail, error) is the one telemetry surface `eval`/`logs` don't cover. Use `cmds` for it — usually to debug **production** (the eval DB is typically empty for `command_runs`, since eval runs go through the gateway tool executor, not `runTrackedCommand`):
 
 ```
-python ../skills/debug-eval-loop-skill/scripts/query.py commands 10     # recent command_runs (prod)
-python ../skills/debug-eval-loop-skill/scripts/query.py runs <traceId>  # one run: exit code + output tail
+node scripts/dev.js cmds list --limit 10        # recent command_runs (prod)
+node scripts/dev.js cmds show <traceId>         # one trace: exit code + output tail
 ```
-- Defaults to the prod DB (`agent/data/agent.sqlite`). Set `AGENT_DB_FILE=eval/eval.sqlite` (relative to `agentDir`, correct from any cwd) to inspect an eval DB that has data.
-- trace_events + raw AI logs: still use `dev.js eval` / `dev.js logs` (Node, correct DB, no duplication).
+- Honors `AGENT_DB_FILE` — defaults to prod (`agent/data/agent.sqlite`); set `AGENT_DB_FILE=eval/eval.sqlite` to inspect an eval DB that has data.
+- Same engine as everything else (one Node CLI). This skill is doc-only now — no separate script.
 
 ## Notes
 
