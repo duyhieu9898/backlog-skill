@@ -9,6 +9,7 @@
 */node_modules
 /dist
 agent/dist/
+__pycache__/
 */build
 */coverage
 */logs
