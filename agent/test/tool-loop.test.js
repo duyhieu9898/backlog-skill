@@ -452,3 +452,35 @@ test("AgentToolLoop stops after one retry of the identical failure", async () =>
   assert.match(response, /file\.read/);
   assert.match(response, /TEST_FAILURE/);
 });
+
+test("AgentToolLoop stops before repeating an identical successful call", async () => {
+  // Mirror of the identical-FAILURE guard above, for the SUCCESS case: a degenerate
+  // model re-issues the exact same call that just succeeded (e.g. web.capture of the
+  // same URL 6×). The loop must stop BEFORE executing the redundant call.
+  let calls = 0;
+  let executions = 0;
+  const provider = {
+    async complete() {
+      calls += 1;
+      return { toolCall: { name: "file.read", arguments: { path: "same.txt" } } };
+    },
+  };
+  const succeedingExecutor = {
+    definitions: () => [],
+    prepareRaw: (call) => ({ call, key: call.name, digest: "test-digest", preview: call.name, requiresConfirmation: false }),
+    authorizePrepared: (prepared) => prepared,
+    prepare: (call) => ({ call, key: call.name, digest: "test-digest", preview: call.name, requiresConfirmation: false }),
+    execute: async () => { executions += 1; return { ok: true, code: "TEST_SUCCESS", summary: "The test tool succeeded." }; },
+  };
+  const loop = new AgentToolLoop(
+    new AiRouter({ provider, providerName: "fake", model: "fake", systemPrompt: "test" }),
+    succeedingExecutor,
+  );
+
+  const response = await loop.run(message("capture it again", "repeated-success"), "context");
+
+  assert.equal(calls, 2);       // provider asked twice: step 0 executes, step 1 trips the guard
+  assert.equal(executions, 1);  // the redundant 2nd call must NOT execute
+  assert.match(response, /lặp lại y hệt/);
+  assert.match(response, /file\.read/);
+});

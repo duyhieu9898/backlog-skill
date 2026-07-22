@@ -89,6 +89,18 @@ function repeatedFailureMessage(call: AiToolCall, result: ToolResult): string {
   ].join("\n");
 }
 
+/** Identity of a tool call (name + canonical args), used to detect a repeat. */
+function callKey(call: AiToolCall): string {
+  return `${call.name}:${stableJson(call.arguments)}`;
+}
+
+function repeatedSuccessMessage(call: AiToolCall): string {
+  return [
+    `Đã dừng: "${call.name}" lặp lại y hệt bước vừa thành công — khả năng model bị loop.`,
+    "Nếu thực sự cần làm lại, hãy thay đổi tham số hoặc chọn tool khác.",
+  ].join("\n");
+}
+
 export class AgentToolLoop {
   private readonly approvals = new ApprovalService();
   constructor(
@@ -165,6 +177,16 @@ export class AgentToolLoop {
         step: index,
         toolName: response.toolCall.name,
       });
+      // Repeated-success guard: if the model re-issues the exact same call that just
+      // SUCCEEDED, it's a degenerate loop (e.g. capturing the same URL 6× in a row).
+      // Stop before executing the redundant call — avoids wasted captures/artifacts
+      // and the blunt MAX_TOOL_STEPS cap producing "Đã dừng sau 8 bước". A retry after
+      // a failure is not blocked (the prior step's result.ok would be false).
+      const lastStep = steps[steps.length - 1];
+      if (lastStep && (lastStep.result as ToolResult).ok && callKey(response.toolCall) === callKey(lastStep.call)) {
+        log.warn(message.traceId, "ai.tool.repeated_success_stopped", { step: index, toolName: response.toolCall.name });
+        return repeatedSuccessMessage(response.toolCall);
+      }
       try {
         const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, toolCallId, tools, userMessage);
         if (prepared.requiresConfirmation) {
