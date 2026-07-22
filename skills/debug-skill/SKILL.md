@@ -1,5 +1,5 @@
 ---
-name: Debug Eval Loop
+name: debug-eval-loop-skill
 description: Vòng lặp cải tiến agent có đo lường, chạy từng bước (step-gated). Mỗi bước làm xong thì DỪNG và nói rõ bước tiếp theo làm gì. Dùng khi muốn tối ưu hành vi agent qua chứng cứ (eval report + trace), khi debug một case fail/timeout, hoặc (riêng query.py) tra cứu lịch sử lệnh terminal production.
 ---
 

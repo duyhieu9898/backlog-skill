@@ -124,18 +124,23 @@ export class SkillRegistry {
         const nameTokens = tokens(skill.name);
         const descriptionTokens = tokens(skill.description);
         let score = 0;
+        let named = false;
 
-        if (includesPhrase(normalizedQuery, slug)) score += 1_000 + slug.length;
-        if (name !== slug && includesPhrase(normalizedQuery, name)) score += 800 + name.length;
+        if (includesPhrase(normalizedQuery, slug)) { score += 1_000 + slug.length; named = true; }
+        if (name !== slug && includesPhrase(normalizedQuery, name)) { score += 800 + name.length; named = true; }
 
         for (const token of queryTokens) {
-          if (slugTokens.has(token)) score += 40;
-          if (nameTokens.has(token)) score += 20;
+          if (slugTokens.has(token)) { score += 40; named = true; }
+          if (nameTokens.has(token)) { score += 20; named = true; }
           if (descriptionTokens.has(token)) score += 5;
         }
-        return { skill, score };
+        return { skill, score, named };
       })
-      .filter((candidate) => candidate.score > 0)
+      // A description-only match is too weak to select a skill: a single common
+      // description token (e.g. "một" in a Vietnamese description) must not pick a
+      // skill for an unrelated query. Require a slug/name signal; description tokens
+      // only add weight on top of an identity match.
+      .filter((candidate) => candidate.named && candidate.score > 0)
       .sort((a, b) => b.score - a.score || a.skill.slug.localeCompare(b.skill.slug));
 
     if (!candidates.length) return undefined;
