@@ -6,7 +6,6 @@ const WEB = ["http://", "https://", "website", "trang web", "web ", "browser"];
 const DESKTOP = ["desktop", "màn hình", "screenshot", "chụp màn hình", "vscode", "vs code", "visual studio code", "app "];
 const DESKTOP_CONTROL = ["click", "nhấp", "bấm", "type", "gõ", "press", "key", "mở app", "launch"];
 const COMMAND = ["run command", "chạy lệnh", "shell command", "terminal command"];
-const CONTINUATION = ["nó", "cái thứ", "tiếp", "continue", "it", "that", "sửa nó", "click"];
 const GENERAL = ["là gì", "what is", "who are", "bạn là ai", "giải thích", "explain"];
 const CANCEL = ["cancel", "hủy", "/stop", "dừng"];
 const TTL_MS = 15 * 60 * 1000;
@@ -34,7 +33,15 @@ export function resolveCapabilityRoute(input: { text: string; traceId: string; n
   else if (has(text, WEB)) { capabilities = ["web"]; reason = "explicit web request"; confidence = "hard-signal"; }
   else if (has(text, DESKTOP)) { capabilities = [has(text, DESKTOP_CONTROL) ? "desktop-control" : "desktop-observe"]; reason = "explicit desktop request"; confidence = "hard-signal"; }
   else if (has(text, COMMAND)) { capabilities = ["command"]; reason = "explicit command request"; confidence = "hard-signal"; }
-  else if (!expired && input.activeLease && has(text, CONTINUATION)) { capabilities = input.activeLease.capabilities; skillSlug = input.activeLease.skillSlug; reason = "active scope continuation"; confidence = "lease"; }
+  // No hard capability signal. With an active, non-expired TOOL lease, treat any
+  // non-general/non-cancel follow-up as an elliptical continuation of that scope
+  // (e.g. "chụp lại ảnh đó", "làm tiếp") — phrasing-agnostic. Skill leases are
+  // excluded: skill continuation injects instructions (high-impact), so it must be
+  // re-selected explicitly rather than inherited by an ambiguous follow-up (a greeting
+  // like "xin chào" must not keep the prior skill loaded). GENERAL questions and
+  // cancellations were handled above. Exposing the lease's scoped tool subset (which
+  // the model may decline) beats exposing zero tools and forcing a hallucinated call.
+  else if (!expired && input.activeLease && !input.activeLease.skillSlug) { capabilities = input.activeLease.capabilities; reason = "active scope continuation"; confidence = "lease"; }
   if (!capabilities.length) return { route: generalRoute(reason, expired ? "cleared" : "new"), lease: expired ? null : input.activeLease || null };
   capabilities = unique(capabilities).slice(0, 2);
   const route: CapabilityRoute = { capabilities, targets: [], continuation: confidence === "lease" ? "continued" : "new", confidence, selectionReason: reason, ...(skillSlug ? { skillSlug } : {}) };

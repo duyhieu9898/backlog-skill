@@ -40,6 +40,23 @@ test("active lease supports elliptical continuation but expires and clears on a 
   assert.equal(expired.lease, null);
 });
 
+test("elliptical/ambiguous follow-up inherits the active lease phrasing-agnostically", () => {
+  const first = resolveCapabilityRoute({ text: "mở https://example.com", traceId: "web", now });
+  // "chụp lại ảnh đó một lần nữa" matches no WEB/DESKTOP keyword (rt-u026-3 regression):
+  // it must still inherit the active web lease rather than resolve to empty tools.
+  const recapture = resolveCapabilityRoute({ text: "chụp lại ảnh đó một lần nữa", traceId: "next", now: new Date(now.getTime() + 1000), activeLease: first.lease });
+  assert.equal(recapture.route.continuation, "continued");
+  assert.deepEqual(recapture.route.capabilities, ["web"]);
+  assert.equal(recapture.route.selectionReason, "active scope continuation");
+  // A neutral follow-up with no keyword at all also continues (phrasing-agnostic).
+  const vague = resolveCapabilityRoute({ text: "xem sao nhé", traceId: "vague", now: new Date(now.getTime() + 2000), activeLease: first.lease });
+  assert.equal(vague.route.continuation, "continued");
+  assert.deepEqual(vague.route.capabilities, ["web"]);
+  // No active lease → the fallback never fires; still empty.
+  const noLease = resolveCapabilityRoute({ text: "chụp lại ảnh đó một lần nữa", traceId: "none", now });
+  assert.deepEqual(noLease.route.capabilities, []);
+});
+
 test("file-write elevation is explicit and visibility is immutable per snapshot", () => {
   const executor = new ToolExecutor();
   const read = resolveCapabilityRoute({ text: "đọc file notes.txt", traceId: "read", now });
