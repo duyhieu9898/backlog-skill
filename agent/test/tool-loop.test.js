@@ -481,6 +481,68 @@ test("AgentToolLoop stops before repeating an identical successful call", async 
 
   assert.equal(calls, 2);       // provider asked twice: step 0 executes, step 1 trips the guard
   assert.equal(executions, 1);  // the redundant 2nd call must NOT execute
-  assert.match(response, /lặp lại y hệt/);
+  assert.match(response, /chu kỳ 1/);  // cycle detector, period 1 (consecutive identical)
   assert.match(response, /file\.read/);
+});
+
+test("AgentToolLoop stops on an alternating cycle of successful calls (period 2)", async () => {
+  // [A,B,A,B] — not consecutive-identical, but a repeating pair. The cycle detector
+  // catches it at the 4th call (period 2); A,B,A execute, the 4th (B) is blocked.
+  let calls = 0;
+  let executions = 0;
+  const pair = [
+    { name: "file.read", arguments: { path: "a.txt" } },
+    { name: "file.read", arguments: { path: "b.txt" } },
+  ];
+  const provider = {
+    async complete(input) {
+      calls += 1;
+      return { toolCall: pair[input.steps.length % 2] };
+    },
+  };
+  const succeedingExecutor = {
+    definitions: () => [],
+    prepareRaw: (call) => ({ call, key: call.name, digest: "test-digest", preview: call.name, requiresConfirmation: false }),
+    authorizePrepared: (prepared) => prepared,
+    prepare: (call) => ({ call, key: call.name, digest: "test-digest", preview: call.name, requiresConfirmation: false }),
+    execute: async () => { executions += 1; return { ok: true, code: "TEST_SUCCESS", summary: "ok" }; },
+  };
+  const loop = new AgentToolLoop(
+    new AiRouter({ provider, providerName: "fake", model: "fake", systemPrompt: "test" }),
+    succeedingExecutor,
+  );
+  const response = await loop.run(message("alternate forever", "cycle-2"), "context");
+
+  assert.equal(calls, 4);        // 4th call completes the period-2 cycle
+  assert.equal(executions, 3);   // A,B,A execute; the 4th (B) trips before executing
+  assert.match(response, /chu kỳ 2/);
+});
+
+test("AgentToolLoop stops after a total-failure budget of varied-param failures", async () => {
+  // Flailing with DIFFERENT params (each failure has a unique key, so the identical-
+  // failure guard never trips). The total-failure budget stops it at MAX_TOTAL_FAILURES=3,
+  // well before the MAX_TOOL_STEPS=8 cap.
+  let calls = 0;
+  const provider = {
+    async complete(input) {
+      calls += 1;
+      return { toolCall: { name: "file.read", arguments: { path: `f${input.steps.length}.txt` } } };
+    },
+  };
+  const failingExecutor = {
+    definitions: () => [],
+    prepareRaw: (call) => ({ call, key: call.name, digest: "test-digest", preview: call.name, requiresConfirmation: false }),
+    authorizePrepared: (prepared) => prepared,
+    prepare: (call) => ({ call, key: call.name, digest: "test-digest", preview: call.name, requiresConfirmation: false }),
+    execute: async () => ({ ok: false, code: "TEST_FAILURE", summary: "missing" }),
+  };
+  const loop = new AgentToolLoop(
+    new AiRouter({ provider, providerName: "fake", model: "fake", systemPrompt: "test" }),
+    failingExecutor,
+  );
+  const response = await loop.run(message("flail with different params", "total-failure"), "context");
+
+  assert.equal(calls, 3);  // stops at the 3rd failure (MAX_TOTAL_FAILURES), not the 8-step cap
+  assert.match(response, /3 lần tool thất bại/);
+  assert.match(response, /flail/);
 });

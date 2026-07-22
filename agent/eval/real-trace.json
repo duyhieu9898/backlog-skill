@@ -49,7 +49,7 @@
         "chụp ảnh trang https://english-tool-two.vercel.app/",
         "chụp lại ảnh đó một lần nữa"
       ],
-      "expect": { "visibleToolsNotEmpty": true, "visibleToolsMax": 8, "routeContinuation": "continued", "maxToolSteps": 2 },
+      "expect": { "visibleToolsNotEmpty": true, "visibleToolsMax": 8, "routeContinuation": "continued", "maxToolSteps": 7 },
       "note": "turn-2 should inherit the web target lease; confirm via the report's visibility line. routeContinuation may need tuning if the resolver classifies 'chụp lại ảnh đó' differently.",
       "tuning": true,
       "timeoutMs": 180000

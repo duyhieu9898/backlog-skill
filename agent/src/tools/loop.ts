@@ -14,6 +14,8 @@ import crypto from "node:crypto";
 
 const MAX_TOOL_STEPS = 8;
 const MAX_IDENTICAL_FAILURES = 2;
+const MAX_TOTAL_FAILURES = 3;
+const MAX_CYCLE_PERIOD = 3;
 
 type PendingAiTool = {
   kind: "ai-tool";
@@ -94,10 +96,33 @@ function callKey(call: AiToolCall): string {
   return `${call.name}:${stableJson(call.arguments)}`;
 }
 
-function repeatedSuccessMessage(call: AiToolCall): string {
+/** Returns the cycle period p (1..maxP) if [..keys, newKey] ends in a repeating
+ *  suffix (last 2p == [X1..Xp, X1..Xp]), else 0. Catches [A,A] (p=1), [A,B,A,B] (p=2),
+ *  [A,B,C,A,B,C] (p=3). Called before executing the call that would complete the cycle. */
+function detectCyclePeriod(keys: string[], newKey: string, maxP: number): number {
+  const seq = [...keys, newKey];
+  for (let p = 1; p <= maxP; p += 1) {
+    if (seq.length < 2 * p) continue;
+    let periodic = true;
+    for (let i = 0; i < p; i += 1) {
+      if (seq[seq.length - 2 * p + i] !== seq[seq.length - p + i]) { periodic = false; break; }
+    }
+    if (periodic) return p;
+  }
+  return 0;
+}
+
+function cycleMessage(call: AiToolCall, period: number): string {
   return [
-    `Đã dừng: "${call.name}" lặp lại y hệt bước vừa thành công — khả năng model bị loop.`,
+    `Đã dừng: phát hiện loop (chu kỳ ${period}) — "${call.name}" lặp lại một chuỗi call đã thành công.`,
     "Nếu thực sự cần làm lại, hãy thay đổi tham số hoặc chọn tool khác.",
+  ].join("\n");
+}
+
+function totalFailureMessage(count: number): string {
+  return [
+    `Đã dừng sau ${count} lần tool thất bại (các lỗi khác nhau) — khả năng model đang flail.`,
+    "Hãy gửi yêu cầu rõ hơn, cung cấp thêm ngữ cảnh, hoặc chia nhỏ task.",
   ].join("\n");
 }
 
@@ -146,6 +171,7 @@ export class AgentToolLoop {
   ): Promise<string> {
     const steps: AiToolStep[] = [...initialSteps];
     const failures = new Map<string, number>();
+    let totalFailures = 0;
     const route = context.capabilityRoute;
     const tools = this.gateway.definitions(route);
     const snapshot = {
@@ -177,15 +203,20 @@ export class AgentToolLoop {
         step: index,
         toolName: response.toolCall.name,
       });
-      // Repeated-success guard: if the model re-issues the exact same call that just
-      // SUCCEEDED, it's a degenerate loop (e.g. capturing the same URL 6× in a row).
-      // Stop before executing the redundant call — avoids wasted captures/artifacts
-      // and the blunt MAX_TOOL_STEPS cap producing "Đã dừng sau 8 bước". A retry after
-      // a failure is not blocked (the prior step's result.ok would be false).
-      const lastStep = steps[steps.length - 1];
-      if (lastStep && (lastStep.result as ToolResult).ok && callKey(response.toolCall) === callKey(lastStep.call)) {
-        log.warn(message.traceId, "ai.tool.repeated_success_stopped", { step: index, toolName: response.toolCall.name });
-        return repeatedSuccessMessage(response.toolCall);
+      // Cycle detector: stop before executing a call that would complete a periodic
+      // sequence of SUCCESSFUL calls — a degenerate loop (e.g. capture(A),capture(B),
+      // capture(A),capture(B) — period 2; or capture(A),capture(A) — period 1). Only
+      // trips when every call in the repeating window succeeded, so a retry after a
+      // failure (model struggling) is left to the failure guards. Cycles up to
+      // MAX_CYCLE_PERIOD. Avoids wasted calls/artifacts and the blunt MAX_TOOL_STEPS cap.
+      const period = detectCyclePeriod(steps.map((s) => callKey(s.call)), callKey(response.toolCall), MAX_CYCLE_PERIOD);
+      if (period > 0) {
+        const windowStart = Math.max(0, steps.length - (2 * period - 1));
+        const windowSucceeded = steps.slice(windowStart).every((s) => (s.result as ToolResult).ok);
+        if (windowSucceeded) {
+          log.warn(message.traceId, "ai.tool.cycle_stopped", { step: index, toolName: response.toolCall.name, period });
+          return cycleMessage(response.toolCall, period);
+        }
       }
       try {
         const prepared = this.prepareAuthorized(response.toolCall, message, runId, sessionId, toolCallId, tools, userMessage);
@@ -257,6 +288,7 @@ export class AgentToolLoop {
           code: finalResult.code,
         });
         if (!result.ok) {
+          totalFailures += 1;
           const key = failureKey(response.toolCall, result);
           const attempts = (failures.get(key) || 0) + 1;
           failures.set(key, attempts);
@@ -268,6 +300,10 @@ export class AgentToolLoop {
               attempts,
             });
             return repeatedFailureMessage(response.toolCall, result);
+          }
+          if (totalFailures >= MAX_TOTAL_FAILURES) {
+            log.warn(message.traceId, "ai.tool.total_failure_stopped", { step: index, totalFailures });
+            return totalFailureMessage(totalFailures);
           }
         }
       } catch (error) {
@@ -282,6 +318,7 @@ export class AgentToolLoop {
           toolName: response.toolCall.name,
           reason: result.summary,
         });
+        totalFailures += 1;
         const key = failureKey(response.toolCall, result);
         const attempts = (failures.get(key) || 0) + 1;
         failures.set(key, attempts);
@@ -293,6 +330,10 @@ export class AgentToolLoop {
             attempts,
           });
           return repeatedFailureMessage(response.toolCall, result);
+        }
+        if (totalFailures >= MAX_TOTAL_FAILURES) {
+          log.warn(message.traceId, "ai.tool.total_failure_stopped", { step: index, totalFailures });
+          return totalFailureMessage(totalFailures);
         }
       }
     }
