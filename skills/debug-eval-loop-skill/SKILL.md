@@ -41,6 +41,7 @@ npm run eval -- --batch A          # or: --only <id> | --us US-026 (whole story)
 - Read the report. Map each signal to a **hypothesis** (table below). **VERIFY the hypothesis in the trace before fixing** — the table is a hint, not ground truth.
 - Drill when the report is not enough: `node scripts/dev.js logs show <traceId>` (raw request/response).
 - **Never trust pass/fail alone.** A case can PASS its routing assertions while the model loops degenerately (e.g. capturing the same URL 6×, or an alternating capture→browser→capture cycle). Always check **toolSteps count + reply text**: a high step count, or a reply like "Đã dừng sau N bước" (hit the MAX_TOOL_STEPS cap) / "phát hiện loop" (cycle detector tripped) / "flail" (total-failure budget), means a hidden behavioral bug the pass/fail hid.
+- **Image cases (`artifactMime`):** artifact EXISTS (mime + bytes > 0) = automated pass ("có chụp ảnh"). But CONTENT correctness (right page? not a desktop screenshot? right element after click?) needs **HUMAN vision** — you (the agent) have none. Report the artifact path + tell the user to verify content themselves. Do NOT claim "verified" on mime alone — that caused 3 false passes (desktop scrot masquerading as web capture).
 - Report: likely root cause (verified) + whether it is deterministic or stochastic.
 - **STOP.** Next: **IMPROVE** (exactly one change).
 
