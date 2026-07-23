@@ -611,31 +611,22 @@ export class ToolExecutor {
       }
     }
     if (prepared.webCapture) {
+      // Per the tool description: "Open one public HTTPS URL in local headless Chrome,
+      // wait briefly for rendering, and return a PNG screenshot artifact." Headless Chrome
+      // renders + captures the PAGE itself. The old "interactive" path opened the URL in
+      // the user's GUI browser then scrot'd the WHOLE DESKTOP — capturing whatever else
+      // was on screen (other tabs, editor, taskbar), not the requested page. Headless is
+      // the correct, page-scoped capture and matches the tool's own description.
+      const file = path.join(os.tmpdir(), `my-agent-web-${Date.now()}.png`);
       try {
-        const child = spawn("google-chrome", [prepared.webCapture.url], { detached: true, stdio: "ignore" });
-        child.unref();
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        const adapter = getDesktopAdapter();
-        if (!("capture" in adapter) || typeof adapter.capture !== "function") {
-          throw new Error("Desktop adapter capture is unavailable for interactive mode.");
-        }
-        const captured = adapter.capture();
-        resizeImage(captured.path);
-        const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(captured.path) });
-        fs.rmSync(captured.path, { force: true });
-        return { ok: true, code: "WEB_CAPTURED", summary: `Opened ${prepared.webCapture.url} interactively and captured screen.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
-      } catch (guiError) {
-        const file = path.join(os.tmpdir(), `my-agent-web-${Date.now()}.png`);
-        try {
-          const result = spawnSync("google-chrome", ["--headless", "--disable-gpu", "--hide-scrollbars", "--window-size=1440,1080", `--screenshot=${file}`, "--virtual-time-budget=3000", prepared.webCapture.url], { encoding: "utf8", timeout: 30_000 });
-          if (result.status !== 0 || !fs.existsSync(file)) throw new Error(result.stderr.trim() || "Headless Chrome fallback capture failed.");
-          resizeImage(file);
-          const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(file) });
-          return { ok: true, code: "WEB_CAPTURED", summary: `Captured ${prepared.webCapture.url} via headless fallback.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
-        } catch (error) {
-          return { ok: false, code: "WEB_CAPTURE_FAILED", summary: `Web capture failed (GUI: ${guiError instanceof Error ? guiError.message : String(guiError)}; Headless: ${error instanceof Error ? error.message : String(error)})` };
-        } finally { fs.rmSync(file, { force: true }); }
-      }
+        const result = spawnSync("google-chrome", ["--headless", "--disable-gpu", "--hide-scrollbars", "--window-size=1440,1080", `--screenshot=${file}`, "--virtual-time-budget=3000", prepared.webCapture.url], { encoding: "utf8", timeout: 30_000 });
+        if (result.status !== 0 || !fs.existsSync(file)) throw new Error(result.stderr.trim() || "Headless Chrome capture failed.");
+        resizeImage(file);
+        const artifact = new ArtifactStore().create({ ownerChatId: input.chatId, sourceTraceId: input.traceId, mimeType: "image/png", bytes: fs.readFileSync(file) });
+        return { ok: true, code: "WEB_CAPTURED", summary: `Captured ${prepared.webCapture.url} via headless Chrome.`, data: { artifactId: artifact.id, url: prepared.webCapture.url } };
+      } catch (error) {
+        return { ok: false, code: "WEB_CAPTURE_FAILED", summary: `Web capture failed: ${error instanceof Error ? error.message : String(error)}` };
+      } finally { fs.rmSync(file, { force: true }); }
     }
     if (prepared.browserAction) {
       const action = prepared.browserAction;
